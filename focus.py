@@ -94,6 +94,10 @@ DEFAULT_RAG_PROMPT = (
     'respond in English. Here is the material:'
 )
 DEFAULT_RAG_CHUNK_COUNT = 8
+SUMMARY_DIR_NAME = "summaries"
+HEARING_SUMMARY_CANDIDATES = ("hearing_sum.txt", "hearing_summary.txt")
+REPORTS_SUMMARY_CANDIDATES = ("reports_sum.txt", "reports_summary.txt")
+SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
 
 # =====================
 # UI Defaults
@@ -156,6 +160,15 @@ def _normalize_input_dir(path: Path) -> Path:
         parent = path.parent
         if str(parent):
             return parent
+    manifest_here = path / "manifest.json"
+    if manifest_here.exists():
+        return path
+    manifest_parent = path.parent / "manifest.json"
+    if manifest_parent.exists():
+        return path.parent
+    manifest_child = path / "record_prep" / "manifest.json"
+    if manifest_child.exists():
+        return path / "record_prep"
     return path
 
 
@@ -194,6 +207,109 @@ def _images_dir_from_root(root: Path) -> Path:
     if base.name == "text_record":
         base = base.parent
     return base / "images"
+
+
+@dataclass(frozen=True)
+class RecordLayout:
+    root: Path
+    text_dir: Path
+    images_dir: Path
+    toc_path: Path
+    rag_vector_dir: Path | None
+    rag_case_overview_path: Path | None
+    is_record_prep: bool
+
+
+def _path_from_manifest(value: Any, root: Path) -> Path | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    raw = Path(trimmed).expanduser()
+    if not raw.is_absolute():
+        raw = root / raw
+    return raw.resolve(strict=False)
+
+
+def _read_record_prep_manifest(root: Path) -> dict[str, Any] | None:
+    manifest_path = root / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def _looks_like_record_prep(root: Path) -> bool:
+    if (root / "text_pages").is_dir():
+        return True
+    if (root / "artifacts" / "toc.txt").exists():
+        return True
+    if (root / "rag" / "vector_database").is_dir():
+        return True
+    return False
+
+
+def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
+    dirs = manifest.get("dirs") if isinstance(manifest.get("dirs"), dict) else {}
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    rag = manifest.get("rag") if isinstance(manifest.get("rag"), dict) else {}
+    text_dir = _path_from_manifest(dirs.get("text_pages"), root) or root / "text_pages"
+    images_dir = _path_from_manifest(dirs.get("image_pages"), root) or root / "image_pages"
+    toc_path = _path_from_manifest(files.get("toc"), root) or root / "artifacts" / "toc.txt"
+    rag_vector_dir = (
+        _path_from_manifest(rag.get("vector_database"), root)
+        or root / "rag" / "vector_database"
+    )
+    rag_case_overview_path = (
+        _path_from_manifest(files.get("case_overview"), root)
+        or root / "rag" / "case_overview.txt"
+    )
+    return RecordLayout(
+        root=root,
+        text_dir=text_dir,
+        images_dir=images_dir,
+        toc_path=toc_path,
+        rag_vector_dir=rag_vector_dir,
+        rag_case_overview_path=rag_case_overview_path,
+        is_record_prep=True,
+    )
+
+
+def _resolve_record_layout(root: Path) -> RecordLayout:
+    manifest = _read_record_prep_manifest(root)
+    if manifest:
+        return _layout_from_manifest(root, manifest)
+    if _looks_like_record_prep(root):
+        return _layout_from_manifest(root, {})
+    text_dir = _text_dir_from_root(root)
+    images_dir = _images_dir_from_root(root)
+    toc_path = text_dir / "toc.txt"
+    return RecordLayout(
+        root=root,
+        text_dir=text_dir,
+        images_dir=images_dir,
+        toc_path=toc_path,
+        rag_vector_dir=None,
+        rag_case_overview_path=None,
+        is_record_prep=False,
+    )
+
+
+def _resolve_legacy_case_overview_path(embeddings_dir: Path) -> Path | None:
+    overview = embeddings_dir / "case_overview" / "case_overview.txt"
+    if overview.exists():
+        return overview
+    details = embeddings_dir / "case_details" / "case_details.txt"
+    if details.exists():
+        return details
+    return None
 
 
 def load_regex_dir_from_config() -> Path:
@@ -997,6 +1113,11 @@ def parse_toc_text(text: str) -> list[TocCategory]:
         indent = len(line) - len(line.lstrip(" \t"))
         match = TOC_LINE_RE.match(line.strip())
         if not match:
+            if indent == 0:
+                title = line.strip()
+                if title:
+                    current = TocCategory(title=title, page=None, bookmarks=[])
+                    categories.append(current)
             continue
         title = match.group("title").strip()
         try:
@@ -1131,6 +1252,7 @@ class Focus(Adw.Application):
             self.input_dir = input_override
         else:
             self.input_dir = load_input_dir_from_config()
+        self._record_layout = _resolve_record_layout(self.input_dir)
         self.regex_dir: Path = load_regex_dir_from_config()
         self._font_size_pt, self._ai_font_size_pt = load_font_preferences()
 
@@ -1253,6 +1375,8 @@ class Focus(Adw.Application):
         self._ai_spinner: Gtk.Spinner | None = None
         self._ai_range_entry: Gtk.Entry | None = None
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
+        self._hearing_summary_button: Gtk.Button | None = None
+        self._reports_summary_button: Gtk.Button | None = None
         self._choose_summary_button: Gtk.Button | None = None
         self._ai_stream_thread: threading.Thread | None = None
         self._ai_cancel_event: threading.Event | None = None
@@ -1279,11 +1403,15 @@ class Focus(Adw.Application):
 
     @property
     def text_dir(self) -> Path:
-        return _text_dir_from_root(self.input_dir)
+        return self._record_layout.text_dir
 
     @property
     def images_dir(self) -> Path:
-        return _images_dir_from_root(self.input_dir)
+        return self._record_layout.images_dir
+
+    @property
+    def toc_path(self) -> Path:
+        return self._record_layout.toc_path
 
     def _choose_icon(self, *names: str) -> str:
         if not names:
@@ -1318,7 +1446,7 @@ class Focus(Adw.Application):
         self.pages = sorted(self.page_to_path.keys())
 
     def _current_toc_path(self) -> Path:
-        return self.text_dir / "toc.txt"
+        return self.toc_path
 
     def _load_toc_from_disk_async(self) -> None:
         toc_path = self._current_toc_path()
@@ -1669,6 +1797,22 @@ class Focus(Adw.Application):
         summary_button_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         summary_button_group.set_hexpand(True)
         summary_button_group.set_valign(Gtk.Align.CENTER)
+
+        self._hearing_summary_button = Gtk.Button(label="Hearing Sum")
+        self._hearing_summary_button.add_css_class("flat")
+        self._hearing_summary_button.add_css_class("no-bold")
+        self._hearing_summary_button.set_valign(Gtk.Align.CENTER)
+        self._hearing_summary_button.set_tooltip_text("Load hearing summary from summaries/")
+        self._hearing_summary_button.connect("clicked", self._on_hearing_summary_clicked)
+        summary_button_group.append(self._hearing_summary_button)
+
+        self._reports_summary_button = Gtk.Button(label="Reports Sum")
+        self._reports_summary_button.add_css_class("flat")
+        self._reports_summary_button.add_css_class("no-bold")
+        self._reports_summary_button.set_valign(Gtk.Align.CENTER)
+        self._reports_summary_button.set_tooltip_text("Load reports summary from summaries/")
+        self._reports_summary_button.connect("clicked", self._on_reports_summary_clicked)
+        summary_button_group.append(self._reports_summary_button)
 
         self._choose_summary_button = Gtk.Button(label="Choose File")
         self._choose_summary_button.add_css_class("flat")
@@ -2811,11 +2955,14 @@ class Focus(Adw.Application):
         fallback.parse("#ffffff")
         if not view:
             return fallback
-        context = view.get_style_context()
-        try:
-            base = context.get_color()
-        except TypeError:
-            base = context.get_color(Gtk.StateFlags.NORMAL)
+        if hasattr(view, "get_color"):
+            base = view.get_color()
+        else:
+            context = view.get_style_context()
+            try:
+                base = context.get_color()
+            except TypeError:
+                base = context.get_color(Gtk.StateFlags.NORMAL)
         quote = Gdk.RGBA()
         quote.red = base.red
         quote.green = base.green
@@ -3984,9 +4131,10 @@ class Focus(Adw.Application):
         self._set_show_image(False, silent=True)
         self._reset_view_states()
         self.input_dir = normalized
+        self._record_layout = _resolve_record_layout(self.input_dir)
         save_input_dir_to_config(normalized)
         if not self.text_dir.exists():
-            self._transient_toast(f"'text_record' directory not found in: {normalized}")
+            self._transient_toast(f"Text pages directory not found: {self.text_dir}")
         self._showing_grep_results = False
         self._grep_phrase_raw = None
         self._grep_regex = None
@@ -4361,6 +4509,65 @@ class Focus(Adw.Application):
         self._rag_question_entry.set_text("")
         self._start_rag_question(question, self._active_view_id)
 
+    def _find_summary_in_dir(
+        self,
+        label: str,
+        candidates: tuple[str, ...],
+        keywords: tuple[str, ...],
+    ) -> Path | None:
+        summaries_dir = self.input_dir / SUMMARY_DIR_NAME
+        if not summaries_dir.exists():
+            self._transient_toast(f"Summaries folder not found: {summaries_dir}")
+            return None
+        for name in candidates:
+            path = summaries_dir / name
+            if path.exists():
+                return path
+        matches: list[Path] = []
+        try:
+            for item in summaries_dir.iterdir():
+                if not item.is_file():
+                    continue
+                if item.suffix.lower() not in SUMMARY_TEXT_EXTENSIONS:
+                    continue
+                lowered = item.name.casefold()
+                if any(keyword in lowered for keyword in keywords):
+                    matches.append(item)
+        except OSError as exc:  # noqa: BLE001
+            self._transient_toast(f"Could not read summaries folder: {exc}")
+            return None
+        if matches:
+            return sorted(matches)[0]
+        self._transient_toast(f"{label} summary not found in {summaries_dir}")
+        return None
+
+    def _load_summary_from_summaries_dir(
+        self,
+        label: str,
+        candidates: tuple[str, ...],
+        keywords: tuple[str, ...],
+    ) -> None:
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_FILE)
+        path = self._find_summary_in_dir(label, candidates, keywords)
+        if not path:
+            return
+        self._load_summary_from_path(path)
+
+    def _on_hearing_summary_clicked(self, _button: Gtk.Button) -> None:
+        self._load_summary_from_summaries_dir(
+            "Hearing",
+            HEARING_SUMMARY_CANDIDATES,
+            ("hearing",),
+        )
+
+    def _on_reports_summary_clicked(self, _button: Gtk.Button) -> None:
+        self._load_summary_from_summaries_dir(
+            "Reports",
+            REPORTS_SUMMARY_CANDIDATES,
+            ("report", "reports"),
+        )
+
     def _on_choose_summary_file_clicked(self, _button: Gtk.Button) -> None:
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_FILE)
@@ -4633,13 +4840,30 @@ class Focus(Adw.Application):
         input_dir: Path,
         settings: AiSettings,
     ) -> tuple[Any | None, str | None, str | None]:
-        embeddings_dir = input_dir / "Embeddings"
-        vector_dir = embeddings_dir / "vector_database"
-        case_details_path = embeddings_dir / "case_details" / "case_details.txt"
+        layout = _resolve_record_layout(input_dir)
+        if layout.is_record_prep:
+            vector_dir = layout.rag_vector_dir or (input_dir / "rag" / "vector_database")
+            case_details_path = (
+                layout.rag_case_overview_path or (input_dir / "rag" / "case_overview.txt")
+            )
+        else:
+            embeddings_dir = input_dir / "Embeddings"
+            vector_dir = embeddings_dir / "vector_database"
+            case_details_path = _resolve_legacy_case_overview_path(embeddings_dir)
+            if case_details_path is None:
+                return (
+                    None,
+                    None,
+                    (
+                        "Case overview file not found. Expected "
+                        f"{embeddings_dir / 'case_overview' / 'case_overview.txt'} "
+                        "or case_details.txt."
+                    ),
+                )
         if not vector_dir.exists() or not vector_dir.is_dir():
             return None, None, f"Vector database not found at {vector_dir}."
         if not case_details_path.exists():
-            return None, None, f"Case details file not found at {case_details_path}."
+            return None, None, f"Case overview file not found at {case_details_path}."
         if not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
             return None, None, "Voyage settings missing."
 
@@ -5127,7 +5351,7 @@ class TocWindow(Adw.ApplicationWindow):
         self._load_existing_toc_async()
 
     def _toc_path(self) -> Path:
-        return self.app.text_dir / "toc.txt"
+        return self.app.toc_path
 
     def _set_status(self, message: str) -> None:
         self._status_label.set_text(message)
@@ -5191,7 +5415,7 @@ class TocWindow(Adw.ApplicationWindow):
         def worker() -> None:
             try:
                 toc_text = generate_toc_text(text_dir, regex_dir)
-                toc_path = text_dir / "toc.txt"
+                toc_path = self.app.toc_path
                 toc_path.parent.mkdir(parents=True, exist_ok=True)
                 toc_path.write_text(toc_text, encoding="utf-8")
             except Exception as exc:  # noqa: BLE001
@@ -5250,7 +5474,7 @@ class TocWindow(Adw.ApplicationWindow):
 
     def _load_existing_toc(self) -> None:
         target_dir = self.app.text_dir
-        toc_path = target_dir / "toc.txt"
+        toc_path = self.app.toc_path
         self._toc_load_generation += 1
         generation = self._toc_load_generation
         text, error = read_toc_text(toc_path)
@@ -5258,7 +5482,7 @@ class TocWindow(Adw.ApplicationWindow):
 
     def _load_existing_toc_async(self) -> None:
         target_dir = self.app.text_dir
-        toc_path = target_dir / "toc.txt"
+        toc_path = self.app.toc_path
         self._toc_load_generation += 1
         generation = self._toc_load_generation
 
@@ -5302,7 +5526,7 @@ class TocWindow(Adw.ApplicationWindow):
 
     def _run_dedupe_worker(self) -> None:
         text_dir = self.app.text_dir
-        toc_path = text_dir / "toc.txt"
+        toc_path = self.app.toc_path
         try:
             raw = toc_path.read_text(encoding="utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
@@ -5883,9 +6107,10 @@ def _prepare_cli_input_dir(raw_path: str) -> Path:
     normalized = _normalize_input_dir(target)
     if not normalized.exists() or not normalized.is_dir():
         _cli_error(f"Input directory not found: {normalized}")
-    text_dir = _text_dir_from_root(normalized)
+    layout = _resolve_record_layout(normalized)
+    text_dir = layout.text_dir
     if not text_dir.exists() or not text_dir.is_dir():
-        _cli_error(f"'text_record' directory not found inside: {normalized}")
+        _cli_error(f"Text pages directory not found: {text_dir}")
     return normalized
 
 
