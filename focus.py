@@ -2070,6 +2070,8 @@ class Focus(Adw.Application):
         sidebar_root.append(sidebar_container)
         self._toc_sidebar_revealer.set_child(sidebar_root)
         self._split_sidebar_page = Adw.NavigationPage.new(self._toc_sidebar_revealer, "Contents")
+        if self._split_view:
+            self._split_view.set_sidebar(self._split_sidebar_page)
 
         main_root.append(self._split_view)
         toolbar.set_content(main_root)
@@ -2723,10 +2725,6 @@ class Focus(Adw.Application):
         self._current_view_state().sidebar_visible = visible
         if self._split_view:
             self._split_view.set_collapsed(not visible)
-            if visible and self._split_sidebar_page:
-                self._split_view.set_sidebar(self._split_sidebar_page)
-            else:
-                self._split_view.set_sidebar(None)
         if self._toc_sidebar_revealer:
             self._toc_sidebar_revealer.set_reveal_child(visible)
         self._sync_sidebar_controls()
