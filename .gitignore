@@ -3,3 +3,4 @@
 /uv.lock
 /.venv/
 /legacy_versions/
+config.json
