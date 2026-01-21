@@ -80,6 +80,7 @@ CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
+CASE_NAME_FILENAME = "case_name.txt"
 DEFAULT_SUMMARIZATION_PROMPT = (
     "Summarize the provided court transcript in 3–5 concise bullet points. "
     "Highlight the core issues, who is speaking, and any rulings or key facts. "
@@ -205,6 +206,16 @@ def _images_dir_from_root(root: Path) -> Path:
     if base.name == "text_record":
         base = base.parent
     return base / "images"
+
+
+def _read_case_name(root: Path) -> str | None:
+    path = root / CASE_NAME_FILENAME
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    name = raw.replace("_", " ").strip()
+    return name or None
 
 
 @dataclass(frozen=True)
@@ -985,6 +996,7 @@ class Focus(Adw.Application):
         else:
             self.input_dir = load_input_dir_from_config()
         self._record_layout = _resolve_record_layout(self.input_dir)
+        self._case_name = _read_case_name(self._record_layout.root)
         self._font_size_pt, self._ai_font_size_pt = load_font_preferences()
 
         self.pages: list[int] = []
@@ -1992,13 +2004,19 @@ class Focus(Adw.Application):
         subtitle: str | None = None,
         window_suffix: str | None = None,
     ) -> None:
+        case_name = self._case_name
         if self.win:
             title = "Focus"
+            if case_name:
+                title = f"{title} - {case_name}"
             if window_suffix:
                 title = f"{title} - {window_suffix}"
             self.win.set_title(title)
         if self._center_label:
             label_markup = "<b>Focus</b>"
+            if case_name:
+                safe_case = GLib.markup_escape_text(case_name)
+                label_markup = f"{label_markup} - {safe_case}"
             if subtitle:
                 safe_subtitle = GLib.markup_escape_text(subtitle)
                 label_markup = f"{label_markup} - {safe_subtitle}"
@@ -3836,6 +3854,7 @@ class Focus(Adw.Application):
         self._reset_view_states()
         self.input_dir = normalized
         self._record_layout = _resolve_record_layout(self.input_dir)
+        self._case_name = _read_case_name(self._record_layout.root)
         save_input_dir_to_config(normalized)
         if not self.text_dir.exists():
             self._transient_toast(f"Text pages directory not found: {self.text_dir}")
