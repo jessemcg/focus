@@ -55,7 +55,6 @@ GLib.set_application_name(APPLICATION_NAME)
 
 CONFIG_FILE = Path(__file__).with_name("config.json")
 CONFIG_KEY_INPUT_DIR = "input_dir"
-CONFIG_KEY_REGEX_DIR = "regex_dir"
 CONFIG_KEY_API_URL = "api_url"
 CONFIG_KEY_MODEL_ID = "model_id"
 CONFIG_KEY_API_KEY = "api_key"
@@ -81,7 +80,6 @@ CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
-DEFAULT_REGEX_DIR = Path(__file__).with_name("regexes")
 DEFAULT_SUMMARIZATION_PROMPT = (
     "Summarize the provided court transcript in 3–5 concise bullet points. "
     "Highlight the core issues, who is speaking, and any rulings or key facts. "
@@ -312,22 +310,6 @@ def _resolve_legacy_case_overview_path(embeddings_dir: Path) -> Path | None:
     return None
 
 
-def load_regex_dir_from_config() -> Path:
-    config = _read_config()
-    candidate = config.get(CONFIG_KEY_REGEX_DIR)
-    if isinstance(candidate, str) and candidate.strip():
-        return Path(candidate).expanduser().resolve(strict=False)
-    config[CONFIG_KEY_REGEX_DIR] = str(DEFAULT_REGEX_DIR)
-    _write_config(config)
-    return DEFAULT_REGEX_DIR
-
-
-def save_regex_dir_to_config(path: Path) -> None:
-    config = _read_config()
-    config[CONFIG_KEY_REGEX_DIR] = str(path)
-    _write_config(config)
-
-
 def _normalize_highlight_phrases(value: Any) -> list[str]:
     if isinstance(value, str):
         candidates: Iterable[str] = value.splitlines()
@@ -419,128 +401,6 @@ def save_font_preferences(font_size_pt: int, ai_font_size_pt: int) -> None:
     config[CONFIG_KEY_FONT_SIZE_PT] = int(font_size_pt)
     config[CONFIG_KEY_AI_FONT_SIZE_PT] = int(ai_font_size_pt)
     _write_config(config)
-
-
-LONGFORM_DATE_RE = re.compile(
-    r"\b("
-    r"January|February|March|April|May|June|July|August|September|October|November|December"
-    r"|JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER"
-    r")\s*([0-9]{1,2})\s*,\s*([0-9]{4})\b"
-)
-NUMERIC_DATE_RE = re.compile(r"\b([0-1]?\d)/([0-3]?\d)/([0-9]{4})\b")
-MONTHS = {
-    "january": 1,
-    "february": 2,
-    "march": 3,
-    "april": 4,
-    "may": 5,
-    "june": 6,
-    "july": 7,
-    "august": 8,
-    "september": 9,
-    "october": 10,
-    "november": 11,
-    "december": 12,
-}
-
-
-def _normalize_longform_spacing(line: str) -> str:
-    def _fix(match: re.Match[str]) -> str:
-        month = match.group(1)
-        day = match.group(2)
-        year = match.group(3)
-        return f"{month} {int(day)}, {year}"
-
-    return LONGFORM_DATE_RE.sub(_fix, line)
-
-
-def _extract_date_key(line: str) -> str | None:
-    match = LONGFORM_DATE_RE.search(line)
-    if match:
-        month_txt, day, year = match.group(1), int(match.group(2)), int(match.group(3))
-        month_num = MONTHS.get(month_txt.lower())
-        if month_num:
-            return f"{year:04d}-{month_num:02d}-{day:02d}"
-
-    numeric_match = NUMERIC_DATE_RE.search(line)
-    if numeric_match:
-        month, day, year = (
-            int(numeric_match.group(1)),
-            int(numeric_match.group(2)),
-            int(numeric_match.group(3)),
-        )
-        if 1 <= month <= 12 and 1 <= day <= 31:
-            return f"{year:04d}-{month:02d}-{day:02d}"
-    return None
-
-
-def _looks_like_heading(line: str) -> bool:
-    if not line or line[:1].isspace():
-        return False
-    return re.fullmatch(r"[A-Z][A-Z ]*(?:\s+\d+)?", line.strip()) is not None
-
-
-def _ensure_one_blank_before_headings(lines: list[str]) -> list[str]:
-    out: list[str] = []
-    seen_any_content = False
-    for ln in lines:
-        if _looks_like_heading(ln):
-            if seen_any_content:
-                if len(out) == 0 or out[-1] != "":
-                    out.append("")
-                while len(out) >= 2 and out[-1] == "" and out[-2] == "":
-                    out.pop(-2)
-            out.append(ln)
-            seen_any_content = True
-        else:
-            out.append(ln)
-            if ln.strip():
-                seen_any_content = True
-    while out and out[0] == "":
-        out.pop(0)
-    return out
-
-
-def clean_toc_text(original_text: str) -> tuple[str, int, int]:
-    had_trailing_newline = original_text.endswith("\n")
-    lines = original_text.splitlines()
-
-    lines = [_normalize_longform_spacing(ln) for ln in lines]
-
-    seen: set[str] = set()
-    dedup_exact: list[str] = []
-    removed_exact = 0
-    for ln in lines:
-        if ln not in seen:
-            seen.add(ln)
-            dedup_exact.append(ln)
-        else:
-            removed_exact += 1
-
-    in_minutes = False
-    dates_seen_in_minutes: set[str] = set()
-    body: list[str] = []
-    removed_minutes_dupes = 0
-    for ln in dedup_exact:
-        if _looks_like_heading(ln):
-            in_minutes = ln.strip().startswith("MINUTES")
-            dates_seen_in_minutes.clear()
-            body.append(ln)
-            continue
-
-        if in_minutes:
-            key = _extract_date_key(ln)
-            if key is not None:
-                if key in dates_seen_in_minutes:
-                    removed_minutes_dupes += 1
-                    continue
-                dates_seen_in_minutes.add(key)
-
-        body.append(ln)
-
-    final_lines = _ensure_one_blank_before_headings(body)
-    cleaned = "\n".join(final_lines) + ("\n" if had_trailing_newline else "")
-    return cleaned, removed_exact, removed_minutes_dupes
 
 
 @dataclass
@@ -738,12 +598,6 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     _write_config(config)
 
-_FLAG_MAP = {
-    "i": re.IGNORECASE,
-    "m": re.MULTILINE,
-    "s": re.DOTALL,
-    "x": re.VERBOSE,
-}
 
 CONTINUOUS_ICON_ON_CHOICES = (
     "view-continuous-symbolic",
@@ -771,128 +625,6 @@ AI_PANEL_ICON_CHOICES = (
     "view-dual-symbolic",
     "window-restore-symbolic",
 )
-
-
-def _parse_flag_line(line: str) -> int | None:
-    stripped = line.strip()
-    if not stripped.lower().startswith("# flags:"):
-        return None
-    parts = stripped.split(":", 1)
-    if len(parts) != 2:
-        return None
-    flags = 0
-    for token in parts[1].replace(",", " ").split():
-        flags |= _FLAG_MAP.get(token.lower(), 0)
-    return flags or None
-
-
-def _load_regex_patterns(regex_dir: Path) -> dict[str, list[tuple[re.Pattern[str], bool]]]:
-    patterns: dict[str, list[tuple[re.Pattern[str], bool]]] = {}
-    try:
-        candidates = [
-            p
-            for p in regex_dir.iterdir()
-            if p.is_file() and not p.name.startswith(".") and p.name != "_order.txt"
-        ]
-    except OSError as exc:  # noqa: BLE001
-        raise FileNotFoundError(f"Unable to read regex directory: {regex_dir}") from exc
-
-    for path in sorted(candidates, key=lambda p: p.name.lower()):
-        try:
-            raw = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-        except OSError as exc:  # noqa: BLE001
-            raise FileNotFoundError(f"Unable to read regex file: {path}") from exc
-
-        entries: list[tuple[re.Pattern[str], bool]] = []
-        current_flags = re.MULTILINE
-        for line in raw:
-            maybe_flags = _parse_flag_line(line)
-            if maybe_flags is not None:
-                current_flags = maybe_flags
-                continue
-            if not line.strip():
-                continue
-            if line.lstrip().startswith("#"):
-                continue
-            try:
-                compiled = re.compile(line, current_flags)
-            except re.error as exc:
-                raise ValueError(f"{path.name}: invalid regex '{line}': {exc}") from exc
-            entries.append((compiled, compiled.groups > 0))
-
-        if entries:
-            patterns[path.stem] = entries
-
-    return patterns
-
-
-def generate_toc_text(
-    text_dir: Path,
-    regex_dir: Path,
-    *,
-    update_progress: Callable[[float], None] | None = None,
-) -> str:
-    if not text_dir.exists() or not text_dir.is_dir():
-        raise FileNotFoundError(f"Text directory not found: {text_dir}")
-    if not regex_dir.exists() or not regex_dir.is_dir():
-        raise FileNotFoundError(f"Regex directory not found: {regex_dir}")
-
-    pages: list[tuple[int, Path]] = []
-    for entry in text_dir.iterdir():
-        if not entry.is_file():
-            continue
-        match = PAGE_RE.match(entry.name)
-        if not match:
-            continue
-        page_num = int(match.group("num"))
-        pages.append((page_num, entry))
-    pages.sort(key=lambda item: item[0])
-    if not pages:
-        raise FileNotFoundError(f"No page text files found in: {text_dir}")
-
-    categories = _load_regex_patterns(regex_dir)
-    if not categories:
-        raise FileNotFoundError(f"No regex files found in: {regex_dir}")
-
-    results: dict[str, list[tuple[str, int]]] = {cat: [] for cat in categories}
-    seen: dict[str, set[tuple[str, int]]] = {cat: set() for cat in categories}
-
-    total = len(pages)
-    for idx, (page_num, path) in enumerate(pages, start=1):
-        try:
-            raw_text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            raw_text = ""
-        normalized = normalize_text_for_search(raw_text)
-        for cat, pattern_entries in categories.items():
-            for compiled, has_groups in pattern_entries:
-                try:
-                    for match in compiled.finditer(normalized):
-                        value = match.group(1) if has_groups and match.lastindex else match.group(0)
-                        value = value.strip()
-                        if not value:
-                            continue
-                        key = (value, page_num)
-                        if key in seen[cat]:
-                            continue
-                        results[cat].append((value, page_num))
-                        seen[cat].add(key)
-                except re.error:
-                    continue
-        if update_progress:
-            update_progress(idx / max(total, 1))
-
-    first_page_fallback = pages[0][0]
-    out_lines: list[str] = []
-    for cat in sorted(categories, key=lambda s: s.lower()):
-        cat_hits = sorted(results.get(cat, []), key=lambda t: t[1])
-        first_page = cat_hits[0][1] if cat_hits else first_page_fallback
-        out_lines.append(f"{cat} {first_page:04d}")
-        for title, pg in cat_hits:
-            out_lines.append(f"\t{title} {pg:04d}")
-        out_lines.append("")
-
-    return "\n".join(out_lines) + "\n"
 
 
 @dataclass
@@ -1253,7 +985,6 @@ class Focus(Adw.Application):
         else:
             self.input_dir = load_input_dir_from_config()
         self._record_layout = _resolve_record_layout(self.input_dir)
-        self.regex_dir: Path = load_regex_dir_from_config()
         self._font_size_pt, self._ai_font_size_pt = load_font_preferences()
 
         self.pages: list[int] = []
@@ -1262,14 +993,12 @@ class Focus(Adw.Application):
 
         self.win: Adw.ApplicationWindow | None = None
         self._input_dir_dialog: Gtk.FileDialog | None = None
-        self._regex_dir_dialog: Gtk.FileDialog | None = None
         self._summary_file_dialog: Gtk.FileDialog | None = None
         self._summary_file_path: Path | None = load_summary_file_from_config(self.input_dir)
         self.textview: Gtk.TextView | None = None
         self.scroller: Gtk.ScrolledWindow | None = None
         self._grep_entry: Gtk.Entry | None = None
         self._center_label: Gtk.Label | None = None
-        self._toc_window: TocWindow | None = None
         self._split_view: Adw.NavigationSplitView | None = None
         self._toc_sidebar_revealer: Gtk.Revealer | None = None
         self._toc_sidebar_overlay: Gtk.Overlay | None = None
@@ -1573,7 +1302,6 @@ class Focus(Adw.Application):
         # Hamburger menu on the right
         menu_model = Gio.Menu()
         menu_model.append("Input Directory", "app.choose_input")
-        menu_model.append("Create TOC", "app.open_toc")
         menu_model.append("Settings", "app.open_ai_settings")
 
         view_button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -3968,10 +3696,6 @@ class Focus(Adw.Application):
         choose_input.connect("activate", self._on_choose_input_dir)
         self.add_action(choose_input)
 
-        open_toc = Gio.SimpleAction.new("open_toc", None)
-        open_toc.connect("activate", self._on_open_toc_window)
-        self.add_action(open_toc)
-
         open_ai_settings = Gio.SimpleAction.new("open_ai_settings", None)
         open_ai_settings.connect("activate", self._on_open_ai_settings)
         self.add_action(open_ai_settings)
@@ -4054,11 +3778,6 @@ class Focus(Adw.Application):
         if self._input_dir_dialog is dialog:
             self._input_dir_dialog = None
 
-    def _on_open_toc_window(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
-        window = self._ensure_toc_window()
-        if window:
-            window.present()
-
     def _on_open_ai_settings(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         try:
             window = self._ensure_ai_settings_window()
@@ -4068,14 +3787,6 @@ class Focus(Adw.Application):
         if window:
             window.present()
 
-    def _ensure_toc_window(self) -> TocWindow | None:
-        if self._toc_window:
-            return self._toc_window
-        window = TocWindow(self)
-        window.connect("close-request", self._on_toc_window_close_request)
-        self._toc_window = window
-        return window
-
     def _ensure_ai_settings_window(self) -> "AiSettingsWindow" | None:
         if self._ai_settings_window:
             return self._ai_settings_window
@@ -4083,11 +3794,6 @@ class Focus(Adw.Application):
         window.connect("close-request", self._on_ai_settings_window_close_request)
         self._ai_settings_window = window
         return window
-
-    def _on_toc_window_close_request(self, window: TocWindow) -> bool:
-        if self._toc_window is window:
-            self._toc_window = None
-        return False
 
     def _on_ai_settings_window_close_request(self, window: "AiSettingsWindow") -> bool:
         if self._ai_settings_window is window:
@@ -4151,44 +3857,6 @@ class Focus(Adw.Application):
         else:
             self._set_window_title("No pages found", "No pages found")
             self._set_text("No .txt pages found in:\n" + str(self.text_dir))
-        if self._toc_window:
-            self._toc_window.on_input_dir_changed()
-
-    def open_regex_dir_dialog(self, parent: Gtk.Window) -> None:
-        dialog = Gtk.FileDialog()
-        dialog.set_title("Select Regex Directory")
-        dialog.set_modal(True)
-        if self.regex_dir.exists():
-            try:
-                dialog.set_initial_folder(Gio.File.new_for_path(str(self.regex_dir)))
-            except (TypeError, AttributeError):
-                pass
-        dialog.select_folder(parent, None, self._on_regex_dir_dialog_response)
-        self._regex_dir_dialog = dialog
-
-    def _on_regex_dir_dialog_response(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
-        try:
-            file = dialog.select_folder_finish(result)
-        except GLib.Error as exc:
-            if not exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
-                self._transient_toast(f"Directory selection failed: {exc.message}")
-        else:
-            path_str = file.get_path() if file else None
-            if path_str:
-                self._apply_regex_dir(Path(path_str))
-        if self._regex_dir_dialog is dialog:
-            self._regex_dir_dialog = None
-
-    def _apply_regex_dir(self, path: Path) -> None:
-        target = path.expanduser()
-        resolved = target.resolve(strict=False)
-        if not resolved.exists() or not resolved.is_dir():
-            self._transient_toast(f"Directory not found: {resolved}")
-            return
-        self.regex_dir = resolved
-        save_regex_dir_to_config(resolved)
-        if self._toc_window:
-            self._toc_window.on_regex_dir_changed()
 
     def _on_scroll(self, ctrl: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
         state = ctrl.get_current_event_state()
@@ -5211,370 +4879,6 @@ class Focus(Adw.Application):
             overlay.set_child(content)
         self.win.set_content(overlay)
         return overlay
-
-
-class TocWindow(Adw.ApplicationWindow):
-    def __init__(self, app: Focus):
-        super().__init__(application=app)
-        self.app = app
-
-        self._buffer_guard = False
-        self._buffer_dirty = False
-        self._busy = False
-        self._toc_load_generation = 0
-
-        self.add_css_class("focus-toc-window")
-        self.set_title("Create TOC")
-        self.set_default_size(800, 640)
-
-        toolbar_view = Adw.ToolbarView()
-        self.set_content(toolbar_view)
-
-        header = Adw.HeaderBar()
-        header.add_css_class("flat")
-        title = Gtk.Label(label="TOC Creator")
-        title.add_css_class("bold-title")
-        header.set_title_widget(title)
-
-        toolbar_view.add_top_bar(header)
-
-        content = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=12,
-            margin_top=12,
-            margin_bottom=12,
-            margin_start=12,
-            margin_end=12,
-        )
-        toolbar_view.set_content(content)
-
-        group = Adw.PreferencesGroup()
-        group.add_css_class("list-stack")
-        group.set_hexpand(True)
-        content.append(group)
-        self._actions_group = group
-
-        self._create_row = Adw.ActionRow(title="Create TOC")
-        self._create_row.add_css_class("list-card")
-        self._create_row.set_activatable(True)
-        self._create_row.add_prefix(Gtk.Image.new_from_icon_name("view-list-ordered-symbolic"))
-        self._create_status = Gtk.Label(label="Idle")
-        self._create_spinner = Gtk.Spinner(spinning=False)
-        self._create_row.add_suffix(self._create_status)
-        self._create_row.add_suffix(self._create_spinner)
-        self._create_row.connect("activated", self._on_create_clicked)
-        group.add(self._create_row)
-
-        self._dedupe_row = Adw.ActionRow(title="Remove Duplicates")
-        self._dedupe_row.add_css_class("list-card")
-        self._dedupe_row.set_activatable(True)
-        self._dedupe_row.add_prefix(Gtk.Image.new_from_icon_name("list-remove-symbolic"))
-        self._dedupe_spinner = Gtk.Spinner(spinning=False)
-        self._dedupe_row.add_suffix(self._dedupe_spinner)
-        self._dedupe_row.connect("activated", self._on_dedupe_clicked)
-        group.add(self._dedupe_row)
-
-        self._save_row = Adw.ActionRow(title="Save TOC")
-        self._save_row.add_css_class("list-card")
-        self._save_row.set_activatable(True)
-        self._save_row.add_prefix(Gtk.Image.new_from_icon_name("document-save-symbolic"))
-        self._save_status = Gtk.Label(label="Idle")
-        self._save_spinner = Gtk.Spinner(spinning=False)
-        self._save_row.add_suffix(self._save_status)
-        self._save_row.add_suffix(self._save_spinner)
-        self._save_row.connect("activated", self._on_save_clicked)
-        group.add(self._save_row)
-
-        paths_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        paths_box.set_hexpand(True)
-        content.append(paths_box)
-
-        self._text_dir_label = Gtk.Label(xalign=0)
-        self._text_dir_label.set_hexpand(True)
-        self._text_dir_label.set_ellipsize(Pango.EllipsizeMode.END)
-        text_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        text_row.set_hexpand(True)
-        text_row.append(Gtk.Label(label="Text directory:", xalign=0))
-        text_row.append(self._text_dir_label)
-        paths_box.append(text_row)
-
-        regex_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        regex_row.set_hexpand(True)
-        regex_row.append(Gtk.Label(label="Regex directory:", xalign=0))
-        self._regex_dir_label = Gtk.Label(xalign=0)
-        self._regex_dir_label.set_hexpand(True)
-        self._regex_dir_label.set_ellipsize(Pango.EllipsizeMode.END)
-        regex_row.append(self._regex_dir_label)
-        self._choose_regex_btn = Gtk.Button(label="Choose…")
-        self._choose_regex_btn.add_css_class("flat")
-        self._choose_regex_btn.connect("clicked", self._on_choose_regex_clicked)
-        regex_row.append(self._choose_regex_btn)
-        paths_box.append(regex_row)
-
-        editor_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        editor_section.set_vexpand(True)
-        editor_section.set_hexpand(True)
-        content.append(editor_section)
-
-        header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        header_row.append(Gtk.Label(label="TOC (editable):", xalign=0))
-        editor_section.append(header_row)
-
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_hexpand(True)
-        scroller.set_vexpand(True)
-        scroller.add_css_class("editor-frame")
-        editor_section.append(scroller)
-
-        self._text_view = Gtk.TextView()
-        self._text_view.set_wrap_mode(Gtk.WrapMode.NONE)
-        self._text_view.set_monospace(True)
-        self._text_view.set_pixels_above_lines(2)
-        self._text_view.set_pixels_below_lines(2)
-        self._text_view.add_css_class("editor-textview")
-        scroller.set_child(self._text_view)
-
-        self._text_buffer = self._text_view.get_buffer()
-        self._text_buffer.connect("changed", self._on_buffer_changed)
-
-        self._status_label = Gtk.Label(label="", xalign=0)
-        self._status_label.add_css_class("footer-status")
-        self._status_label.set_wrap(True)
-        self._status_label.set_hexpand(True)
-        editor_section.append(self._status_label)
-
-        self.on_input_dir_changed()
-        self.on_regex_dir_changed()
-        self._load_existing_toc_async()
-
-    def _toc_path(self) -> Path:
-        return self.app.toc_path
-
-    def _set_status(self, message: str) -> None:
-        self._status_label.set_text(message)
-
-    def _spin(self, kind: str, spinning: bool) -> None:
-        if kind == "create":
-            self._create_spinner.set_spinning(spinning)
-        elif kind == "save":
-            self._save_spinner.set_spinning(spinning)
-        elif kind == "dedupe":
-            self._dedupe_spinner.set_spinning(spinning)
-
-    def _set_row_status(self, kind: str, text: str) -> None:
-        if kind == "create":
-            self._create_status.set_text(text)
-        elif kind == "save":
-            self._save_status.set_text(text)
-
-    def _set_busy(self, busy: bool) -> None:
-        if self._busy == busy:
-            return
-        self._busy = busy
-        self._create_row.set_sensitive(not busy)
-        self._save_row.set_sensitive(not busy)
-        self._dedupe_row.set_sensitive(not busy)
-        self._choose_regex_btn.set_sensitive(not busy)
-
-    def _replace_buffer_text(self, text: str) -> None:
-        self._buffer_guard = True
-        self._text_buffer.set_text(text)
-        self._buffer_guard = False
-        self._buffer_dirty = False
-        self._set_row_status("save", "Idle")
-        self.app.on_toc_text_updated(text)
-
-    def _get_buffer_text(self) -> str:
-        start_iter = self._text_buffer.get_start_iter()
-        end_iter = self._text_buffer.get_end_iter()
-        return self._text_buffer.get_text(start_iter, end_iter, False)
-
-    def _write_buffer_to_disk(self, mark_clean: bool = True) -> None:
-        toc_path = self._toc_path()
-        toc_path.parent.mkdir(parents=True, exist_ok=True)
-        text = self._get_buffer_text()
-        toc_path.write_text(text, encoding="utf-8")
-        if mark_clean:
-            self._buffer_dirty = False
-        self._set_row_status("save", "Saved")
-        self.app.on_toc_text_updated(text)
-
-    def _on_create_clicked(self, _row: Adw.ActionRow) -> None:
-        if self._busy:
-            return
-        text_dir = self.app.text_dir
-        regex_dir = self.app.regex_dir
-        self._set_busy(True)
-        self._spin("create", True)
-        self._set_row_status("create", "Running…")
-        self._set_status("Creating TOC…")
-
-        def worker() -> None:
-            try:
-                toc_text = generate_toc_text(text_dir, regex_dir)
-                toc_path = self.app.toc_path
-                toc_path.parent.mkdir(parents=True, exist_ok=True)
-                toc_path.write_text(toc_text, encoding="utf-8")
-            except Exception as exc:  # noqa: BLE001
-                GLib.idle_add(self._on_create_finished, None, exc, text_dir)
-                return
-            GLib.idle_add(self._on_create_finished, toc_text, None, text_dir)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _on_create_finished(
-        self,
-        toc_text: str | None,
-        error: Exception | None,
-        target_dir: Path,
-    ) -> bool:
-        self._spin("create", False)
-        self._set_busy(False)
-        if error is not None:
-            self._set_row_status("create", "Error")
-            self._set_status(f"Create TOC failed: {error}")
-            return False
-        if target_dir != self.app.text_dir:
-            self._set_row_status("create", "Done")
-            self._set_status(
-                "TOC created for previous directory; current input directory changed."
-            )
-            return False
-        self._set_row_status("create", "Done")
-        if toc_text is not None:
-            self._replace_buffer_text(toc_text)
-            self._set_status("TOC created.")
-        else:
-            self._set_status("TOC updated.")
-        return False
-
-    def _on_save_clicked(self, _row: Adw.ActionRow) -> None:
-        if self._busy:
-            return
-        self._set_row_status("save", "Saving…")
-        try:
-            self._write_buffer_to_disk(mark_clean=True)
-        except OSError as exc:  # noqa: BLE001
-            self._set_row_status("save", "Error")
-            self._set_status(f"Save failed: {exc}")
-            return
-        self._set_status(f"Saved {self._toc_path().name}.")
-
-    def _on_choose_regex_clicked(self, _btn: Gtk.Button) -> None:
-        self.app.open_regex_dir_dialog(self)
-
-    def _on_buffer_changed(self, _buffer: Gtk.TextBuffer) -> None:
-        if self._buffer_guard:
-            return
-        self._buffer_dirty = True
-        self._set_row_status("save", "Modified")
-
-    def _load_existing_toc(self) -> None:
-        target_dir = self.app.text_dir
-        toc_path = self.app.toc_path
-        self._toc_load_generation += 1
-        generation = self._toc_load_generation
-        text, error = read_toc_text(toc_path)
-        self._apply_loaded_toc(generation, text, error, target_dir)
-
-    def _load_existing_toc_async(self) -> None:
-        target_dir = self.app.text_dir
-        toc_path = self.app.toc_path
-        self._toc_load_generation += 1
-        generation = self._toc_load_generation
-
-        def worker() -> None:
-            text, error = read_toc_text(toc_path)
-            GLib.idle_add(self._apply_loaded_toc, generation, text, error, target_dir)
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _apply_loaded_toc(
-        self,
-        generation: int,
-        text: str,
-        error: str | None,
-        target_dir: Path,
-    ) -> bool:
-        if generation != self._toc_load_generation:
-            return False
-        if target_dir != self.app.text_dir:
-            return False
-        if error:
-            self._set_status(error)
-        self._replace_buffer_text(text)
-        return False
-
-    def _on_dedupe_clicked(self, _row: Adw.ActionRow) -> None:
-        if self._busy:
-            return
-        try:
-            self._set_row_status("save", "Saving…")
-            self._write_buffer_to_disk(mark_clean=True)
-        except OSError as exc:  # noqa: BLE001
-            self._set_row_status("save", "Error")
-            self._set_status(f"Failed to save before cleaning TOC: {exc}")
-            return
-        self._set_status("Removing duplicates…")
-        self._set_busy(True)
-        self._spin("dedupe", True)
-
-        threading.Thread(target=self._run_dedupe_worker, daemon=True).start()
-
-    def _run_dedupe_worker(self) -> None:
-        text_dir = self.app.text_dir
-        toc_path = self.app.toc_path
-        try:
-            raw = toc_path.read_text(encoding="utf-8", errors="replace")
-        except Exception as exc:  # noqa: BLE001
-            GLib.idle_add(self._on_dedupe_finished, None, exc, text_dir)
-            return
-        try:
-            cleaned, removed_exact, removed_minutes = clean_toc_text(raw)
-            toc_path.parent.mkdir(parents=True, exist_ok=True)
-            toc_path.write_text(cleaned, encoding="utf-8")
-        except Exception as exc:  # noqa: BLE001
-            GLib.idle_add(self._on_dedupe_finished, None, exc, text_dir)
-            return
-
-        summary = (
-            "Duplicates removed"
-            f" (exact: {removed_exact}, MINUTES date dupes: {removed_minutes})."
-        )
-        GLib.idle_add(self._on_dedupe_finished, summary, None, text_dir)
-
-    def _on_dedupe_finished(
-        self,
-        summary: str | None,
-        error: Exception | None,
-        target_dir: Path,
-    ) -> bool:
-        self._spin("dedupe", False)
-        self._set_busy(False)
-        if error is not None:
-            self._set_row_status("save", "Error")
-            self._set_status(f"Remove duplicates failed: {error}")
-            return False
-
-        if target_dir != self.app.text_dir:
-            self._set_row_status("save", "Updated")
-            self._set_status(
-                "Remove duplicates completed for previous directory; active input directory changed."
-            )
-            return False
-
-        self._load_existing_toc_async()
-        self._set_row_status("save", "Updated")
-        self._set_status(summary or "Removed duplicates.")
-        return False
-
-    def on_input_dir_changed(self) -> None:
-        self._text_dir_label.set_text(str(self.app.text_dir))
-        self._load_existing_toc_async()
-
-    def on_regex_dir_changed(self) -> None:
-        self._regex_dir_label.set_text(str(self.app.regex_dir))
 
 
 @dataclass
