@@ -97,6 +97,10 @@ SUMMARY_DIR_NAME = "summaries"
 HEARING_SUMMARY_CANDIDATES = ("hearing_sum.txt", "hearing_summary.txt")
 REPORTS_SUMMARY_CANDIDATES = ("reports_sum.txt", "reports_summary.txt")
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
+MINUTES_SUMMARY_MANIFEST_PATH = Path(
+    "/home/jesse/Dropbox/TEMP/record_prep_example/record_prep/manifest.json"
+)
+MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
 
 # =====================
 # UI Defaults
@@ -247,6 +251,19 @@ def _read_record_prep_manifest(root: Path) -> dict[str, Any] | None:
         return None
     try:
         raw = manifest_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def _read_manifest_file(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError):
         return None
@@ -1116,6 +1133,7 @@ class Focus(Adw.Application):
         self._ai_spinner: Gtk.Spinner | None = None
         self._ai_range_entry: Gtk.Entry | None = None
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
+        self._minutes_summary_button: Gtk.Button | None = None
         self._hearing_summary_button: Gtk.Button | None = None
         self._reports_summary_button: Gtk.Button | None = None
         self._choose_summary_button: Gtk.Button | None = None
@@ -1537,6 +1555,14 @@ class Focus(Adw.Application):
         summary_button_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         summary_button_group.set_hexpand(True)
         summary_button_group.set_valign(Gtk.Align.CENTER)
+
+        self._minutes_summary_button = Gtk.Button(label="Minutes Sum")
+        self._minutes_summary_button.add_css_class("flat")
+        self._minutes_summary_button.add_css_class("no-bold")
+        self._minutes_summary_button.set_valign(Gtk.Align.CENTER)
+        self._minutes_summary_button.set_tooltip_text("Load minutes summary from manifest")
+        self._minutes_summary_button.connect("clicked", self._on_minutes_summary_clicked)
+        summary_button_group.append(self._minutes_summary_button)
 
         self._hearing_summary_button = Gtk.Button(label="Hearing Sum")
         self._hearing_summary_button.add_css_class("flat")
@@ -4238,6 +4264,35 @@ class Focus(Adw.Application):
         if not path:
             return
         self._load_summary_from_path(path)
+
+    def _load_summary_from_manifest(
+        self,
+        label: str,
+        manifest_path: Path,
+        file_key: str,
+    ) -> None:
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_FILE)
+        manifest = _read_manifest_file(manifest_path)
+        if not manifest:
+            self._transient_toast(f"{label} summary manifest not found: {manifest_path}")
+            return
+        files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+        summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+        if not summary_path:
+            self._transient_toast(f"{label} summary not listed in manifest: {manifest_path}")
+            return
+        if not summary_path.exists():
+            self._transient_toast(f"{label} summary file not found: {summary_path}")
+            return
+        self._load_summary_from_path(summary_path)
+
+    def _on_minutes_summary_clicked(self, _button: Gtk.Button) -> None:
+        self._load_summary_from_manifest(
+            "Minutes",
+            MINUTES_SUMMARY_MANIFEST_PATH,
+            MINUTES_SUMMARY_MANIFEST_KEY,
+        )
 
     def _on_hearing_summary_clicked(self, _button: Gtk.Button) -> None:
         self._load_summary_from_summaries_dir(
