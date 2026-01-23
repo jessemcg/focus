@@ -2104,6 +2104,7 @@ class Focus(Adw.Application):
         action_row = Adw.ActionRow()
         action_row.add_css_class("flat")
         action_row.add_css_class("focus-sidebar-row")
+        action_row.set_use_markup(False)
         action_row.set_activatable(False)
         action_row.set_hexpand(True)
         arrow_icon = Gtk.Image.new_from_icon_name("pan-end-symbolic")
