@@ -97,9 +97,6 @@ SUMMARY_DIR_NAME = "summaries"
 HEARING_SUMMARY_CANDIDATES = ("hearing_sum.txt", "hearing_summary.txt")
 REPORTS_SUMMARY_CANDIDATES = ("reports_sum.txt", "reports_summary.txt")
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
-MINUTES_SUMMARY_MANIFEST_PATH = Path(
-    "/home/jesse/Dropbox/TEMP/record_prep_example/record_prep/manifest.json"
-)
 MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
 
 # =====================
@@ -173,6 +170,19 @@ def _normalize_input_dir(path: Path) -> Path:
     if manifest_child.exists():
         return path / "record_prep"
     return path
+
+
+def _find_manifest_near_path(path: Path) -> Path | None:
+    manifest_here = path / "manifest.json"
+    if manifest_here.exists():
+        return manifest_here
+    manifest_parent = path.parent / "manifest.json"
+    if manifest_parent.exists():
+        return manifest_parent
+    manifest_child = path / "record_prep" / "manifest.json"
+    if manifest_child.exists():
+        return manifest_child
+    return None
 
 
 def load_input_dir_from_config() -> Path:
@@ -4289,9 +4299,15 @@ class Focus(Adw.Application):
         self._load_summary_from_path(summary_path)
 
     def _on_minutes_summary_clicked(self, _button: Gtk.Button) -> None:
+        manifest_path = _find_manifest_near_path(self.input_dir)
+        if not manifest_path:
+            self._transient_toast(
+                f"Minutes summary manifest not found near input dir: {self.input_dir}"
+            )
+            return
         self._load_summary_from_manifest(
             "Minutes",
-            MINUTES_SUMMARY_MANIFEST_PATH,
+            manifest_path,
             MINUTES_SUMMARY_MANIFEST_KEY,
         )
 
