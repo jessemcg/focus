@@ -2683,7 +2683,7 @@ class Focus(Adw.Application):
         table = buf.get_tag_table()
         tag = table.lookup("match-highlight") if table is not None else None
         if tag is None:
-            tag = buf.create_tag("match-highlight", foreground=DEFAULT_MATCH_COLOR)
+            tag = buf.create_tag("match-highlight", background=DEFAULT_MATCH_COLOR)
         return tag
 
     def _ensure_keyword_highlight_tag(self) -> Gtk.TextTag | None:
@@ -2693,7 +2693,7 @@ class Focus(Adw.Application):
         table = buf.get_tag_table()
         tag = table.lookup("keyword-highlight") if table is not None else None
         if tag is None:
-            tag = buf.create_tag("keyword-highlight", foreground=DEFAULT_HIGHLIGHT_COLOR)
+            tag = buf.create_tag("keyword-highlight", background=DEFAULT_HIGHLIGHT_COLOR)
         return tag
 
     def _apply_keyword_highlights(self, buf: Gtk.TextBuffer, text: str) -> None:
