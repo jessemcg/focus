@@ -887,6 +887,7 @@ listbox.focus-sidebar-listview row {
 
 #page-text {
   background-color: __PAGE_TEXT_BG__;
+  font-family: "Century Schoolbook", "TeX Gyre Schola", "New Century Schoolbook", "Century Schoolbook L", "URW Schoolbook L", serif;
 }
 
 #page-text text {
@@ -2737,7 +2738,7 @@ class Focus(Adw.Application):
             end_iter = buf.get_iter_at_offset(end)
             page_tag = buf.create_tag(
                 None,
-                foreground="#62a0ea",
+                foreground="#1a5fb4",
                 underline=Pango.Underline.SINGLE,
             )
             self._link_tag_lookup[page_tag] = ("page", page_str)
