@@ -874,6 +874,12 @@ listbox.focus-sidebar-listview row {
   color: alpha(@window_fg_color, 0.62);
 }
 
+.focus-subdued,
+.focus-subdued label,
+.focus-subdued image {
+  color: alpha(@window_fg_color, 0.62);
+}
+
 .focus-view-toggle:not(:checked),
 .focus-view-toggle:not(:checked) label {
   color: alpha(@window_fg_color, 0.62);
@@ -1792,6 +1798,7 @@ class Focus(Adw.Application):
         grep_search_button = Gtk.Button(label="Search")
         grep_search_button.add_css_class("flat")
         grep_search_button.add_css_class("no-bold")
+        grep_search_button.add_css_class("focus-subdued")
         grep_search_button.set_valign(Gtk.Align.CENTER)
         grep_search_button.connect("clicked", self._on_grep_search_clicked)
         trailing_controls.append(grep_search_button)
@@ -1799,6 +1806,7 @@ class Focus(Adw.Application):
         grep_highlighted_button = Gtk.Button(label="Search Highlighted")
         grep_highlighted_button.add_css_class("flat")
         grep_highlighted_button.add_css_class("no-bold")
+        grep_highlighted_button.add_css_class("focus-subdued")
         grep_highlighted_button.set_valign(Gtk.Align.CENTER)
         grep_highlighted_button.connect("clicked", self._on_grep_search_highlighted_clicked)
         trailing_controls.append(grep_highlighted_button)
