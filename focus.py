@@ -43,7 +43,8 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gio, GLib, Gdk, GObject, Gtk, Pango  # type: ignore
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Adw, Gio, GLib, Gdk, GdkPixbuf, GObject, Gtk, Pango  # type: ignore
 
 # =====================
 # Configuration
@@ -104,6 +105,8 @@ MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
 # =====================
 MAX_BREAKS = 2
 DEFAULT_TEXT_COLOR = "alpha(@window_fg_color, 0.68)"
+PAGE_TEXT_BG_COLOR = "#ffffff"
+PAGE_TEXT_FG_COLOR = "#000000"
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_MATCH_COLOR = "#ee122a"         # red
@@ -714,31 +717,37 @@ class FocusSidebarItem(GObject.GObject):
 APP_CHROME_CSS = (
     """
 window.background.focus-window {
-  background: @view_bg_color;
+  background: @window_bg_color;
 }
 
 navigation-split-view.focus-split,
 navigation-split-view.focus-split navigation-sidebar,
 navigation-split-view.focus-split navigation-sidebar > stack {
-  background: @view_bg_color;
+  background: @window_bg_color;
 }
 
 box.focus-sidebar {
-  background: @view_bg_color;
+  background: @window_bg_color;
+}
+
+box.focus-sidebar scrolledwindow,
+box.focus-sidebar scrolledwindow > viewport,
+box.focus-sidebar overlay {
+  background: @window_bg_color;
 }
 
 listview.focus-sidebar-listview,
 listview.focus-sidebar-listview row,
 listbox.focus-sidebar-listview,
 listbox.focus-sidebar-listview row {
-  background: transparent;
+  background: @window_bg_color;
 }
 
 .focus-sidebar-listbox-row,
 .focus-sidebar-listbox-row:hover,
 .focus-sidebar-listbox-row:selected,
 .focus-sidebar-listbox-row:focus {
-  background: transparent;
+  background: @window_bg_color;
   box-shadow: none;
   padding: 0;
 }
@@ -784,6 +793,13 @@ listbox.focus-sidebar-listview row {
   background-color: alpha(@window_fg_color, 0.08);
 }
 
+.focus-sidebar-row.focus-sidebar-bookmark-active .title,
+.focus-sidebar-row.focus-sidebar-bookmark-active label,
+.focus-sidebar-row.focus-sidebar-bookmark-active:hover .title,
+.focus-sidebar-row.focus-sidebar-bookmark-active:hover label {
+  color: alpha(@window_fg_color, 0.85);
+}
+
 .focus-sidebar-expand-button {
   min-height: 28px;
   min-width: 28px;
@@ -812,7 +828,7 @@ listbox.focus-sidebar-listview row {
 
 .focus-root-scroller,
 .focus-root-scroller > viewport {
-  background: @view_bg_color;
+  background: @window_bg_color;
 }
 
 /* deactivate for focus minutes */
@@ -823,12 +839,22 @@ listbox.focus-sidebar-listview row {
 
 .focus-scroller,
 .focus-scroller > viewport {
-  background: @view_bg_color;
+  background: transparent;
 }
 
 .focus-scroller > viewport {
   padding-top: 10px;
 }
+
+.focus-image-scroller > viewport {
+  padding-top: 0;
+}
+
+.focus-image-scroller,
+.focus-image-scroller > viewport {
+  background: __PAGE_TEXT_BG__;
+}
+
 
 .ai-output-frame {
   background-color: __AI_PANEL_BG__;
@@ -854,11 +880,17 @@ listbox.focus-sidebar-listview row {
 }
 
 #page-text {
-  background-color: alpha(@window_fg_color, 0.08);
-  border-top-left-radius: 16px;
+  background-color: __PAGE_TEXT_BG__;
+}
+
+#page-text text {
+  background-color: __PAGE_TEXT_BG__;
 }
 """
-).replace("__AI_PANEL_BG__", DEFAULT_AI_PANEL_BG_COLOR)
+).replace("__AI_PANEL_BG__", DEFAULT_AI_PANEL_BG_COLOR).replace(
+    "__PAGE_TEXT_BG__",
+    PAGE_TEXT_BG_COLOR,
+)
 _chrome_provider = Gtk.CssProvider()
 _chrome_provider.load_from_data(APP_CHROME_CSS.encode("utf-8"))
 _display = Gdk.Display.get_default()
@@ -1119,6 +1151,11 @@ class Focus(Adw.Application):
         self._content_stack: Gtk.Stack | None = None
         self._image_scroller: Gtk.ScrolledWindow | None = None
         self._image_picture: Gtk.Picture | None = None
+        self._image_fixed: Gtk.Fixed | None = None
+        self._image_pixbuf: GdkPixbuf.Pixbuf | None = None
+        self._image_scaled_size: tuple[int, int] | None = None
+        self._image_tick_id: int | None = None
+        self._image_viewport_size: tuple[int, int] | None = None
         self._show_image = False
         self._show_image_action: Gio.SimpleAction | None = None
         self._continuous_toggle_button: Gtk.ToggleButton | None = None
@@ -1393,31 +1430,32 @@ class Focus(Adw.Application):
         self.scroller.set_child(self.textview)
 
         self._image_picture = Gtk.Picture()
-        self._image_picture.set_hexpand(True)
-        self._image_picture.set_vexpand(True)
+        self._image_picture.set_hexpand(False)
+        self._image_picture.set_vexpand(False)
         self._image_picture.set_halign(Gtk.Align.START)
         self._image_picture.set_valign(Gtk.Align.START)
         self._image_picture.set_content_fit(Gtk.ContentFit.CONTAIN)
         self._image_picture.set_can_shrink(True)
 
-        image_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        image_container.set_margin_top(0)
-        image_container.set_margin_bottom(0)
-        image_container.set_margin_start(0)
-        image_container.set_margin_end(0)
-        image_container.set_halign(Gtk.Align.FILL)
-        image_container.set_valign(Gtk.Align.START)
-        image_container.append(self._image_picture)
+        self._image_fixed = Gtk.Fixed()
+        self._image_fixed.set_hexpand(False)
+        self._image_fixed.set_vexpand(False)
+        self._image_fixed.set_halign(Gtk.Align.START)
+        self._image_fixed.set_valign(Gtk.Align.START)
+        self._image_fixed.put(self._image_picture, 0, 0)
 
         self._image_scroller = Gtk.ScrolledWindow()
         self._image_scroller.add_css_class("focus-scroller")
+        self._image_scroller.add_css_class("focus-image-scroller")
         self._image_scroller.set_hexpand(True)
         self._image_scroller.set_vexpand(True)
+        self._image_scroller.set_halign(Gtk.Align.FILL)
         self._image_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self._image_scroller.set_propagate_natural_height(False)
+        self._image_scroller.set_propagate_natural_width(False)
         self._image_scroller.set_min_content_height(0)
         self._image_scroller.set_size_request(-1, 0)
-        self._image_scroller.set_child(image_container)
+        self._image_scroller.set_child(self._image_fixed)
 
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         content_box.set_hexpand(True)
@@ -1784,7 +1822,6 @@ class Focus(Adw.Application):
         self._split_content_page = Adw.NavigationPage.new(content_box, "Document")
         self._split_view.set_content(self._split_content_page)
         self._split_view.set_collapsed(True)
-
         sidebar_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         sidebar_root.set_hexpand(True)
         sidebar_root.set_vexpand(True)
@@ -2508,6 +2545,15 @@ class Focus(Adw.Application):
         self._current_view_state().sidebar_visible = visible
         if self._split_view:
             self._split_view.set_collapsed(not visible)
+            current_sidebar = (
+                self._split_view.get_sidebar() if hasattr(self._split_view, "get_sidebar") else None
+            )
+            if visible:
+                if self._split_sidebar_page and current_sidebar is None:
+                    self._split_view.set_sidebar(self._split_sidebar_page)
+            else:
+                if current_sidebar is not None:
+                    self._split_view.set_sidebar(None)
         if self._toc_sidebar_revealer:
             self._toc_sidebar_revealer.set_reveal_child(visible)
         self._sync_sidebar_controls()
@@ -2585,7 +2631,7 @@ class Focus(Adw.Application):
         self._current_text_color = color_value
         css = (
             "#page-text { "
-            f"color: {color_value}; font-size: {self._font_size_pt}pt; "
+            f"color: {PAGE_TEXT_FG_COLOR}; font-size: {self._font_size_pt}pt; "
             "}"
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
@@ -3332,8 +3378,18 @@ class Focus(Adw.Application):
                 self._transient_toast(f"Image {image_path.name} not found")
             return False
 
-        picture_file = Gio.File.new_for_path(str(image_path))
-        self._image_picture.set_file(picture_file)
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(image_path))
+        except GLib.Error:
+            if not silent:
+                self._transient_toast(f"Image {image_path.name} could not be loaded")
+            return False
+
+        self._image_pixbuf = pixbuf
+        self._image_scaled_size = None
+        self._image_viewport_size = None
+        self._start_image_scale_tick()
+        self._update_image_scaled()
         self._image_picture.set_alternative_text(f"Page {page:04d} image")
 
         vadj = self._image_scroller.get_vadjustment()
@@ -3346,8 +3402,68 @@ class Focus(Adw.Application):
 
     def _clear_image_view(self) -> None:
         if self._image_picture:
-            self._image_picture.set_file(None)
+            self._image_picture.set_paintable(None)
             self._image_picture.set_alternative_text("")
+            self._image_picture.set_size_request(-1, -1)
+        if self._image_fixed:
+            self._image_fixed.set_size_request(-1, -1)
+        self._image_pixbuf = None
+        self._image_scaled_size = None
+        self._stop_image_scale_tick()
+        self._image_viewport_size = None
+
+    def _start_image_scale_tick(self) -> None:
+        if not self._image_scroller or self._image_tick_id is not None:
+            return
+        self._image_tick_id = self._image_scroller.add_tick_callback(self._on_image_tick)
+
+    def _stop_image_scale_tick(self) -> None:
+        if not self._image_scroller or self._image_tick_id is None:
+            return
+        self._image_scroller.remove_tick_callback(self._image_tick_id)
+        self._image_tick_id = None
+
+    def _on_image_tick(
+        self,
+        _widget: Gtk.Widget,
+        _frame_clock: Gdk.FrameClock,
+    ) -> bool:
+        if not self._image_pixbuf or not self._image_scroller:
+            return False
+        width = self._image_scroller.get_width()
+        height = self._image_scroller.get_height()
+        if width > 0 and height > 0 and (width, height) != self._image_viewport_size:
+            self._image_viewport_size = (width, height)
+            self._update_image_scaled()
+        return True
+
+    def _update_image_scaled(self) -> None:
+        if not (self._image_picture and self._image_scroller and self._image_pixbuf):
+            return
+        viewport_width = self._image_scroller.get_width()
+        viewport_height = self._image_scroller.get_height()
+        if viewport_width <= 0 or viewport_height <= 0:
+            return
+        width = self._image_pixbuf.get_width()
+        height = self._image_pixbuf.get_height()
+        scale = min(1.0, viewport_width / width, viewport_height / height)
+        target_width = max(1, int(width * scale))
+        target_height = max(1, int(height * scale))
+        if self._image_scaled_size == (target_width, target_height):
+            return
+        scaled = self._image_pixbuf.scale_simple(
+            target_width,
+            target_height,
+            GdkPixbuf.InterpType.BILINEAR,
+        )
+        if not scaled:
+            return
+        texture = Gdk.Texture.new_for_pixbuf(scaled)
+        self._image_picture.set_paintable(texture)
+        self._image_picture.set_size_request(target_width, target_height)
+        if self._image_fixed:
+            self._image_fixed.set_size_request(target_width, target_height)
+        self._image_scaled_size = (target_width, target_height)
 
     def _show_image_update_visible(self) -> None:
         if not self._content_stack:
