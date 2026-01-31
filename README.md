@@ -1,6 +1,6 @@
 # Focus
 
-<img src="focus.png" alt="Focus" width="512" align="left">
+<img src="focus.png" alt="Focus" width="128" align="left">
 
 Focus is a Libadwaita GTK4 app for browsing court transcript text files with fast paging, grep, images, and AI-assisted summaries/RAG.
 
