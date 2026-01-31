@@ -2,19 +2,21 @@
 
 ![Focus](focus.png)
 
-Focus is a Libadwaita GTK4 app for browsing court transcript text files with fast paging, grep, and AI-assisted summaries.
+Focus is a Libadwaita GTK4 app for browsing court transcript text files with fast paging, grep, images, and AI-assisted summaries/RAG.
 
 ## Features
-- Displays one text file at a time from a configurable directory
+- Displays one text page at a time, with optional continuous scroll mode
 - Mouse wheel scrolls within the current record; hold Ctrl + wheel to load previous/next page
-- Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header
+- Page jump (Ctrl+E), gap-tolerant grep (Ctrl+F), and TOC sidebar for navigation
 - Grep matches render in red and can show all matching pages in a single scrollable view
-- Ctrl+Shift+A opens the AI panel and focuses the RAG question box
-- Keyboard shortcuts: Up/Down = previous/next, Home/End = first/last
+- Toggle image view for page scans (Ctrl+I) when images are available
+- Dual view buttons to keep two independent browsing states side by side
+- AI panel with page/range summaries, RAG Q&A, and a summary-file viewer
 
 ## Requirements
-- Python 3.12 (see `pyproject.toml`)
+- Python 3.13 (see `pyproject.toml`)
 - PyGObject, GTK 4, Libadwaita 1
+- LangChain + Chroma + VoyageAI (for RAG; managed by `uv`)
 
 Ubuntu/Debian example:
 ```bash
@@ -29,36 +31,68 @@ uv sync
 
 ## Run
 ```bash
-uv run focus.py
+uv run python focus.py
 ```
 
 ## Data layout
-Example transcript folder structure (set `input_dir` to the case root):
+Example legacy transcript folder structure (set `input_dir` to the case root):
 ```
 case_root/
   text_record/
     0001.txt
     0002.txt
+    toc.txt
   images/
-    0001.jpg
-    0002.jpg
+    0001.png
+    0002.png
+```
+
+Record-prep layout with `manifest.json` (auto-detected when present):
+```
+case_root/
+  manifest.json
+  text_pages/
+    0001.txt
+  image_pages/
+    0001.png
+  artifacts/
+    toc.txt
+  rag/
+    case_overview.txt
+    vector_database/
 ```
 
 ## Configuration
 Settings are stored in `config.json` next to `focus.py`. Key fields include:
 - `input_dir`: root folder for transcripts
-- `regex_dir`: folder containing regex patterns
-- AI settings: `api_url`, `model_id`, `api_key`, and related summarization/RAG keys
+- `font_size_pt`, `ai_font_size_pt`
+- `highlight_phrases`: newline-separated phrases to highlight
+- Summaries: `api_url`, `api_key`, `model_id`, plus `summarization_prompt`
+- Page/range summaries: `page_api_url`, `page_api_key`, `page_model_id`, `page_summarization_prompt`,
+  `range_api_url`, `range_api_key`, `range_model_id`, `range_summarization_prompt`
+- RAG: `rag_api_url`, `rag_api_key`, `rag_model_id`, `rag_prompt`, `rag_chunk_count`
+- RAG embeddings: `voyage_api_key`, `voyage_model`
+- Summary file viewer: `summary_file`, `summary_read_positions`
 
 Defaults are defined in `focus.py` if a key is missing.
 
 ## Project structure
 - `focus.py`: application entry point and core UI/logic
-- `focus (Copy).py`: prior iteration retained for reference
-- `useful_code_from_dogear/`: helper scripts and reference implementations
+- `config.json`: local settings (do not commit secrets)
 - `legacy_versions/`: historical backups (do not edit)
+- `prompts/`: prompt history and change notes
 - `pyproject.toml`, `uv.lock`: dependency and runtime definitions
 
 ## Notes
-- This project targets GNOME 46; some UI patterns in `useful_code_from_dogear/` are from GNOME 48.
+- RAG requires a populated `rag/vector_database` and a `rag/case_overview.txt` (or legacy case overview).
 - Automated tests are not set up yet.
+
+## Keyboard shortcuts
+- Up/Down: previous/next page
+- Home/End: first/last page
+- Ctrl+E: page jump
+- Ctrl+F: grep search
+- Ctrl+Shift+A: toggle AI panel
+- Ctrl+Shift+C: toggle continuous view
+- Ctrl+Shift+Z: toggle TOC sidebar
+- Ctrl+I: toggle image view

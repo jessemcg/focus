@@ -1,7 +1,7 @@
 [project]
 name = "focus"
 version = "0.1.0"
-description = "Add your description here"
+description = "Libadwaita GTK4 app for browsing court transcripts with paging, grep, images, and AI summaries/RAG."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
