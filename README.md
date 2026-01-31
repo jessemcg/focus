@@ -1,7 +1,6 @@
 # Focus
 
-<img src="focus.png" alt="Focus" width="720">
-<img src="focus_screenshot.png" alt="Focus screenshot" width="720">
+<img src="focus.png" alt="Focus" width="512" align="left">
 
 Focus is a Libadwaita GTK4 app for browsing court transcript text files with fast paging, grep, images, and AI-assisted summaries/RAG.
 
@@ -13,6 +12,8 @@ Focus is a Libadwaita GTK4 app for browsing court transcript text files with fas
 - Toggle image view for page scans (Ctrl+I) when images are available
 - Dual view buttons to keep two independent browsing states side by side
 - AI panel with page/range summaries, RAG Q&A, and a summary-file viewer
+
+<img src="focus_screenshot.png" alt="Focus screenshot" width="720">
 
 ## Requirements
 - Python 3.13 (see `pyproject.toml`)
@@ -32,7 +33,7 @@ uv sync
 
 ## Run
 ```bash
-uv run python focus.py
+uv run focus.py
 ```
 
 ## Data layout
