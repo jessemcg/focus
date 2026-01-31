@@ -660,14 +660,6 @@ IMAGE_ICON_OFF_CHOICES = (
     "image-x-generic-symbolic",
     "image-missing",
 )
-AI_PANEL_ICON_CHOICES = (
-    "computer-chip-symbolic",
-    "panel-top-symbolic",
-    "view-dual-symbolic",
-    "window-restore-symbolic",
-)
-
-
 @dataclass
 class TocBookmark:
     title: str
@@ -766,6 +758,18 @@ listbox.focus-sidebar-listview row {
 .focus-sidebar-row.focus-sidebar-category:hover,
 .focus-sidebar-row.focus-sidebar-category.focus-sidebar-category-expanded {
   background-color: transparent;
+}
+
+.focus-sidebar-row.focus-sidebar-top-level {
+  background-color: alpha(@window_fg_color, 0.05);
+  margin-top: 4px;
+  margin-bottom: 4px;
+  margin-left: 10px;
+}
+
+.focus-sidebar-row.focus-sidebar-top-level:hover,
+.focus-sidebar-row.focus-sidebar-top-level.focus-sidebar-category-expanded {
+  background-color: alpha(@window_fg_color, 0.08);
 }
 
 .focus-sidebar-row.focus-sidebar-category .title,
@@ -1178,7 +1182,6 @@ class Focus(Adw.Application):
         self._toc_categories: list[TocCategory] = []
         self._toc_load_generation = 0
         self._ai_panel_revealer: Gtk.Revealer | None = None
-        self._ai_panel_icon: Gtk.Image | None = None
         self._ai_view_stack: Adw.ViewStack | None = None
         self._ai_view_toggles: dict[str, Gtk.ToggleButton] = {}
         self._ai_view_toggle_guard = False
@@ -1205,7 +1208,6 @@ class Focus(Adw.Application):
         self._rag_loading = False
         self._rag_lock = threading.Lock()
         self._rag_question_entry: Gtk.Entry | None = None
-        self._ai_panel_icon_name = AI_PANEL_ICON_CHOICES[0]
         self._views: dict[str, FocusViewState] = {
             VIEW_ONE_ID: FocusViewState(name=VIEW_LABELS[VIEW_ONE_ID]),
             VIEW_TWO_ID: FocusViewState(name=VIEW_LABELS[VIEW_TWO_ID]),
@@ -1361,12 +1363,10 @@ class Focus(Adw.Application):
         self._toc_sidebar_button.connect("toggled", self._on_sidebar_toggle_button)
         left_box.append(self._toc_sidebar_button)
 
-        self._ai_panel_icon_name = self._choose_icon(*AI_PANEL_ICON_CHOICES)
-        self._ai_panel_icon = Gtk.Image.new_from_icon_name(self._ai_panel_icon_name)
-        self._ai_panel_icon.add_css_class("focus-toggle-icon")
-        self._ai_panel_toggle = Gtk.ToggleButton()
-        self._ai_panel_toggle.set_child(self._ai_panel_icon)
+        self._ai_panel_toggle = Gtk.ToggleButton(label="AI Panel")
         self._ai_panel_toggle.add_css_class("flat")
+        self._ai_panel_toggle.add_css_class("no-bold")
+        self._ai_panel_toggle.add_css_class("focus-view-toggle")
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
         self._ai_panel_toggle.set_tooltip_text("Show AI panel (Ctrl+Shift+A)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
@@ -2212,10 +2212,13 @@ class Focus(Adw.Application):
         action_row.remove_css_class("focus-sidebar-category")
         action_row.remove_css_class("focus-sidebar-bookmark")
         action_row.remove_css_class("focus-sidebar-category-expanded")
+        action_row.remove_css_class("focus-sidebar-top-level")
         if item.kind == "category":
             action_row.add_css_class("focus-sidebar-category")
         else:
             action_row.add_css_class("focus-sidebar-bookmark")
+        if depth == 0:
+            action_row.add_css_class("focus-sidebar-top-level")
         action_row.set_title(item.title)
         if item.kind == "bookmark" and item.page is not None:
             action_row.set_subtitle(f"Page {item.page:04d}")
@@ -4216,8 +4219,6 @@ class Focus(Adw.Application):
         if self._ai_panel_toggle and self._ai_panel_toggle.get_active() != visible:
             self._ai_panel_toggle.set_active(visible)
         self._current_view_state().ai_panel_visible = visible
-        if self._ai_panel_icon:
-            self._ai_panel_icon.set_from_icon_name(self._ai_panel_icon_name)
         if self._ai_panel_toggle:
             tooltip = (
                 "Hide AI panel (Ctrl+Shift+A)"
