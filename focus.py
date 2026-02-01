@@ -892,7 +892,6 @@ listbox.focus-sidebar-listview row {
 
 #page-text {
   background-color: __PAGE_TEXT_BG__;
-  font-family: "Century Schoolbook", "TeX Gyre Schola", "New Century Schoolbook", "Century Schoolbook L", "URW Schoolbook L", serif;
 }
 
 #page-text text {
@@ -1415,7 +1414,7 @@ class Focus(Adw.Application):
         # Place headerbar in main window
         toolbar.add_top_bar(header)
 
-        self.textview = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.NONE)
+        self.textview = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD)
         self.textview.set_hexpand(True)
         self.textview.set_vexpand(True)
         self.textview.set_name("page-text")
@@ -1662,7 +1661,7 @@ class Focus(Adw.Application):
             self._ai_controls_stack.add_named(summary_button_group, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
 
-        self._summary_view = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        self._summary_view = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self._summary_view.add_css_class("ai-output-view")
         self._summary_view.set_hexpand(True)
         self._summary_view.set_vexpand(True)
