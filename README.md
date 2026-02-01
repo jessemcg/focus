@@ -98,3 +98,6 @@ Defaults are defined in `focus.py` if a key is missing.
 - Ctrl+Shift+C: toggle continuous view
 - Ctrl+Shift+Z: toggle TOC sidebar
 - Ctrl+I: toggle image view
+
+## License
+GPL-3.0-or-later. See `LICENSE`.
