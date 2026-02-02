@@ -119,6 +119,7 @@ AI_OUTPUT_MIN_HEIGHT = 140
 AI_OUTPUT_MAX_HEIGHT = 480
 AI_OUTPUT_LINE_HEIGHT = 1.25
 CONTINUOUS_PAGE_BATCH = 25
+CONTINUOUS_PAGE_DIVIDER = "-" * 48
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
@@ -849,6 +850,17 @@ listbox.focus-sidebar-listview row {
 
 .focus-scroller > viewport {
   padding-top: 10px;
+  background-color: __PAGE_TEXT_BG__;
+}
+
+.focus-scroller {
+  background-color: __PAGE_TEXT_BG__;
+}
+
+.focus-text-rounded,
+.focus-text-rounded > viewport {
+  background-color: __PAGE_TEXT_BG__;
+  border-radius: 16px;
 }
 
 .focus-image-scroller > viewport {
@@ -891,11 +903,11 @@ listbox.focus-sidebar-listview row {
 }
 
 #page-text {
-  background-color: __PAGE_TEXT_BG__;
+  background-color: transparent;
 }
 
 #page-text text {
-  background-color: __PAGE_TEXT_BG__;
+  background-color: transparent;
 }
 """
 ).replace("__AI_PANEL_BG__", DEFAULT_AI_PANEL_BG_COLOR).replace(
@@ -1033,6 +1045,8 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
 
 PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
+TABLE_BORDER_RE = re.compile(r"^\s*\+[-=]+\+[-=+]*\s*$")
+TABLE_LINE_RE = re.compile(r".*\|.*\|.*")
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
 LINK_TRAILING_PUNCTUATION = ",.;:!?)]"
 
@@ -1435,6 +1449,7 @@ class Focus(Adw.Application):
         self.scroller.set_min_content_height(0)
         self.scroller.set_size_request(-1, 0)
         self.scroller.set_child(self.textview)
+        self._update_text_rounding()
 
         self._image_picture = Gtk.Picture()
         self._image_picture.set_hexpand(False)
@@ -2125,6 +2140,7 @@ class Focus(Adw.Application):
                     end_iter = buf.get_iter_at_offset(end)
                     buf.apply_tag(tag, start_iter, end_iter)
         self._apply_keyword_highlights(buf, text)
+        self._apply_table_no_wrap(buf, text)
         if self.scroller:
             vadj = self.scroller.get_vadjustment()
             if vadj:
@@ -2132,6 +2148,33 @@ class Focus(Adw.Application):
             hadj = self.scroller.get_hadjustment()
             if hadj:
                 GLib.idle_add(hadj.set_value, hadj.get_lower())
+
+    def _apply_table_no_wrap(self, buf: Gtk.TextBuffer, text: str) -> None:
+        table = buf.get_tag_table()
+        if table is None:
+            return
+        tag = table.lookup("table-no-wrap")
+        if tag is None:
+            tag = buf.create_tag("table-no-wrap", wrap_mode=Gtk.WrapMode.NONE)
+        offset = 0
+        block_start: int | None = None
+        for line in text.splitlines(keepends=True):
+            stripped = line.rstrip("\n")
+            is_table_line = (
+                bool(TABLE_BORDER_RE.match(stripped)) or bool(TABLE_LINE_RE.match(stripped))
+            )
+            if is_table_line and block_start is None:
+                block_start = offset
+            if not is_table_line and block_start is not None:
+                start_iter = buf.get_iter_at_offset(block_start)
+                end_iter = buf.get_iter_at_offset(offset)
+                buf.apply_tag(tag, start_iter, end_iter)
+                block_start = None
+            offset += len(line)
+        if block_start is not None:
+            start_iter = buf.get_iter_at_offset(block_start)
+            end_iter = buf.get_iter_at_offset(offset)
+            buf.apply_tag(tag, start_iter, end_iter)
 
     def _rebuild_toc_sidebar(self) -> None:
         if self._toc_sidebar_root_store is None:
@@ -2393,7 +2436,7 @@ class Focus(Adw.Application):
             rendered, _ = self._render_page_display(page, content, None)
             parts.append(rendered)
             if idx != len(ordered) - 1:
-                parts.append("\n\n")
+                parts.append(f"\n\n{CONTINUOUS_PAGE_DIVIDER}\n\n")
         return "".join(parts)
 
     def _connect_continuous_scroll_watch(self) -> None:
@@ -3484,6 +3527,7 @@ class Focus(Adw.Application):
         current = self._content_stack.get_visible_child_name()
         if current != target:
             self._content_stack.set_visible_child_name(target)
+        self._update_text_rounding()
 
     def _sync_show_image_action(self) -> None:
         if not self._show_image_action:
@@ -3588,6 +3632,14 @@ class Focus(Adw.Application):
         self._clear_image_view()
         self._sync_show_image_action()
         return True
+
+    def _update_text_rounding(self) -> None:
+        if not self.scroller:
+            return
+        if self._show_image:
+            self.scroller.remove_css_class("focus-text-rounded")
+        else:
+            self.scroller.add_css_class("focus-text-rounded")
 
     def _link_at_coords(self, textview: Gtk.TextView, x: float, y: float) -> tuple[str, str] | None:
         bx, by = textview.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
