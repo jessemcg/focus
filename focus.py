@@ -118,8 +118,9 @@ SIDEBAR_TREE_INDENT = 10
 AI_OUTPUT_MIN_HEIGHT = 140
 AI_OUTPUT_MAX_HEIGHT = 480
 AI_OUTPUT_LINE_HEIGHT = 1.25
+PAGE_LINK_COLOR = "#1a5fb4"
 CONTINUOUS_PAGE_BATCH = 25
-CONTINUOUS_PAGE_DIVIDER = "-" * 48
+CONTINUOUS_PAGE_DIVIDER = "─" * 48
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
@@ -1048,7 +1049,114 @@ PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULT
 TABLE_BORDER_RE = re.compile(r"^\s*\+[-=]+\+[-=+]*\s*$")
 TABLE_LINE_RE = re.compile(r".*\|.*\|.*")
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
+MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*(?!\s)([^*\n]+?)\*\*|\*(?!\s)([^*\n]+?)\*")
 LINK_TRAILING_PUNCTUATION = ",.;:!?)]"
+MARKDOWN_HEADING_SCALES = {
+    1: 1.55,
+    2: 1.3,
+    3: 1.15,
+}
+
+
+def _render_markdown_text(text: str) -> tuple[str, list[tuple[int, int, str]], list[int]]:
+    spans: list[tuple[int, int, str]] = []
+    if not text:
+        return "", spans, [0]
+
+    out: list[str] = []
+    orig_to_clean = [0] * (len(text) + 1)
+    clean_index = 0
+    pos = 0
+
+    def _process_emphasis(segment: str, base_offset: int) -> tuple[str, list[tuple[int, int, str]], list[int]]:
+        segment_spans: list[tuple[int, int, str]] = []
+        segment_out: list[str] = []
+        segment_map = [0] * (len(segment) + 1)
+        seg_orig = 0
+        seg_clean = 0
+
+        for match in MARKDOWN_EMPHASIS_RE.finditer(segment):
+            start, end = match.span()
+            for idx in range(seg_orig, start):
+                segment_map[idx] = seg_clean
+                segment_out.append(segment[idx])
+                seg_clean += 1
+            segment_map[start] = seg_clean
+
+            if match.group(1) is not None:
+                content_start = start + 2
+                content_end = end - 2
+                kind = "bold"
+            else:
+                content_start = start + 1
+                content_end = end - 1
+                kind = "italic"
+
+            for idx in range(start, content_start):
+                segment_map[idx] = seg_clean
+            span_start = seg_clean
+            for idx in range(content_start, content_end):
+                segment_map[idx] = seg_clean
+                segment_out.append(segment[idx])
+                seg_clean += 1
+            span_end = seg_clean
+            if span_end > span_start:
+                segment_spans.append((span_start + base_offset, span_end + base_offset, kind))
+            for idx in range(content_end, end):
+                segment_map[idx] = seg_clean
+            seg_orig = end
+
+        for idx in range(seg_orig, len(segment)):
+            segment_map[idx] = seg_clean
+            segment_out.append(segment[idx])
+            seg_clean += 1
+        segment_map[len(segment)] = seg_clean
+        return "".join(segment_out), segment_spans, segment_map
+
+    for line in text.splitlines(keepends=True):
+        line_start = pos
+        line_end = pos + len(line)
+        has_newline = line.endswith("\n")
+        content = line[:-1] if has_newline else line
+
+        prefix_len = 0
+        heading_level = 0
+        if content.startswith("# "):
+            prefix_len = 2
+            heading_level = 1
+        elif content.startswith("## "):
+            prefix_len = 3
+            heading_level = 2
+        elif content.startswith("### "):
+            prefix_len = 4
+            heading_level = 3
+
+        for idx in range(line_start, line_start + prefix_len):
+            orig_to_clean[idx] = clean_index
+
+        content_start = line_start + prefix_len
+        content_end = line_start + len(content)
+        line_content = text[content_start:content_end]
+        line_out, line_spans, line_map = _process_emphasis(line_content, clean_index)
+        out.append(line_out)
+        for idx in range(len(line_content) + 1):
+            orig_to_clean[content_start + idx] = line_map[idx] + clean_index
+        if heading_level and line_out:
+            spans.append((clean_index, clean_index + len(line_out), f"heading{heading_level}"))
+        spans.extend(line_spans)
+        clean_index += len(line_out)
+
+        if has_newline:
+            newline_orig = line_start + len(content)
+            orig_to_clean[newline_orig] = clean_index
+            out.append(line[-1])
+            clean_index += 1
+            orig_to_clean[line_end] = clean_index
+
+        pos = line_end
+
+    orig_to_clean[len(text)] = clean_index
+    return "".join(out), spans, orig_to_clean
 
 
 def split_link_phrase(phrase: str) -> tuple[str, str]:
@@ -2123,9 +2231,12 @@ class Focus(Adw.Application):
         if not self.textview:
             return
         buf = self.textview.get_buffer()
-        buf.set_text(text)
-        self._apply_page_links(buf, text)
+        rendered_text, markdown_spans, orig_to_clean = _render_markdown_text(text)
+        buf.set_text(rendered_text)
+        self._apply_markdown_spans(buf, markdown_spans)
+        self._apply_page_links(buf, rendered_text)
         if highlights:
+            highlights = self._map_markdown_spans(highlights, orig_to_clean)
             tag = self._ensure_highlight_tag()
             if tag is not None:
                 char_count = buf.get_char_count()
@@ -2139,8 +2250,9 @@ class Focus(Adw.Application):
                     start_iter = buf.get_iter_at_offset(start)
                     end_iter = buf.get_iter_at_offset(end)
                     buf.apply_tag(tag, start_iter, end_iter)
-        self._apply_keyword_highlights(buf, text)
-        self._apply_table_no_wrap(buf, text)
+        self._apply_keyword_highlights(buf, rendered_text)
+        self._apply_table_no_wrap(buf, rendered_text)
+        self._apply_continuous_divider_style(buf, rendered_text)
         if self.scroller:
             vadj = self.scroller.get_vadjustment()
             if vadj:
@@ -2175,6 +2287,97 @@ class Focus(Adw.Application):
             start_iter = buf.get_iter_at_offset(block_start)
             end_iter = buf.get_iter_at_offset(offset)
             buf.apply_tag(tag, start_iter, end_iter)
+
+    def _apply_continuous_divider_style(self, buf: Gtk.TextBuffer, text: str) -> None:
+        self._append_continuous_divider_style(buf, text, 0)
+
+    def _append_continuous_divider_style(
+        self,
+        buf: Gtk.TextBuffer,
+        text: str,
+        start_offset: int,
+    ) -> None:
+        if not text:
+            return
+        table = buf.get_tag_table()
+        if table is None:
+            return
+        tag = table.lookup("continuous-divider")
+        if tag is None:
+            tag = buf.create_tag("continuous-divider", foreground=PAGE_LINK_COLOR)
+        offset = start_offset
+        for line in text.splitlines(keepends=True):
+            stripped = line.rstrip("\n")
+            if stripped == CONTINUOUS_PAGE_DIVIDER:
+                start_iter = buf.get_iter_at_offset(offset)
+                end_iter = buf.get_iter_at_offset(offset + len(stripped))
+                buf.apply_tag(tag, start_iter, end_iter)
+            offset += len(line)
+
+    def _apply_markdown_spans(
+        self,
+        buf: Gtk.TextBuffer,
+        spans: list[tuple[int, int, str]],
+        base_offset: int = 0,
+    ) -> None:
+        if not spans:
+            return
+        table = buf.get_tag_table()
+        if table is None:
+            return
+
+        def ensure_tag(name: str, **props: object) -> Gtk.TextTag:
+            tag = table.lookup(name)
+            if tag is None:
+                tag = buf.create_tag(name, **props)
+            return tag
+
+        bold_tag = ensure_tag("md-bold", weight=Pango.Weight.BOLD)
+        italic_tag = ensure_tag("md-italic", style=Pango.Style.ITALIC)
+        heading_tags: dict[str, Gtk.TextTag] = {}
+        for level, scale in MARKDOWN_HEADING_SCALES.items():
+            heading_tags[f"heading{level}"] = ensure_tag(
+                f"md-h{level}",
+                weight=Pango.Weight.BOLD,
+                scale=scale,
+            )
+
+        for start, end, kind in spans:
+            if end <= start:
+                continue
+            start_iter = buf.get_iter_at_offset(start + base_offset)
+            end_iter = buf.get_iter_at_offset(end + base_offset)
+            if kind == "bold":
+                buf.apply_tag(bold_tag, start_iter, end_iter)
+            elif kind == "italic":
+                buf.apply_tag(italic_tag, start_iter, end_iter)
+            elif kind.startswith("heading"):
+                tag = heading_tags.get(kind)
+                if tag is not None:
+                    buf.apply_tag(tag, start_iter, end_iter)
+
+    def _map_markdown_offset(self, offset: int, mapping: list[int]) -> int:
+        if offset <= 0:
+            return 0
+        if offset >= len(mapping):
+            return mapping[-1] if mapping else 0
+        return mapping[offset]
+
+    def _map_markdown_spans(
+        self,
+        spans: list[tuple[int, int]],
+        mapping: list[int],
+    ) -> list[tuple[int, int]]:
+        mapped: list[tuple[int, int]] = []
+        for start, end in spans:
+            if end <= start:
+                continue
+            mapped_start = self._map_markdown_offset(start, mapping)
+            mapped_end = self._map_markdown_offset(end, mapping)
+            if mapped_end <= mapped_start:
+                continue
+            mapped.append((mapped_start, mapped_end))
+        return mapped
 
     def _rebuild_toc_sidebar(self) -> None:
         if self._toc_sidebar_root_store is None:
@@ -2513,11 +2716,14 @@ class Focus(Adw.Application):
                 return
             start_offset = buf.get_char_count()
             prefix = "\n\n" if start_offset > 0 else ""
-            text_to_insert = prefix + chunk
+            rendered_chunk, markdown_spans, _ = _render_markdown_text(chunk)
+            text_to_insert = prefix + rendered_chunk
             buf.insert(buf.get_end_iter(), text_to_insert)
-            self._continuous_text = (self._continuous_text or "") + text_to_insert
+            self._continuous_text = (self._continuous_text or "") + prefix + chunk
             chunk_offset = start_offset + len(prefix)
-            self._append_page_links(buf, chunk, chunk_offset)
+            self._apply_markdown_spans(buf, markdown_spans, chunk_offset)
+            self._append_page_links(buf, rendered_chunk, chunk_offset)
+            self._append_continuous_divider_style(buf, rendered_chunk, chunk_offset)
         finally:
             self._continuous_loading = False
 
@@ -2784,7 +2990,7 @@ class Focus(Adw.Application):
             end_iter = buf.get_iter_at_offset(end)
             page_tag = buf.create_tag(
                 None,
-                foreground="#1a5fb4",
+                foreground=PAGE_LINK_COLOR,
                 underline=Pango.Underline.SINGLE,
             )
             self._link_tag_lookup[page_tag] = ("page", page_str)
@@ -2874,7 +3080,9 @@ class Focus(Adw.Application):
         link_lookup.clear()
 
         rendered_text, spans = self._extract_ai_link_spans(text)
+        rendered_text, markdown_spans, orig_to_clean = _render_markdown_text(rendered_text)
         buffer.set_text(rendered_text)
+        self._apply_markdown_spans(buffer, markdown_spans)
 
         quote_color = self._resolve_ai_quote_color(
             self._summary_view if buffer is self._summary_buffer else None
@@ -2885,6 +3093,10 @@ class Focus(Adw.Application):
                     quote_color = self._resolve_ai_quote_color(state.view)
                     break
         for start, end, phrase in spans:
+            if end <= start:
+                continue
+            start = self._map_markdown_offset(start, orig_to_clean)
+            end = self._map_markdown_offset(end, orig_to_clean)
             if end <= start:
                 continue
             start_iter = buffer.get_iter_at_offset(start)
