@@ -120,7 +120,9 @@ AI_OUTPUT_MAX_HEIGHT = 480
 AI_OUTPUT_LINE_HEIGHT = 1.25
 PAGE_LINK_COLOR = "#1a5fb4"
 CONTINUOUS_PAGE_BATCH = 25
-CONTINUOUS_PAGE_DIVIDER = "─" * 48
+CONTINUOUS_DIVIDER_GLYPH = "─"
+CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
+CONTINUOUS_PAGE_DIVIDER_BG = "#f2f2f2"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
@@ -2304,15 +2306,31 @@ class Focus(Adw.Application):
             return
         tag = table.lookup("continuous-divider")
         if tag is None:
-            tag = buf.create_tag("continuous-divider", foreground=PAGE_LINK_COLOR)
+            tag = buf.create_tag(
+                "continuous-divider",
+                background=CONTINUOUS_PAGE_DIVIDER_BG,
+                foreground=CONTINUOUS_PAGE_DIVIDER_BG,
+                pixels_above_lines=0,
+                pixels_below_lines=0,
+            )
         offset = start_offset
         for line in text.splitlines(keepends=True):
             stripped = line.rstrip("\n")
-            if stripped == CONTINUOUS_PAGE_DIVIDER:
+            if self._is_continuous_divider_line(stripped):
                 start_iter = buf.get_iter_at_offset(offset)
                 end_iter = buf.get_iter_at_offset(offset + len(stripped))
                 buf.apply_tag(tag, start_iter, end_iter)
             offset += len(line)
+
+    def _is_continuous_divider_line(self, line: str) -> bool:
+        if not line:
+            return False
+        if len(line) < 8:
+            return False
+        return all(char == CONTINUOUS_DIVIDER_GLYPH for char in line)
+
+    def _continuous_divider_text(self) -> str:
+        return CONTINUOUS_PAGE_DIVIDER
 
     def _apply_markdown_spans(
         self,
@@ -2633,13 +2651,14 @@ class Focus(Adw.Application):
         return self.pages[self.current_index :] + self.pages[: self.current_index]
 
     def _render_continuous_chunk(self, ordered: list[int]) -> str:
+        divider = self._continuous_divider_text()
         parts: list[str] = []
         for idx, page in enumerate(ordered):
             content, _, _ = self._read_page_text(page)
             rendered, _ = self._render_page_display(page, content, None)
             parts.append(rendered)
             if idx != len(ordered) - 1:
-                parts.append(f"\n\n{CONTINUOUS_PAGE_DIVIDER}\n\n")
+                parts.append(f"\n\n{divider}\n\n")
         return "".join(parts)
 
     def _connect_continuous_scroll_watch(self) -> None:
@@ -4093,16 +4112,21 @@ class Focus(Adw.Application):
         parts: list[str] = []
         highlights: list[tuple[int, int]] = []
         offset = 0
-        for page in self._matching_pages:
+        separator = f"\n\n{self._continuous_divider_text()}\n\n"
+        for idx, page in enumerate(self._matching_pages):
             content, _, _ = self._read_page_text(page)
             header = f"{page:04d}\n\n"
             parts.append(header)
             parts.append(content)
-            parts.append("\n\n")
             header_len = len(header)
             for start, end in self._grep_hits.get(page, []):
                 highlights.append((offset + header_len + start, offset + header_len + end))
-            offset += header_len + len(content) + 2
+            if idx != len(self._matching_pages) - 1:
+                parts.append(separator)
+                offset += header_len + len(content) + len(separator)
+            else:
+                parts.append("\n\n")
+                offset += header_len + len(content) + 2
         self._grep_combined_text = "".join(parts) if parts else None
         self._grep_combined_highlights = highlights
         self._showing_grep_results = bool(parts)
