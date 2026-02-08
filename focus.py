@@ -100,6 +100,10 @@ HEARING_SUMMARY_CANDIDATES = ("hearing_sum.txt", "hearing_summary.txt")
 REPORTS_SUMMARY_CANDIDATES = ("reports_sum.txt", "reports_summary.txt")
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
 MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
+SUMMARY_SOURCE_MINUTES = "minutes"
+SUMMARY_SOURCE_HEARING = "hearing"
+SUMMARY_SOURCE_REPORTS = "reports"
+SUMMARY_SOURCE_CUSTOM = "custom"
 
 # =====================
 # UI Defaults
@@ -570,6 +574,9 @@ class FocusViewState:
     ai_range_text: str = ""
     rag_question_text: str = ""
     sidebar_expanded: list[str] = field(default_factory=list)
+    summary_loaded_path: Path | None = None
+    summary_active_source: str | None = None
+    summary_scroll_fraction: float | None = None
 
 def load_ai_settings() -> AiSettings:
     config = _read_config()
@@ -904,6 +911,7 @@ listbox.focus-sidebar-listview row {
 .focus-view-toggle:not(:checked) label {
   color: alpha(@window_fg_color, 0.62);
 }
+
 
 #page-text {
   background-color: transparent;
@@ -1282,6 +1290,10 @@ class Focus(Adw.Application):
         self._summary_scroll_save_source_id: int | None = None
         self._summary_scroll_handler_id: int | None = None
         self._summary_scroll_restore_guard = False
+        self._summary_active_source: str | None = None
+        self._summary_toggle_guard = False
+        self._summary_toggles: dict[str, Gtk.ToggleButton] = {}
+        self._summary_previous_source: str | None = None
         self._edge_flash_source_id: int | None = None
         self._content_stack: Gtk.Stack | None = None
         self._image_scroller: Gtk.ScrolledWindow | None = None
@@ -1732,41 +1744,55 @@ class Focus(Adw.Application):
         file_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         file_view.set_hexpand(True)
         file_view.set_vexpand(True)
-        summary_button_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        summary_button_group.set_hexpand(True)
-        summary_button_group.set_valign(Gtk.Align.CENTER)
+        summary_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        summary_row.set_hexpand(True)
+        summary_row.set_valign(Gtk.Align.CENTER)
 
-        self._minutes_summary_button = Gtk.Button(label="Minutes Sum")
+        summary_button_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        summary_button_group.set_hexpand(False)
+        summary_button_group.set_valign(Gtk.Align.CENTER)
+        summary_button_group.add_css_class("linked")
+        summary_button_group.add_css_class("round")
+
+        self._minutes_summary_button = Gtk.ToggleButton(label="Minutes Sum")
         self._minutes_summary_button.add_css_class("flat")
         self._minutes_summary_button.add_css_class("no-bold")
+        self._minutes_summary_button.add_css_class("round")
         self._minutes_summary_button.set_valign(Gtk.Align.CENTER)
         self._minutes_summary_button.set_tooltip_text("Load minutes summary from manifest")
-        self._minutes_summary_button.connect("clicked", self._on_minutes_summary_clicked)
+        self._minutes_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_MINUTES)
         summary_button_group.append(self._minutes_summary_button)
+        self._summary_toggles[SUMMARY_SOURCE_MINUTES] = self._minutes_summary_button
 
-        self._hearing_summary_button = Gtk.Button(label="Hearing Sum")
+        self._hearing_summary_button = Gtk.ToggleButton(label="Hearing Sum")
         self._hearing_summary_button.add_css_class("flat")
         self._hearing_summary_button.add_css_class("no-bold")
+        self._hearing_summary_button.add_css_class("round")
         self._hearing_summary_button.set_valign(Gtk.Align.CENTER)
         self._hearing_summary_button.set_tooltip_text("Load hearing summary from summaries/")
-        self._hearing_summary_button.connect("clicked", self._on_hearing_summary_clicked)
+        self._hearing_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_HEARING)
         summary_button_group.append(self._hearing_summary_button)
+        self._summary_toggles[SUMMARY_SOURCE_HEARING] = self._hearing_summary_button
 
-        self._reports_summary_button = Gtk.Button(label="Reports Sum")
+        self._reports_summary_button = Gtk.ToggleButton(label="Reports Sum")
         self._reports_summary_button.add_css_class("flat")
         self._reports_summary_button.add_css_class("no-bold")
+        self._reports_summary_button.add_css_class("round")
         self._reports_summary_button.set_valign(Gtk.Align.CENTER)
         self._reports_summary_button.set_tooltip_text("Load reports summary from summaries/")
-        self._reports_summary_button.connect("clicked", self._on_reports_summary_clicked)
+        self._reports_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_REPORTS)
         summary_button_group.append(self._reports_summary_button)
+        self._summary_toggles[SUMMARY_SOURCE_REPORTS] = self._reports_summary_button
 
-        self._choose_summary_button = Gtk.Button(label="Choose File")
+        self._choose_summary_button = Gtk.ToggleButton(label="Choose File")
         self._choose_summary_button.add_css_class("flat")
         self._choose_summary_button.add_css_class("no-bold")
+        self._choose_summary_button.add_css_class("round")
         self._choose_summary_button.set_valign(Gtk.Align.CENTER)
         self._choose_summary_button.set_tooltip_text("Pick a different text or markdown summary file")
-        self._choose_summary_button.connect("clicked", self._on_choose_summary_file_clicked)
+        self._choose_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_CUSTOM)
         summary_button_group.append(self._choose_summary_button)
+        self._summary_toggles[SUMMARY_SOURCE_CUSTOM] = self._choose_summary_button
 
         self._summary_search_entry = Gtk.SearchEntry()
         self._summary_search_entry.set_placeholder_text("Search file")
@@ -1776,14 +1802,15 @@ class Focus(Adw.Application):
         self._summary_search_entry.set_valign(Gtk.Align.CENTER)
         self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
         self._summary_search_entry.connect("activate", self._on_summary_search_activate)
-        summary_button_group.append(self._summary_search_entry)
+        summary_row.append(summary_button_group)
+        summary_row.append(self._summary_search_entry)
 
         self._update_summary_buttons()
 
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
             self._ai_controls_stack.add_named(qa_controls, AI_VIEW_QA)
-            self._ai_controls_stack.add_named(summary_button_group, AI_VIEW_FILE)
+            self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
 
         self._summary_view = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
@@ -2080,6 +2107,20 @@ class Focus(Adw.Application):
 
     def _persist_active_view_state(self) -> None:
         state = self._current_view_state()
+        if (
+            self._ai_active_view == AI_VIEW_FILE
+            and self._summary_scroller
+            and self._summary_loaded_path
+        ):
+            vadj = self._summary_scroller.get_vadjustment()
+            if vadj:
+                fraction = self._summary_scroll_fraction(vadj)
+                fraction = min(1.0, max(0.0, fraction))
+                key = self._summary_scroll_key(self._summary_loaded_path, self._active_view_id)
+                if abs(self._summary_scroll_positions.get(key, -1.0) - fraction) >= 0.001:
+                    self._summary_scroll_positions[key] = fraction
+                    self._schedule_summary_scroll_save()
+                state.summary_scroll_fraction = fraction
         state.current_index = self.current_index
         state.show_image = self._show_image
         state.sidebar_visible = self._toc_sidebar_visible
@@ -2113,6 +2154,8 @@ class Focus(Adw.Application):
             state.ai_range_text = self._ai_range_entry.get_text()
         if self._rag_question_entry:
             state.rag_question_text = self._rag_question_entry.get_text()
+        state.summary_loaded_path = self._summary_loaded_path
+        state.summary_active_source = self._summary_active_source
 
     def _apply_ai_outputs_for_state(self, state: FocusViewState) -> None:
         for name, view in self._ai_outputs.items():
@@ -2161,6 +2204,8 @@ class Focus(Adw.Application):
         self._sync_show_image_action()
         self._update_view_buttons()
         self._apply_sidebar_expansion_state(state)
+        if self._ai_active_view == AI_VIEW_FILE:
+            self._restore_summary_for_state(state)
         if self._showing_grep_results and self._grep_combined_text:
             self._set_show_image(False, silent=True)
             self._show_grep_results()
@@ -3163,6 +3208,8 @@ class Focus(Adw.Application):
         if not self._summary_raw:
             return
         self._apply_summary_links(self._summary_raw)
+        if self._summary_loaded_path:
+            self._restore_summary_scroll_position(self._summary_loaded_path)
 
     def _extract_ai_link_spans(self, text: str) -> tuple[str, list[tuple[int, int, str]]]:
         spans: list[tuple[int, int, str]] = []
@@ -3505,8 +3552,10 @@ class Focus(Adw.Application):
                 pass
         self._summary_scroll_handler_id = vadj.connect("value-changed", self._on_summary_scroll)
 
-    def _summary_scroll_key(self, path: Path) -> str:
-        return str(path.expanduser().resolve(strict=False))
+    def _summary_scroll_key(self, path: Path, view_id: str | None = None) -> str:
+        resolved = str(path.expanduser().resolve(strict=False))
+        view_key = view_id or self._active_view_id or ""
+        return f"{view_key}::{resolved}"
 
     def _summary_scroll_fraction(self, adjustment: Gtk.Adjustment) -> float:
         lower = adjustment.get_lower()
@@ -3519,6 +3568,8 @@ class Focus(Adw.Application):
         return (value - lower) / total
 
     def _on_summary_scroll(self, adjustment: Gtk.Adjustment) -> None:
+        if self._ai_active_view != AI_VIEW_FILE:
+            return
         if self._summary_scroll_restore_guard:
             return
         path = self._summary_loaded_path
@@ -3526,11 +3577,12 @@ class Focus(Adw.Application):
             return
         fraction = self._summary_scroll_fraction(adjustment)
         fraction = min(1.0, max(0.0, fraction))
-        key = self._summary_scroll_key(path)
+        key = self._summary_scroll_key(path, self._active_view_id)
         if abs(self._summary_scroll_positions.get(key, -1.0) - fraction) < 0.001:
             return
         self._summary_scroll_positions[key] = fraction
         self._schedule_summary_scroll_save()
+        self._current_view_state().summary_scroll_fraction = fraction
 
     def _schedule_summary_scroll_save(self) -> None:
         if self._summary_scroll_save_source_id is not None:
@@ -3547,12 +3599,18 @@ class Focus(Adw.Application):
     def _restore_summary_scroll_position(self, path: Path | None) -> None:
         if not path or not self._summary_scroller:
             return
-        key = self._summary_scroll_key(path)
+        key = self._summary_scroll_key(path, self._active_view_id)
         fraction = self._summary_scroll_positions.get(key)
         if fraction is None:
             return
+        self._restore_summary_scroll_fraction(fraction)
 
-        def _apply() -> bool:
+    def _restore_summary_scroll_fraction(self, fraction: float) -> None:
+        if not self._summary_scroller:
+            return
+        retries = 8
+
+        def _apply_remaining(remaining: int) -> bool:
             if not self._summary_scroller:
                 return False
             vadj = self._summary_scroller.get_vadjustment()
@@ -3563,6 +3621,9 @@ class Focus(Adw.Application):
             page_size = vadj.get_page_size()
             total = upper - lower - page_size
             if total <= 0:
+                if remaining <= 0:
+                    return False
+                GLib.timeout_add(50, _apply_remaining, remaining - 1)
                 return False
             target = lower + min(1.0, max(0.0, fraction)) * total
             self._summary_scroll_restore_guard = True
@@ -3570,7 +3631,7 @@ class Focus(Adw.Application):
             self._summary_scroll_restore_guard = False
             return False
 
-        GLib.idle_add(_apply)
+        GLib.idle_add(_apply_remaining, retries)
 
     def _summary_link_at_coords(self, textview: Gtk.TextView, x: float, y: float) -> str | None:
         bx, by = textview.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
@@ -3795,6 +3856,59 @@ class Focus(Adw.Application):
                     )
             self._choose_summary_button.set_tooltip_text(choose_hint)
 
+    def _set_summary_active_source(self, source: str | None) -> None:
+        self._summary_active_source = source
+        self._sync_summary_toggles(source)
+
+    def _sync_summary_toggles(self, source: str | None) -> None:
+        if not self._summary_toggles:
+            return
+        self._summary_toggle_guard = True
+        try:
+            for key, button in self._summary_toggles.items():
+                button.set_active(key == source)
+        finally:
+            self._summary_toggle_guard = False
+
+    def _on_summary_toggle(self, button: Gtk.ToggleButton, source: str) -> None:
+        if self._summary_toggle_guard:
+            return
+        if not button.get_active():
+            self._summary_toggle_guard = True
+            button.set_active(True)
+            self._summary_toggle_guard = False
+            return
+        if source == SUMMARY_SOURCE_MINUTES:
+            self._on_minutes_summary_clicked(button)
+            return
+        if source == SUMMARY_SOURCE_HEARING:
+            self._on_hearing_summary_clicked(button)
+            return
+        if source == SUMMARY_SOURCE_REPORTS:
+            self._on_reports_summary_clicked(button)
+            return
+        if source == SUMMARY_SOURCE_CUSTOM:
+            self._summary_previous_source = self._summary_active_source
+            self._on_choose_summary_file_clicked(button)
+
+    def _infer_summary_source(self, path: Path) -> str:
+        name = path.name.casefold()
+        if name in HEARING_SUMMARY_CANDIDATES or "hearing" in name:
+            return SUMMARY_SOURCE_HEARING
+        if name in REPORTS_SUMMARY_CANDIDATES or "report" in name:
+            return SUMMARY_SOURCE_REPORTS
+        manifest_path = _find_manifest_near_path(self.input_dir)
+        if manifest_path:
+            manifest = _read_manifest_file(manifest_path)
+            files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+            summary_path = _path_from_manifest(
+                files.get(MINUTES_SUMMARY_MANIFEST_KEY),
+                manifest_path.parent,
+            )
+            if summary_path and summary_path.resolve() == path.resolve():
+                return SUMMARY_SOURCE_MINUTES
+        return SUMMARY_SOURCE_CUSTOM
+
     def _set_font_preferences(self, *, font_size_pt: int | None = None, ai_font_size_pt: int | None = None) -> None:
         base = self._font_size_pt
         ai = self._ai_font_size_pt
@@ -3826,6 +3940,8 @@ class Focus(Adw.Application):
             self._summary_scroller.queue_resize()
         if self._summary_view:
             self._summary_view.set_cursor_visible(False)
+        if self._summary_loaded_path:
+            self._restore_summary_scroll_position(self._summary_loaded_path)
 
     def _set_show_image(self, enabled: bool, *, silent: bool = False) -> bool:
         if enabled:
@@ -4525,7 +4641,7 @@ class Focus(Adw.Application):
         self._ai_active_view = target
         self._current_view_state().ai_active_view = target
         if target == AI_VIEW_FILE and not self._auto_loading_summary:
-            self._auto_load_summary_file()
+            self._ensure_summary_for_active_view()
         if self._ai_view_stack and self._ai_view_stack.get_visible_child_name() != target:
             self._ai_view_stack.set_visible_child_name(target)
         if (
@@ -4542,6 +4658,51 @@ class Focus(Adw.Application):
         if target == AI_VIEW_FILE and self._summary_scroller:
             self._summary_scroller.queue_resize()
             self._restore_summary_scroll_position(self._summary_loaded_path)
+
+    def _ensure_summary_for_active_view(self) -> None:
+        state = self._current_view_state()
+        if (
+            state.summary_loaded_path
+            and self._summary_loaded_path
+            and state.summary_loaded_path == self._summary_loaded_path
+            and self._summary_has_text()
+        ):
+            self._set_summary_active_source(state.summary_active_source)
+            return
+        if state.summary_loaded_path and state.summary_loaded_path.exists():
+            self._load_summary_from_path(
+                state.summary_loaded_path,
+                allow_auto=True,
+                source=state.summary_active_source,
+                save_config=False,
+                show_toast=False,
+            )
+            return
+        self._auto_load_summary_file()
+
+    def _restore_summary_for_state(self, state: FocusViewState) -> None:
+        if (
+            state.summary_loaded_path
+            and self._summary_loaded_path
+            and state.summary_loaded_path == self._summary_loaded_path
+            and self._summary_has_text()
+        ):
+            self._set_summary_active_source(state.summary_active_source)
+            if state.summary_scroll_fraction is not None:
+                self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
+            else:
+                self._restore_summary_scroll_position(self._summary_loaded_path)
+            return
+        if state.summary_loaded_path and state.summary_loaded_path.exists():
+            self._load_summary_from_path(
+                state.summary_loaded_path,
+                allow_auto=True,
+                source=state.summary_active_source,
+                save_config=False,
+                show_toast=False,
+            )
+        elif self._summary_file_path:
+            self._auto_load_summary_file()
 
     def _sync_ai_view_toggles(self, target: str) -> None:
         if not self._ai_view_toggles:
@@ -4682,19 +4843,21 @@ class Focus(Adw.Application):
         label: str,
         candidates: tuple[str, ...],
         keywords: tuple[str, ...],
+        source: str,
     ) -> None:
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_FILE)
         path = self._find_summary_in_dir(label, candidates, keywords)
         if not path:
             return
-        self._load_summary_from_path(path)
+        self._load_summary_from_path(path, source=source)
 
     def _load_summary_from_manifest(
         self,
         label: str,
         manifest_path: Path,
         file_key: str,
+        source: str,
     ) -> None:
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_FILE)
@@ -4710,7 +4873,7 @@ class Focus(Adw.Application):
         if not summary_path.exists():
             self._transient_toast(f"{label} summary file not found: {summary_path}")
             return
-        self._load_summary_from_path(summary_path)
+        self._load_summary_from_path(summary_path, source=source)
 
     def _on_minutes_summary_clicked(self, _button: Gtk.Button) -> None:
         manifest_path = _find_manifest_near_path(self.input_dir)
@@ -4723,6 +4886,7 @@ class Focus(Adw.Application):
             "Minutes",
             manifest_path,
             MINUTES_SUMMARY_MANIFEST_KEY,
+            SUMMARY_SOURCE_MINUTES,
         )
 
     def _on_hearing_summary_clicked(self, _button: Gtk.Button) -> None:
@@ -4730,6 +4894,7 @@ class Focus(Adw.Application):
             "Hearing",
             HEARING_SUMMARY_CANDIDATES,
             ("hearing",),
+            SUMMARY_SOURCE_HEARING,
         )
 
     def _on_reports_summary_clicked(self, _button: Gtk.Button) -> None:
@@ -4737,6 +4902,7 @@ class Focus(Adw.Application):
             "Reports",
             REPORTS_SUMMARY_CANDIDATES,
             ("report", "reports"),
+            SUMMARY_SOURCE_REPORTS,
         )
 
     def _on_choose_summary_file_clicked(self, _button: Gtk.Button) -> None:
@@ -4782,12 +4948,18 @@ class Focus(Adw.Application):
         except GLib.Error as exc:
             if not exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
                 self._transient_toast(f"File selection failed: {exc.message}")
+            else:
+                if self._summary_previous_source:
+                    self._set_summary_active_source(self._summary_previous_source)
         else:
             path_str = file.get_path() if file else None
             if path_str:
-                self._load_summary_from_path(Path(path_str))
+                self._load_summary_from_path(Path(path_str), source=SUMMARY_SOURCE_CUSTOM)
+            elif self._summary_previous_source:
+                self._set_summary_active_source(self._summary_previous_source)
         if self._summary_file_dialog is dialog:
             self._summary_file_dialog = None
+        self._summary_previous_source = None
         self._auto_load_summary_file()
 
     def _auto_load_summary_file(self) -> None:
@@ -4808,7 +4980,14 @@ class Focus(Adw.Application):
                 and self._summary_has_text()
             ):
                 return
-            self._load_summary_from_path(self._summary_file_path, allow_auto=True)
+            source = self._infer_summary_source(self._summary_file_path)
+            self._load_summary_from_path(
+                self._summary_file_path,
+                allow_auto=True,
+                source=source,
+                save_config=False,
+                show_toast=False,
+            )
         finally:
             self._auto_loading_summary = False
 
@@ -4819,7 +4998,15 @@ class Focus(Adw.Application):
         self._refresh_summary_search(reset_active=True)
         self._show_summary_view(switch_view=switch_view)
 
-    def _load_summary_from_path(self, path: Path, *, allow_auto: bool = False) -> None:
+    def _load_summary_from_path(
+        self,
+        path: Path,
+        *,
+        allow_auto: bool = False,
+        source: str | None = None,
+        save_config: bool = True,
+        show_toast: bool = True,
+    ) -> None:
         if self._auto_loading_summary and not allow_auto:
             # Prevent re-entry if an auto load is already in progress.
             return
@@ -4836,10 +5023,18 @@ class Focus(Adw.Application):
         self._stop_ai_stream_if_running(self._active_view_id)
         self._summary_file_path = resolved
         self._summary_loaded_path = resolved
-        save_summary_file_to_config(resolved)
+        if save_config:
+            save_summary_file_to_config(resolved)
+        if source is None:
+            source = self._infer_summary_source(resolved)
+        self._set_summary_active_source(source)
+        state = self._current_view_state()
+        state.summary_loaded_path = resolved
+        state.summary_active_source = source
         self._set_summary_text(text, switch_view=not allow_auto)
         self._update_ai_status("", spinning=False, view_id=self._active_view_id)
-        self._transient_toast(f"Loaded {resolved.name}")
+        if show_toast:
+            self._transient_toast(f"Loaded {resolved.name}")
         self._update_summary_buttons()
         if not allow_auto:
             self._ensure_ai_panel_visible()
