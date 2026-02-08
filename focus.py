@@ -45,7 +45,9 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("PangoCairo", "1.0")
 from gi.repository import Adw, Gio, GLib, Gdk, GdkPixbuf, GObject, Gtk, Pango  # type: ignore
+from gi.repository import PangoCairo  # type: ignore
 
 # =====================
 # Configuration
@@ -118,6 +120,9 @@ DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
 DEFAULT_HIGHLIGHT_COLOR = "#e5e4e2"     # platinum
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
 DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
+DEFAULT_PRINT_FONT_FAMILY = "Century Schoolbook"
+DEFAULT_PRINT_FONT_SIZE_PT = 12
+DEFAULT_PRINT_MARGIN_IN = 1.0
 SIDEBAR_TREE_INDENT = 10
 AI_OUTPUT_MIN_HEIGHT = 140
 AI_OUTPUT_MAX_HEIGHT = 480
@@ -1294,6 +1299,11 @@ class Focus(Adw.Application):
         self._summary_toggle_guard = False
         self._summary_toggles: dict[str, Gtk.ToggleButton] = {}
         self._summary_previous_source: str | None = None
+        self._summary_print_button: Gtk.Button | None = None
+        self._summary_print_text = ""
+        self._summary_print_layout: Pango.Layout | None = None
+        self._summary_print_pages: list[tuple[int, int]] = []
+        self._summary_print_margins: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
         self._edge_flash_source_id: int | None = None
         self._content_stack: Gtk.Stack | None = None
         self._image_scroller: Gtk.ScrolledWindow | None = None
@@ -1802,8 +1812,18 @@ class Focus(Adw.Application):
         self._summary_search_entry.set_valign(Gtk.Align.CENTER)
         self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
         self._summary_search_entry.connect("activate", self._on_summary_search_activate)
+
+        self._summary_print_button = Gtk.Button()
+        self._summary_print_button.add_css_class("flat")
+        self._summary_print_button.set_valign(Gtk.Align.CENTER)
+        self._summary_print_button.set_tooltip_text("Print summary")
+        self._summary_print_button.set_sensitive(False)
+        print_icon = self._choose_icon("document-print-symbolic", "document-print")
+        self._summary_print_button.set_child(Gtk.Image.new_from_icon_name(print_icon))
+        self._summary_print_button.connect("clicked", self._on_summary_print_clicked)
         summary_row.append(summary_button_group)
         summary_row.append(self._summary_search_entry)
+        summary_row.append(self._summary_print_button)
 
         self._update_summary_buttons()
 
@@ -4996,7 +5016,99 @@ class Focus(Adw.Application):
         if self._summary_buffer:
             self._apply_summary_links(text or "")
         self._refresh_summary_search(reset_active=True)
+        if self._summary_print_button:
+            self._summary_print_button.set_sensitive(bool(self._summary_raw.strip()))
         self._show_summary_view(switch_view=switch_view)
+
+    def _build_summary_print_font(self) -> Pango.FontDescription:
+        font_desc = Pango.FontDescription()
+        font_desc.set_family(DEFAULT_PRINT_FONT_FAMILY)
+        font_desc.set_size(int(DEFAULT_PRINT_FONT_SIZE_PT * Pango.SCALE))
+        return font_desc
+
+    def _paginate_summary_layout(
+        self, layout: Pango.Layout, *, page_height: float
+    ) -> list[tuple[int, int]]:
+        line_count = layout.get_line_count()
+        if line_count == 0:
+            return [(0, 0)]
+        pages: list[tuple[int, int]] = []
+        start = 0
+        height_accum = 0.0
+        for idx in range(line_count):
+            line = layout.get_line(idx)
+            _, logical = line.get_extents()
+            line_height = logical.height / Pango.SCALE
+            if height_accum + line_height > page_height and idx > start:
+                pages.append((start, idx))
+                start = idx
+                height_accum = 0.0
+            height_accum += line_height
+        pages.append((start, line_count))
+        return pages
+
+    def _on_summary_print_clicked(self, _button: Gtk.Button) -> None:
+        if not self._summary_raw.strip():
+            self._transient_toast("No summary loaded to print.")
+            return
+        self._summary_print_text = self._summary_raw
+        operation = Gtk.PrintOperation()
+        operation.set_use_full_page(True)
+        if self._summary_loaded_path:
+            operation.set_job_name(self._summary_loaded_path.name)
+        operation.connect("begin-print", self._on_summary_begin_print)
+        operation.connect("draw-page", self._on_summary_draw_page)
+        try:
+            operation.run(Gtk.PrintOperationAction.PRINT_DIALOG, self.win)
+        except GLib.Error as exc:
+            self._transient_toast(f"Print failed: {exc.message}")
+
+    def _on_summary_begin_print(
+        self, operation: Gtk.PrintOperation, context: Gtk.PrintContext
+    ) -> None:
+        text = self._summary_print_text
+        layout = context.create_pango_layout()
+        layout.set_text(text, -1)
+        layout.set_wrap(Pango.WrapMode.WORD_CHAR)
+        layout.set_font_description(self._build_summary_print_font())
+
+        dpi_x = context.get_dpi_x()
+        dpi_y = context.get_dpi_y()
+        margin_left = DEFAULT_PRINT_MARGIN_IN * dpi_x
+        margin_right = DEFAULT_PRINT_MARGIN_IN * dpi_x
+        margin_top = DEFAULT_PRINT_MARGIN_IN * dpi_y
+        margin_bottom = DEFAULT_PRINT_MARGIN_IN * dpi_y
+        content_width = max(1.0, context.get_width() - margin_left - margin_right)
+        content_height = max(1.0, context.get_height() - margin_top - margin_bottom)
+        layout.set_width(int(content_width * Pango.SCALE))
+
+        self._summary_print_layout = layout
+        self._summary_print_margins = (margin_left, margin_right, margin_top, margin_bottom)
+        self._summary_print_pages = self._paginate_summary_layout(
+            layout, page_height=content_height
+        )
+        operation.set_n_pages(len(self._summary_print_pages))
+
+    def _on_summary_draw_page(
+        self, _operation: Gtk.PrintOperation, context: Gtk.PrintContext, page_num: int
+    ) -> None:
+        if not self._summary_print_layout or not self._summary_print_pages:
+            return
+        if page_num < 0 or page_num >= len(self._summary_print_pages):
+            return
+        start_line, end_line = self._summary_print_pages[page_num]
+        margin_left, _margin_right, margin_top, _margin_bottom = self._summary_print_margins
+        cr = context.get_cairo_context()
+        cr.save()
+        cr.translate(margin_left, margin_top)
+        y = 0.0
+        for idx in range(start_line, end_line):
+            line = self._summary_print_layout.get_line(idx)
+            _, logical = line.get_extents()
+            cr.move_to(0, y)
+            PangoCairo.show_layout_line(cr, line)
+            y += logical.height / Pango.SCALE
+        cr.restore()
 
     def _load_summary_from_path(
         self,
