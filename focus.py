@@ -1063,6 +1063,8 @@ PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
 TABLE_BORDER_RE = re.compile(r"^\s*\+[-=]+\+[-=+]*\s*$")
 TABLE_LINE_RE = re.compile(r".*\|.*\|.*")
+TABLE_PLAIN_SEP_RE = re.compile(r"^\s*[-=]{2,}(\s{2,}[-=]{2,})+\s*$")
+TABLE_PLAIN_RE = re.compile(r"^\s*\S.+\s{2,}\S")
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
 MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*(?!\s)([^*\n]+?)\*\*|\*(?!\s)([^*\n]+?)\*")
 LINK_TRAILING_PUNCTUATION = ",.;:!?)]"
@@ -2340,7 +2342,10 @@ class Focus(Adw.Application):
         for line in text.splitlines(keepends=True):
             stripped = line.rstrip("\n")
             is_table_line = (
-                bool(TABLE_BORDER_RE.match(stripped)) or bool(TABLE_LINE_RE.match(stripped))
+                bool(TABLE_BORDER_RE.match(stripped))
+                or bool(TABLE_LINE_RE.match(stripped))
+                or bool(TABLE_PLAIN_SEP_RE.match(stripped))
+                or bool(TABLE_PLAIN_RE.match(stripped))
             )
             if is_table_line and block_start is None:
                 block_start = offset
