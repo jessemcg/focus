@@ -1063,6 +1063,10 @@ PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
 MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*(?!\s)([^*\n]+?)\*\*|\*(?!\s)([^*\n]+?)\*")
+ROUNDED_GRID_TOP_BORDER_RE = re.compile(r"^\s*╭[─┬]+╮\s*$")
+ROUNDED_GRID_MIDDLE_BORDER_RE = re.compile(r"^\s*├[─┼]+┤\s*$")
+ROUNDED_GRID_BOTTOM_BORDER_RE = re.compile(r"^\s*╰[─┴]+╯\s*$")
+ROUNDED_GRID_ROW_RE = re.compile(r"^\s*│.*│\s*$")
 LINK_TRAILING_PUNCTUATION = ",.;:!?)]"
 MARKDOWN_HEADING_SCALES = {
     1: 1.55,
@@ -1170,6 +1174,52 @@ def _render_markdown_text(text: str) -> tuple[str, list[tuple[int, int, str]], l
 
     orig_to_clean[len(text)] = clean_index
     return "".join(out), spans, orig_to_clean
+
+
+def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:
+    if not text:
+        return
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return
+
+    line_offsets: list[int] = [0]
+    for line in lines:
+        line_offsets.append(line_offsets[-1] + len(line))
+
+    line_count = len(lines)
+    index = 0
+    while index < line_count:
+        line_text = lines[index].rstrip("\n")
+        if not ROUNDED_GRID_TOP_BORDER_RE.match(line_text):
+            index += 1
+            continue
+
+        start_offset = line_offsets[index]
+        cursor = index + 1
+        saw_row = False
+        matched = False
+
+        while cursor < line_count:
+            candidate = lines[cursor].rstrip("\n")
+            if ROUNDED_GRID_ROW_RE.match(candidate):
+                saw_row = True
+                cursor += 1
+                continue
+            if ROUNDED_GRID_MIDDLE_BORDER_RE.match(candidate):
+                cursor += 1
+                continue
+            if ROUNDED_GRID_BOTTOM_BORDER_RE.match(candidate):
+                if saw_row:
+                    end_offset = line_offsets[cursor] + len(lines[cursor])
+                    yield start_offset, end_offset
+                    index = cursor + 1
+                    matched = True
+                break
+            break
+
+        if not matched:
+            index += 1
 
 
 def split_link_phrase(phrase: str) -> tuple[str, str]:
@@ -2317,6 +2367,7 @@ class Focus(Adw.Application):
                     buf.apply_tag(tag, start_iter, end_iter)
         self._apply_keyword_highlights(buf, rendered_text)
         self._apply_continuous_divider_style(buf, rendered_text)
+        self._apply_rounded_grid_table_no_wrap(buf, rendered_text)
         if self.scroller:
             vadj = self.scroller.get_vadjustment()
             if vadj:
@@ -2327,6 +2378,20 @@ class Focus(Adw.Application):
 
     def _apply_continuous_divider_style(self, buf: Gtk.TextBuffer, text: str) -> None:
         self._append_continuous_divider_style(buf, text, 0)
+
+    def _apply_rounded_grid_table_no_wrap(self, buf: Gtk.TextBuffer, text: str) -> None:
+        table = buf.get_tag_table()
+        if table is None:
+            return
+        tag = table.lookup("rounded-grid-nowrap")
+        if tag is None:
+            tag = buf.create_tag("rounded-grid-nowrap", wrap_mode=Gtk.WrapMode.NONE)
+        for start, end in _iter_rounded_grid_table_blocks(text):
+            if end <= start:
+                continue
+            start_iter = buf.get_iter_at_offset(start)
+            end_iter = buf.get_iter_at_offset(end)
+            buf.apply_tag(tag, start_iter, end_iter)
 
     def _append_continuous_divider_style(
         self,
