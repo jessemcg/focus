@@ -1061,10 +1061,6 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
 
 PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
-TABLE_BORDER_RE = re.compile(r"^\s*\+[-=]+\+[-=+]*\s*$")
-TABLE_LINE_RE = re.compile(r".*\|.*\|.*")
-TABLE_PLAIN_SEP_RE = re.compile(r"^\s*[-=]{2,}(\s{2,}[-=]{2,})+\s*$")
-TABLE_PLAIN_RE = re.compile(r"^\s*\S.+\s{2,}\S")
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
 MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*(?!\s)([^*\n]+?)\*\*|\*(?!\s)([^*\n]+?)\*")
 LINK_TRAILING_PUNCTUATION = ",.;:!?)]"
@@ -2320,7 +2316,6 @@ class Focus(Adw.Application):
                     end_iter = buf.get_iter_at_offset(end)
                     buf.apply_tag(tag, start_iter, end_iter)
         self._apply_keyword_highlights(buf, rendered_text)
-        self._apply_table_no_wrap(buf, rendered_text)
         self._apply_continuous_divider_style(buf, rendered_text)
         if self.scroller:
             vadj = self.scroller.get_vadjustment()
@@ -2329,36 +2324,6 @@ class Focus(Adw.Application):
             hadj = self.scroller.get_hadjustment()
             if hadj:
                 GLib.idle_add(hadj.set_value, hadj.get_lower())
-
-    def _apply_table_no_wrap(self, buf: Gtk.TextBuffer, text: str) -> None:
-        table = buf.get_tag_table()
-        if table is None:
-            return
-        tag = table.lookup("table-no-wrap")
-        if tag is None:
-            tag = buf.create_tag("table-no-wrap", wrap_mode=Gtk.WrapMode.NONE)
-        offset = 0
-        block_start: int | None = None
-        for line in text.splitlines(keepends=True):
-            stripped = line.rstrip("\n")
-            is_table_line = (
-                bool(TABLE_BORDER_RE.match(stripped))
-                or bool(TABLE_LINE_RE.match(stripped))
-                or bool(TABLE_PLAIN_SEP_RE.match(stripped))
-                or bool(TABLE_PLAIN_RE.match(stripped))
-            )
-            if is_table_line and block_start is None:
-                block_start = offset
-            if not is_table_line and block_start is not None:
-                start_iter = buf.get_iter_at_offset(block_start)
-                end_iter = buf.get_iter_at_offset(offset)
-                buf.apply_tag(tag, start_iter, end_iter)
-                block_start = None
-            offset += len(line)
-        if block_start is not None:
-            start_iter = buf.get_iter_at_offset(block_start)
-            end_iter = buf.get_iter_at_offset(offset)
-            buf.apply_tag(tag, start_iter, end_iter)
 
     def _apply_continuous_divider_style(self, buf: Gtk.TextBuffer, text: str) -> None:
         self._append_continuous_divider_style(buf, text, 0)
