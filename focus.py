@@ -26,6 +26,7 @@ Run
 from __future__ import annotations
 
 import bisect
+from datetime import datetime, timezone
 import io
 import json
 import os
@@ -33,6 +34,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 import unicodedata
@@ -116,6 +118,7 @@ PAGE_TEXT_BG_COLOR = "#ffffff"
 PAGE_TEXT_FG_COLOR = "#000000"
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
+DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
 DEFAULT_HIGHLIGHT_COLOR = "#e5e4e2"     # platinum
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
@@ -135,6 +138,7 @@ CONTINUOUS_PAGE_DIVIDER_BG = "#f2f2f2"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
+AI_VIEW_RAG_AUDIT = "rag-audit"
 AI_VIEW_FILE = "show-file"
 VIEW_ONE_ID = "view1"
 VIEW_TWO_ID = "view2"
@@ -568,7 +572,11 @@ class FocusViewState:
     showing_grep_results: bool = False
     ai_active_view: str = AI_VIEW_QA
     ai_output_raw: dict[str, str] = field(
-        default_factory=lambda: {AI_VIEW_SUMMARIZE: "", AI_VIEW_QA: ""}
+        default_factory=lambda: {
+            AI_VIEW_SUMMARIZE: "",
+            AI_VIEW_QA: "",
+            AI_VIEW_RAG_AUDIT: "",
+        }
     )
     ai_status_text: str = ""
     ai_spinning: bool = False
@@ -1317,6 +1325,7 @@ class Focus(Adw.Application):
         self._ai_outputs: dict[str, AiOutputView] = {
             AI_VIEW_SUMMARIZE: AiOutputView(),
             AI_VIEW_QA: AiOutputView(),
+            AI_VIEW_RAG_AUDIT: AiOutputView(),
         }
         self._ai_active_view = AI_VIEW_QA
         self._textview_click_gesture: Gtk.GestureClick | None = None
@@ -1733,6 +1742,7 @@ class Focus(Adw.Application):
 
         add_ai_view_toggle("Summarize", AI_VIEW_SUMMARIZE)
         add_ai_view_toggle("Q & A", AI_VIEW_QA)
+        add_ai_view_toggle("RAG Audit", AI_VIEW_RAG_AUDIT)
         add_ai_view_toggle("Show File", AI_VIEW_FILE)
 
         ai_header.append(ai_view_toggle_group)
@@ -1798,6 +1808,18 @@ class Focus(Adw.Application):
         ask_button.set_valign(Gtk.Align.CENTER)
         ask_button.connect("clicked", self._on_rag_question_button_clicked)
         qa_controls.append(ask_button)
+
+        rag_audit_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        rag_audit_view.set_hexpand(True)
+        rag_audit_view.set_vexpand(True)
+        rag_audit_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        rag_audit_controls.set_hexpand(True)
+        rag_audit_controls.set_valign(Gtk.Align.CENTER)
+        rag_audit_hint = Gtk.Label(label="Inspect the latest RAG payload, retrieval chunks, and scores.")
+        rag_audit_hint.add_css_class("dim-label")
+        rag_audit_hint.set_xalign(0.0)
+        rag_audit_hint.set_hexpand(True)
+        rag_audit_controls.append(rag_audit_hint)
 
         file_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         file_view.set_hexpand(True)
@@ -1878,6 +1900,7 @@ class Focus(Adw.Application):
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
             self._ai_controls_stack.add_named(qa_controls, AI_VIEW_QA)
+            self._ai_controls_stack.add_named(rag_audit_controls, AI_VIEW_RAG_AUDIT)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
 
@@ -1908,12 +1931,15 @@ class Focus(Adw.Application):
 
         summarize_scroller = self._build_ai_output_view(AI_VIEW_SUMMARIZE)
         qa_scroller = self._build_ai_output_view(AI_VIEW_QA)
+        rag_audit_scroller = self._build_ai_output_view(AI_VIEW_RAG_AUDIT)
 
         summarize_view.append(summarize_scroller)
         qa_view.append(qa_scroller)
+        rag_audit_view.append(rag_audit_scroller)
 
         self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
         self._ai_view_stack.add_titled(qa_view, AI_VIEW_QA, "Q & A")
+        self._ai_view_stack.add_titled(rag_audit_view, AI_VIEW_RAG_AUDIT, "RAG Audit")
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
         self._ai_view_stack.set_visible_child_name(AI_VIEW_QA)
         self._sync_ai_view_toggles(AI_VIEW_QA)
@@ -3016,6 +3042,9 @@ class Focus(Adw.Application):
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
             "}"
+            "textview.ai-output-view.rag-audit-view { "
+            f"font-size: {DEFAULT_RAG_AUDIT_FONT_SIZE_PT}pt; "
+            "}"
         ).encode()
         try:
             self._color_provider.load_from_data(css)
@@ -3132,8 +3161,14 @@ class Focus(Adw.Application):
 
     def _build_ai_output_view(self, view_name: str) -> Gtk.ScrolledWindow:
         state = self._get_ai_output_state(view_name)
-        text_view = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        text_view = Gtk.TextView(
+            editable=False,
+            monospace=view_name == AI_VIEW_RAG_AUDIT,
+            wrap_mode=Gtk.WrapMode.WORD_CHAR,
+        )
         text_view.add_css_class("ai-output-view")
+        if view_name == AI_VIEW_RAG_AUDIT:
+            text_view.add_css_class("rag-audit-view")
         text_view.set_hexpand(True)
         text_view.set_vexpand(True)
         text_view.set_top_margin(6)
@@ -3156,6 +3191,21 @@ class Focus(Adw.Application):
         scroller.set_child(text_view)
         state.scroller = scroller
         return scroller
+
+    @staticmethod
+    def _json_safe_value(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            safe: dict[str, Any] = {}
+            for key, item in value.items():
+                safe[str(key)] = Focus._json_safe_value(item)
+            return safe
+        if isinstance(value, (list, tuple, set)):
+            return [Focus._json_safe_value(item) for item in value]
+        return str(value)
 
     def _resolve_ai_quote_color(self, view: Gtk.TextView | None) -> Gdk.RGBA:
         fallback = Gdk.RGBA()
@@ -5242,12 +5292,14 @@ class Focus(Adw.Application):
                     target_view_id,
                 )
                 return
+            retrieval_started = time.perf_counter()
             try:
-                docs = vectorstore.similarity_search(
+                chunks, retrieval_method = self._retrieve_rag_chunks(
+                    vectorstore,
                     question_text,
-                    k=settings.rag_chunk_count,
+                    settings.rag_chunk_count,
                 )
-                context_text = self._format_rag_context(docs)
+                context_text = self._format_rag_context(chunks)
             except Exception as exc:  # noqa: BLE001
                 GLib.idle_add(
                     self._on_ai_stream_error,
@@ -5258,8 +5310,47 @@ class Focus(Adw.Application):
                 )
                 return
 
+            retrieval_duration_ms = round((time.perf_counter() - retrieval_started) * 1000.0, 2)
             system_prompt = settings.rag_prompt or DEFAULT_RAG_PROMPT
             user_payload = self._compose_rag_payload(case_details, context_text, question_text)
+            request_model_id = settings.rag_llm_model or settings.page_credentials()[1]
+            llm_request = {
+                "model": request_model_id,
+                "stream": True,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_payload},
+                ],
+            }
+            audit_record: dict[str, Any] = {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "view_id": target_view_id,
+                "question": question_text,
+                "retrieval": {
+                    "method": retrieval_method,
+                    "requested_chunk_count": settings.rag_chunk_count,
+                    "actual_chunk_count": len(chunks),
+                    "duration_ms": retrieval_duration_ms,
+                    "chunks": chunks,
+                },
+                "llm_request": {
+                    "api_url": rag_api_url,
+                    "body": llm_request,
+                },
+            }
+            audit_path, audit_error = self._save_rag_audit_record(audit_record)
+            if audit_path is not None:
+                audit_record["audit_file"] = str(audit_path)
+            if audit_error:
+                audit_record["audit_write_error"] = audit_error
+                GLib.idle_add(self._transient_toast, audit_error)
+            GLib.idle_add(
+                self._set_ai_output_text_idle,
+                json.dumps(audit_record, indent=2, ensure_ascii=False),
+                AI_VIEW_RAG_AUDIT,
+                target_view_id,
+                False,
+            )
             GLib.idle_add(self._update_ai_status, "Answering question…", True, target_view_id)
             self._stream_chat_worker(
                 settings,
@@ -5270,7 +5361,7 @@ class Focus(Adw.Application):
                 system_prompt,
                 target_view,
                 target_view_id,
-                model_id=settings.rag_llm_model or settings.page_credentials()[1],
+                model_id=request_model_id,
                 api_url=rag_api_url,
                 api_key=rag_api_key,
             )
@@ -5400,24 +5491,82 @@ class Focus(Adw.Application):
 
         return vectorstore, case_details, None
 
-    def _format_rag_context(self, docs: list[Any]) -> str:
-        chunks: list[str] = []
-        for doc in docs:
-            try:
-                metadata = getattr(doc, "metadata", {}) or {}
-                source = ""
-                if isinstance(metadata, dict):
-                    src_val = metadata.get("source") or metadata.get("page")
-                    if src_val:
-                        source = str(src_val)
-                text = getattr(doc, "page_content", None) or ""
-                if source:
-                    chunks.append(f"[{source}]\n{text}")
-                else:
-                    chunks.append(text)
-            except Exception:
-                continue
-        return "\n\n".join(chunks)
+    def _rag_chunk_from_doc(self, doc: Any, *, rank: int, score: float | None = None) -> dict[str, Any]:
+        metadata = getattr(doc, "metadata", {}) or {}
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
+        source_value = metadata_dict.get("source") or metadata_dict.get("page")
+        source = str(source_value).strip() if source_value is not None else ""
+        text = str(getattr(doc, "page_content", None) or "")
+        chunk: dict[str, Any] = {
+            "rank": rank,
+            "score": score,
+            "source": source,
+            "metadata": self._json_safe_value(metadata_dict),
+            "content": text,
+        }
+        return chunk
+
+    def _retrieve_rag_chunks(
+        self,
+        vectorstore: Any,
+        question: str,
+        chunk_count: int,
+    ) -> tuple[list[dict[str, Any]], str]:
+        chunks: list[dict[str, Any]] = []
+        method = "similarity_search"
+
+        try:
+            results = vectorstore.similarity_search_with_relevance_scores(question, k=chunk_count)
+            if isinstance(results, list):
+                for index, item in enumerate(results, start=1):
+                    if not isinstance(item, (tuple, list)) or not item:
+                        continue
+                    doc = item[0]
+                    raw_score = item[1] if len(item) > 1 else None
+                    score = None
+                    if raw_score is not None:
+                        try:
+                            score = float(raw_score)
+                        except (TypeError, ValueError):
+                            score = None
+                    chunks.append(self._rag_chunk_from_doc(doc, rank=index, score=score))
+            if chunks:
+                return chunks, "similarity_search_with_relevance_scores"
+            method = "similarity_search_with_relevance_scores(empty)-fallback"
+        except Exception:
+            method = "similarity_search(fallback-no-scores)"
+
+        docs = vectorstore.similarity_search(question, k=chunk_count)
+        if isinstance(docs, list):
+            for index, doc in enumerate(docs, start=1):
+                chunks.append(self._rag_chunk_from_doc(doc, rank=index))
+        return chunks, method
+
+    def _rag_audit_directory(self) -> Path:
+        return self._record_layout.root / "artifacts" / "rag_audit"
+
+    def _save_rag_audit_record(self, record: dict[str, Any]) -> tuple[Path | None, str | None]:
+        try:
+            output_dir = self._rag_audit_directory()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            output_path = output_dir / f"rag_audit_{timestamp}.json"
+            payload = json.dumps(self._json_safe_value(record), indent=2, ensure_ascii=False)
+            output_path.write_text(payload, encoding="utf-8")
+            return output_path, None
+        except OSError as exc:
+            return None, f"Could not save RAG audit file: {exc}"
+
+    def _format_rag_context(self, chunks: list[dict[str, Any]]) -> str:
+        rendered: list[str] = []
+        for chunk in chunks:
+            source = str(chunk.get("source", "") or "").strip()
+            text = str(chunk.get("content", "") or "")
+            if source:
+                rendered.append(f"[{source}]\n{text}")
+            else:
+                rendered.append(text)
+        return "\n\n".join(rendered)
 
     def _compose_rag_payload(self, case_details: str, context: str, question: str) -> str:
         return (
@@ -5499,15 +5648,36 @@ class Focus(Adw.Application):
             self._ai_spinner.set_spinning(spinning)
             self._ai_spinner.set_visible(spinning)
 
-    def _reset_ai_output(self, text: str | None = None, *, target: str, view_id: str | None = None) -> None:
+    def _set_ai_output_text(
+        self,
+        text: str | None = None,
+        *,
+        target: str,
+        view_id: str | None = None,
+        switch_view: bool = False,
+    ) -> None:
         target_view_id = view_id or self._active_view_id
         focus_state = self._get_view_state(target_view_id)
         focus_state.ai_output_raw[target] = text or ""
         if target_view_id == self._active_view_id:
             state = self._get_ai_output_state(target)
-            self._set_ai_view(target)
+            if switch_view:
+                self._set_ai_view(target)
             state.raw = text or ""
             self._apply_ai_output_links(state.raw, state)
+
+    def _set_ai_output_text_idle(
+        self,
+        text: str | None,
+        target: str,
+        view_id: str,
+        switch_view: bool = False,
+    ) -> bool:
+        self._set_ai_output_text(text, target=target, view_id=view_id, switch_view=switch_view)
+        return False
+
+    def _reset_ai_output(self, text: str | None = None, *, target: str, view_id: str | None = None) -> None:
+        self._set_ai_output_text(text, target=target, view_id=view_id, switch_view=True)
 
     def _append_ai_output(self, text: str, generation: int, target: str, view_id: str) -> bool:
         focus_state = self._get_view_state(view_id)
