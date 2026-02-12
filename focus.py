@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import bisect
 from datetime import datetime, timezone
+import importlib
 import io
 import json
 import os
@@ -76,6 +77,11 @@ CONFIG_KEY_PAGE_PROMPT = "page_summarization_prompt"
 CONFIG_KEY_RANGE_PROMPT = "range_summarization_prompt"
 CONFIG_KEY_VOYAGE_API_KEY = "voyage_api_key"
 CONFIG_KEY_VOYAGE_MODEL = "voyage_model"
+CONFIG_KEY_RAG_PROVIDER = "rag_provider"
+CONFIG_KEY_RAG_VOYAGE_API_KEY = "rag_voyage_api_key"
+CONFIG_KEY_RAG_VOYAGE_MODEL = "rag_voyage_model"
+CONFIG_KEY_RAG_ISAACUS_API_KEY = "rag_isaacus_api_key"
+CONFIG_KEY_RAG_ISAACUS_MODEL = "rag_isaacus_model"
 CONFIG_KEY_RAG_MODEL = "rag_model_id"
 CONFIG_KEY_RAG_PROMPT = "rag_prompt"
 CONFIG_KEY_RAG_API_URL = "rag_api_url"
@@ -102,6 +108,11 @@ DEFAULT_RAG_PROMPT = (
     'respond in English. Here is the material:'
 )
 DEFAULT_RAG_CHUNK_COUNT = 8
+DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
+DEFAULT_RAG_ISAACUS_MODEL = "kanon-2-embedder"
+RAG_PROVIDER_VOYAGE = "voyage"
+RAG_PROVIDER_ISAACUS = "isaacus"
+DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
 SUMMARY_DIR_NAME = "summaries"
 HEARING_SUMMARY_CANDIDATES = ("hearing_sum.txt", "hearing_summary.txt")
 REPORTS_SUMMARY_CANDIDATES = ("reports_sum.txt", "reports_summary.txt")
@@ -149,6 +160,57 @@ VIEW_LABELS = {
     VIEW_ONE_ID: "Primary View",
     VIEW_TWO_ID: "Secondary View",
 }
+
+
+def _normalize_rag_provider(value: str) -> str:
+    provider = (value or "").strip().lower()
+    if provider not in {RAG_PROVIDER_VOYAGE, RAG_PROVIDER_ISAACUS}:
+        return DEFAULT_RAG_PROVIDER
+    return provider
+
+
+def _extract_embedding_vectors(response: Any) -> list[list[float]]:
+    embeddings = getattr(response, "embeddings", None)
+    if embeddings is None and isinstance(response, dict):
+        embeddings = response.get("embeddings")
+    if not isinstance(embeddings, list):
+        raise ValueError("Invalid embeddings response format.")
+    vectors: list[list[float]] = []
+    for item in embeddings:
+        vector = getattr(item, "embedding", None)
+        if vector is None and isinstance(item, dict):
+            vector = item.get("embedding")
+        if not isinstance(vector, list):
+            raise ValueError("Missing embedding vector in response.")
+        vectors.append(vector)
+    return vectors
+
+
+class IsaacusEmbeddings:
+    def __init__(self, client: Any, model: str) -> None:
+        self._client = client
+        self._model = model
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        response = self._client.embeddings.create(
+            model=self._model,
+            texts=texts,
+            task="retrieval/document",
+        )
+        return _extract_embedding_vectors(response)
+
+    def embed_query(self, text: str) -> list[float]:
+        response = self._client.embeddings.create(
+            model=self._model,
+            texts=[text],
+            task="retrieval/query",
+        )
+        vectors = _extract_embedding_vectors(response)
+        if not vectors:
+            raise ValueError("Isaacus returned no embedding vectors.")
+        return vectors[0]
 
 
 def _read_config() -> dict[str, Any]:
@@ -493,8 +555,11 @@ class AiSettings:
     range_api_key: str
     page_prompt: str
     range_prompt: str
+    rag_provider: str
     voyage_api_key: str
     voyage_model: str
+    isaacus_api_key: str
+    isaacus_model: str
     rag_llm_model: str
     rag_prompt: str
     rag_api_url: str
@@ -544,17 +609,20 @@ class AiSettings:
 
     def is_rag_ready(self) -> bool:
         rag_api_url, rag_api_key = self.rag_credentials()
+        provider = _normalize_rag_provider(self.rag_provider)
+        if provider == RAG_PROVIDER_ISAACUS:
+            has_embeddings = bool(self.isaacus_api_key.strip() and self.isaacus_model.strip())
+        else:
+            has_embeddings = bool(self.voyage_api_key.strip() and self.voyage_model.strip())
         return all(
             value.strip()
             for value in (
-                self.voyage_api_key,
-                self.voyage_model,
                 self.rag_llm_model,
                 self.rag_prompt,
                 rag_api_url,
                 rag_api_key,
             )
-        )
+        ) and has_embeddings
 
 
 @dataclass
@@ -626,7 +694,24 @@ def load_ai_settings() -> AiSettings:
     page_prompt = str(config.get(CONFIG_KEY_PAGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
     range_prompt = str(config.get(CONFIG_KEY_RANGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
     rag_prompt = str(config.get(CONFIG_KEY_RAG_PROMPT, DEFAULT_RAG_PROMPT) or DEFAULT_RAG_PROMPT).strip()
-    voyage_model = str(config.get(CONFIG_KEY_VOYAGE_MODEL, "voyage-law-2") or "voyage-law-2").strip()
+    rag_provider = _normalize_rag_provider(str(config.get(CONFIG_KEY_RAG_PROVIDER, DEFAULT_RAG_PROVIDER) or ""))
+    voyage_model = str(
+        config.get(
+            CONFIG_KEY_RAG_VOYAGE_MODEL,
+            config.get(CONFIG_KEY_VOYAGE_MODEL, DEFAULT_RAG_VOYAGE_MODEL),
+        )
+        or DEFAULT_RAG_VOYAGE_MODEL
+    ).strip()
+    voyage_api_key = str(
+        config.get(
+            CONFIG_KEY_RAG_VOYAGE_API_KEY,
+            config.get(CONFIG_KEY_VOYAGE_API_KEY, ""),
+        )
+        or ""
+    ).strip()
+    isaacus_model = str(
+        config.get(CONFIG_KEY_RAG_ISAACUS_MODEL, DEFAULT_RAG_ISAACUS_MODEL) or DEFAULT_RAG_ISAACUS_MODEL
+    ).strip()
     rag_api_url = str(config.get(CONFIG_KEY_RAG_API_URL, "") or "").strip()
     rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip()
     rag_chunk_count = _coerce_rag_chunk_count(
@@ -654,8 +739,11 @@ def load_ai_settings() -> AiSettings:
         range_api_key=range_api_key,
         page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
         range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
-        voyage_api_key=str(config.get(CONFIG_KEY_VOYAGE_API_KEY, "") or "").strip(),
-        voyage_model=voyage_model or "voyage-law-2",
+        rag_provider=rag_provider,
+        voyage_api_key=voyage_api_key,
+        voyage_model=voyage_model or DEFAULT_RAG_VOYAGE_MODEL,
+        isaacus_api_key=str(config.get(CONFIG_KEY_RAG_ISAACUS_API_KEY, "") or "").strip(),
+        isaacus_model=isaacus_model or DEFAULT_RAG_ISAACUS_MODEL,
         rag_llm_model=str(config.get(CONFIG_KEY_RAG_MODEL, "") or "").strip(),
         rag_prompt=rag_prompt or DEFAULT_RAG_PROMPT,
         rag_api_url=rag_api_url,
@@ -681,8 +769,13 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_SUMMARIZATION_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_PAGE_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_RANGE_PROMPT] = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
+    config[CONFIG_KEY_RAG_PROVIDER] = _normalize_rag_provider(settings.rag_provider)
     config[CONFIG_KEY_VOYAGE_API_KEY] = settings.voyage_api_key
-    config[CONFIG_KEY_VOYAGE_MODEL] = settings.voyage_model or "voyage-law-2"
+    config[CONFIG_KEY_VOYAGE_MODEL] = settings.voyage_model or DEFAULT_RAG_VOYAGE_MODEL
+    config[CONFIG_KEY_RAG_VOYAGE_API_KEY] = settings.voyage_api_key
+    config[CONFIG_KEY_RAG_VOYAGE_MODEL] = settings.voyage_model or DEFAULT_RAG_VOYAGE_MODEL
+    config[CONFIG_KEY_RAG_ISAACUS_API_KEY] = settings.isaacus_api_key
+    config[CONFIG_KEY_RAG_ISAACUS_MODEL] = settings.isaacus_model or DEFAULT_RAG_ISAACUS_MODEL
     config[CONFIG_KEY_RAG_MODEL] = settings.rag_llm_model
     config[CONFIG_KEY_RAG_PROMPT] = settings.rag_prompt or DEFAULT_RAG_PROMPT
     config[CONFIG_KEY_RAG_API_URL] = settings.rag_api_url
@@ -5318,7 +5411,13 @@ class Focus(Adw.Application):
             self._transient_toast("Set the RAG answer model in Settings.")
             self._ensure_ai_panel_visible()
             return
-        if not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
+        provider = _normalize_rag_provider(settings.rag_provider)
+        if provider == RAG_PROVIDER_ISAACUS:
+            if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
+                self._transient_toast("Set the Isaacus API key and model in Settings.")
+                self._ensure_ai_panel_visible()
+                return
+        elif not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
             self._transient_toast("Set the Voyage API key and model in Settings.")
             self._ensure_ai_panel_visible()
             return
@@ -5441,11 +5540,18 @@ class Focus(Adw.Application):
 
     def _kickoff_rag_background_load(self) -> None:
         settings = self._ai_settings
-        if not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
+        provider = _normalize_rag_provider(settings.rag_provider)
+        missing_message: str | None = None
+        if provider == RAG_PROVIDER_ISAACUS:
+            if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
+                missing_message = "Isaacus API key and model are required for RAG."
+        elif not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
+            missing_message = "Voyage API key and model are required for RAG."
+        if missing_message:
             with self._rag_lock:
                 self._rag_vectorstore = None
                 self._rag_case_details = None
-                self._rag_load_error = "Voyage API key and model are required for RAG."
+                self._rag_load_error = missing_message
                 self._rag_loading = False
                 self._rag_load_thread = None
             return
@@ -5536,22 +5642,37 @@ class Focus(Adw.Application):
             return None, None, f"Vector database not found at {vector_dir}."
         if not case_details_path.exists():
             return None, None, f"Case overview file not found at {case_details_path}."
-        if not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
-            return None, None, "Voyage settings missing."
-
+        provider = _normalize_rag_provider(settings.rag_provider)
         try:
             from langchain_chroma import Chroma  # type: ignore
-            from langchain_voyageai import VoyageAIEmbeddings  # type: ignore
         except ImportError:
-            return None, None, (
-                "Install langchain, langchain-chroma, and langchain-voyageai to enable RAG questions."
-            )
+            return None, None, "Install langchain and langchain-chroma to enable RAG questions."
 
         try:
-            embeddings = VoyageAIEmbeddings(
-                voyage_api_key=settings.voyage_api_key,
-                model=settings.voyage_model,
-            )
+            if provider == RAG_PROVIDER_ISAACUS:
+                if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
+                    return None, None, "Isaacus settings missing."
+                try:
+                    isaacus_module = importlib.import_module("isaacus")
+                    isaacus_client_class = getattr(isaacus_module, "Isaacus")
+                except Exception:
+                    return None, None, "Install Isaacus SDK to enable Isaacus RAG embeddings."
+                isaacus_client = isaacus_client_class(api_key=settings.isaacus_api_key)
+                embeddings: Any = IsaacusEmbeddings(
+                    client=isaacus_client,
+                    model=settings.isaacus_model,
+                )
+            else:
+                if not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
+                    return None, None, "Voyage settings missing."
+                try:
+                    from langchain_voyageai import VoyageAIEmbeddings  # type: ignore
+                except ImportError:
+                    return None, None, "Install langchain-voyageai and voyageai to enable Voyage RAG embeddings."
+                embeddings = VoyageAIEmbeddings(
+                    voyage_api_key=settings.voyage_api_key,
+                    model=settings.voyage_model,
+                )
             vectorstore = Chroma(persist_directory=str(vector_dir), embedding_function=embeddings)
             case_details = case_details_path.read_text(encoding="utf-8", errors="ignore")
         except Exception as exc:  # noqa: BLE001
@@ -5979,8 +6100,12 @@ class RagPromptWidgets:
     api_url_row: Adw.EntryRow
     model_row: Adw.EntryRow
     api_key_row: Adw.EntryRow
+    provider_row: Adw.ComboRow
+    provider_values: list[str]
     voyage_model_row: Adw.EntryRow
     voyage_key_row: Adw.EntryRow
+    isaacus_model_row: Adw.EntryRow
+    isaacus_key_row: Adw.EntryRow
     rag_chunk_row: Adw.SpinRow
     prompt_buffer: Gtk.TextBuffer
 
@@ -6361,6 +6486,17 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_model_row.set_hexpand(True)
         rag_group.add(rag_model_row)
 
+        provider_group = Adw.PreferencesGroup(title="Embedding Provider")
+        provider_group.add_css_class("list-stack")
+        provider_group.set_hexpand(True)
+        page_box.append(provider_group)
+
+        provider_values = [RAG_PROVIDER_VOYAGE, RAG_PROVIDER_ISAACUS]
+        provider_labels = ["VoyageAI", "Isaacus"]
+        provider_row = Adw.ComboRow(title="Provider")
+        provider_row.set_model(Gtk.StringList.new(provider_labels))
+        provider_group.add(provider_row)
+
         rag_context_group = Adw.PreferencesGroup(title="RAG Context")
         rag_context_group.add_css_class("list-stack")
         rag_context_group.set_hexpand(True)
@@ -6392,6 +6528,18 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         voyage_key_row = self._build_password_row("Voyage API Key")
         voyage_group.add(voyage_key_row)
 
+        isaacus_group = Adw.PreferencesGroup(title="Isaacus Embeddings")
+        isaacus_group.add_css_class("list-stack")
+        isaacus_group.set_hexpand(True)
+        page_box.append(isaacus_group)
+
+        isaacus_model_row = Adw.EntryRow(title="Isaacus Embedding Model")
+        isaacus_model_row.set_hexpand(True)
+        isaacus_group.add(isaacus_model_row)
+
+        isaacus_key_row = self._build_password_row("Isaacus API Key")
+        isaacus_group.add(isaacus_key_row)
+
         prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         prompt_section.set_hexpand(True)
         prompt_section.set_vexpand(True)
@@ -6412,8 +6560,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             api_url_row=rag_api_url_row,
             model_row=rag_model_row,
             api_key_row=rag_api_key_row,
+            provider_row=provider_row,
+            provider_values=provider_values,
             voyage_model_row=voyage_model_row,
             voyage_key_row=voyage_key_row,
+            isaacus_model_row=isaacus_model_row,
+            isaacus_key_row=isaacus_key_row,
             rag_chunk_row=rag_chunk_row,
             prompt_buffer=buffer,
         )
@@ -6456,8 +6608,15 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 settings.rag_api_key or settings.page_api_key or settings.api_key
             )
             rag_widgets.model_row.set_text(settings.rag_llm_model)
+            provider = _normalize_rag_provider(settings.rag_provider)
+            if provider in rag_widgets.provider_values:
+                rag_widgets.provider_row.set_selected(rag_widgets.provider_values.index(provider))
+            else:
+                rag_widgets.provider_row.set_selected(0)
             rag_widgets.voyage_model_row.set_text(settings.voyage_model)
             rag_widgets.voyage_key_row.set_text(settings.voyage_api_key)
+            rag_widgets.isaacus_model_row.set_text(settings.isaacus_model)
+            rag_widgets.isaacus_key_row.set_text(settings.isaacus_api_key)
             rag_widgets.rag_chunk_row.set_value(float(settings.rag_chunk_count))
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
@@ -6507,8 +6666,15 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_api_url = rag_widgets.api_url_row.get_text().strip()
         rag_api_key = rag_widgets.api_key_row.get_text().strip()
         rag_model = rag_widgets.model_row.get_text().strip()
+        provider_index = int(rag_widgets.provider_row.get_selected())
+        if 0 <= provider_index < len(rag_widgets.provider_values):
+            rag_provider = rag_widgets.provider_values[provider_index]
+        else:
+            rag_provider = DEFAULT_RAG_PROVIDER
         voyage_model = rag_widgets.voyage_model_row.get_text().strip()
         voyage_key = rag_widgets.voyage_key_row.get_text().strip()
+        isaacus_model = rag_widgets.isaacus_model_row.get_text().strip()
+        isaacus_key = rag_widgets.isaacus_key_row.get_text().strip()
         rag_chunk_count = _coerce_rag_chunk_count(
             int(round(rag_widgets.rag_chunk_row.get_value())),
             DEFAULT_RAG_CHUNK_COUNT,
@@ -6553,8 +6719,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             range_api_key=range_api_key,
             page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
+            rag_provider=rag_provider,
             voyage_api_key=voyage_key,
-            voyage_model=voyage_model or "voyage-law-2",
+            voyage_model=voyage_model or DEFAULT_RAG_VOYAGE_MODEL,
+            isaacus_api_key=isaacus_key,
+            isaacus_model=isaacus_model or DEFAULT_RAG_ISAACUS_MODEL,
             rag_llm_model=rag_model,
             rag_prompt=rag_prompt or DEFAULT_RAG_PROMPT,
             rag_api_url=rag_api_url or page_api_url,
@@ -6570,7 +6739,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if settings.is_configured() and settings.is_rag_ready():
             self._set_status("Saved. Summaries and RAG questions are enabled.")
         elif settings.is_configured():
-            self._set_status("Saved. Add RAG API URL, Voyage, and RAG fields to enable questions.")
+            self._set_status("Saved. Add RAG API URL, embedding provider credentials, and RAG fields to enable questions.")
         else:
             self._set_status("Saved. Add required fields to enable summaries.")
 
