@@ -10,7 +10,7 @@ Features
 - Mouse wheel scrolls within the current record; hold Ctrl and wheel to load the previous/next page.
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
 - Grep matches render in red and can show all matching pages in a single scrollable view.
-- Ctrl+Shift+A opens the AI panel and focuses the RAG question box.
+- Ctrl+Shift+A opens case tools and focuses the RAG question box.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
 
@@ -1603,12 +1603,12 @@ class Focus(Adw.Application):
         self._toc_sidebar_button.connect("toggled", self._on_sidebar_toggle_button)
         left_box.append(self._toc_sidebar_button)
 
-        self._ai_panel_toggle = Gtk.ToggleButton(label="AI Panel")
+        self._ai_panel_toggle = Gtk.ToggleButton(label="Case Tools")
         self._ai_panel_toggle.add_css_class("flat")
         self._ai_panel_toggle.add_css_class("no-bold")
         self._ai_panel_toggle.add_css_class("focus-view-toggle")
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
-        self._ai_panel_toggle.set_tooltip_text("Show AI panel (Ctrl+Shift+A)")
+        self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
         self._set_ai_panel_visible(False)
         left_box.append(self._ai_panel_toggle)
@@ -4697,7 +4697,7 @@ class Focus(Adw.Application):
         if not phrase:
             phrase = self._get_ai_panel_selection()
         if not phrase:
-            self._transient_toast("Highlight text in the transcript or AI panel to search.")
+            self._transient_toast("Highlight text in the transcript or case tools to search.")
             return
         if self._grep_entry:
             self._grep_entry.set_text(phrase)
@@ -4788,9 +4788,9 @@ class Focus(Adw.Application):
         self._current_view_state().ai_panel_visible = visible
         if self._ai_panel_toggle:
             tooltip = (
-                "Hide AI panel (Ctrl+Shift+A)"
+                "Hide case tools (Ctrl+Shift+A)"
                 if visible
-                else "Show AI panel (Ctrl+Shift+A)"
+                else "Show case tools (Ctrl+Shift+A)"
             )
             self._ai_panel_toggle.set_tooltip_text(tooltip)
 
