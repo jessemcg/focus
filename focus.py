@@ -85,6 +85,8 @@ CONFIG_KEY_SUMMARY_READ_POSITIONS = "summary_read_positions"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
+CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
+CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR = "phrase_highlight_color"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
 CASE_NAME_FILENAME = "case_name.txt"
 DEFAULT_SUMMARIZATION_PROMPT = (
@@ -134,7 +136,7 @@ PAGE_LINK_COLOR = "#1a5fb4"
 CONTINUOUS_PAGE_BATCH = 25
 CONTINUOUS_DIVIDER_GLYPH = "─"
 CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
-CONTINUOUS_PAGE_DIVIDER_BG = "#f2f2f2"
+CONTINUOUS_PAGE_DIVIDER_BG = "#e8e8e8"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
@@ -391,6 +393,21 @@ def _format_highlight_phrases(phrases: Iterable[str]) -> str:
     return "\n".join(phrase for phrase in phrases if phrase.strip())
 
 
+def _coerce_color_value(value: Any, default: str) -> str:
+    if not isinstance(value, str):
+        return default
+    candidate = value.strip()
+    if not candidate:
+        return default
+    rgba = Gdk.RGBA()
+    try:
+        if rgba.parse(candidate):
+            return candidate
+    except Exception:
+        return default
+    return default
+
+
 def load_summary_file_from_config(base_dir: Path | None = None) -> Path | None:
     config = _read_config()
     candidate = config.get(CONFIG_KEY_SUMMARY_FILE)
@@ -483,6 +500,8 @@ class AiSettings:
     rag_api_key: str
     rag_chunk_count: int
     highlight_phrases: list[str]
+    grep_highlight_color: str
+    phrase_highlight_color: str
 
     def page_credentials(self) -> tuple[str, str, str]:
         return (
@@ -614,6 +633,14 @@ def load_ai_settings() -> AiSettings:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
+    grep_highlight_color = _coerce_color_value(
+        config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
+        DEFAULT_MATCH_COLOR,
+    )
+    phrase_highlight_color = _coerce_color_value(
+        config.get(CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR),
+        DEFAULT_HIGHLIGHT_COLOR,
+    )
     return AiSettings(
         api_url=api_url,
         model_id=model_id,
@@ -634,6 +661,8 @@ def load_ai_settings() -> AiSettings:
         rag_api_key=rag_api_key,
         rag_chunk_count=rag_chunk_count,
         highlight_phrases=highlight_phrases,
+        grep_highlight_color=grep_highlight_color,
+        phrase_highlight_color=phrase_highlight_color,
     )
 
 
@@ -662,6 +691,14 @@ def save_ai_settings(settings: AiSettings) -> None:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
+    config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
+        settings.grep_highlight_color,
+        DEFAULT_MATCH_COLOR,
+    )
+    config[CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR] = _coerce_color_value(
+        settings.phrase_highlight_color,
+        DEFAULT_HIGHLIGHT_COLOR,
+    )
     _write_config(config)
 
 
@@ -3081,9 +3118,16 @@ class Focus(Adw.Application):
             return None
         buf = self.textview.get_buffer()
         table = buf.get_tag_table()
+        color = (
+            self._ai_settings.grep_highlight_color
+            if self._ai_settings
+            else DEFAULT_MATCH_COLOR
+        )
         tag = table.lookup("match-highlight") if table is not None else None
         if tag is None:
-            tag = buf.create_tag("match-highlight", background=DEFAULT_MATCH_COLOR)
+            tag = buf.create_tag("match-highlight", background=color)
+        else:
+            tag.set_property("background", color)
         return tag
 
     def _ensure_keyword_highlight_tag(self) -> Gtk.TextTag | None:
@@ -3091,9 +3135,16 @@ class Focus(Adw.Application):
             return None
         buf = self.textview.get_buffer()
         table = buf.get_tag_table()
+        color = (
+            self._ai_settings.phrase_highlight_color
+            if self._ai_settings
+            else DEFAULT_HIGHLIGHT_COLOR
+        )
         tag = table.lookup("keyword-highlight") if table is not None else None
         if tag is None:
-            tag = buf.create_tag("keyword-highlight", background=DEFAULT_HIGHLIGHT_COLOR)
+            tag = buf.create_tag("keyword-highlight", background=color)
+        else:
+            tag.set_property("background", color)
         return tag
 
     def _apply_keyword_highlights(self, buf: Gtk.TextBuffer, text: str) -> None:
@@ -3564,6 +3615,11 @@ class Focus(Adw.Application):
         table = self._summary_buffer.get_tag_table()
         if table is None:
             return
+        grep_color = (
+            self._ai_settings.grep_highlight_color
+            if self._ai_settings
+            else DEFAULT_MATCH_COLOR
+        )
         if self._summary_search_tag is None:
             tag = table.lookup("summary-search-match")
             if tag is None:
@@ -3578,10 +3634,12 @@ class Focus(Adw.Application):
             if tag is None:
                 tag = self._summary_buffer.create_tag(
                     "summary-search-current",
-                    background=DEFAULT_MATCH_COLOR,
+                    background=grep_color,
                     foreground="#2b1600",
                 )
             self._summary_search_current_tag = tag
+        if self._summary_search_current_tag is not None:
+            self._summary_search_current_tag.set_property("background", grep_color)
 
     def _clear_summary_search_tags(self) -> None:
         if not self._summary_buffer:
@@ -5925,6 +5983,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._status_label: Gtk.Label | None = None
         self._record_font_size_row: Adw.SpinRow | None = None
         self._ai_font_size_row: Adw.SpinRow | None = None
+        self._grep_highlight_color_control: Gtk.Widget | None = None
+        self._phrase_highlight_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._prompt_editors: dict[str, SummarizationPromptWidgets | RagPromptWidgets] = {}
         self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
@@ -5987,6 +6047,18 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_group.add_css_class("list-stack")
         highlight_group.set_hexpand(True)
         box.append(highlight_group)
+
+        grep_color_row, self._grep_highlight_color_control = self._build_color_row(
+            "Grep Highlight Color",
+            DEFAULT_MATCH_COLOR,
+        )
+        highlight_group.add(grep_color_row)
+
+        phrase_color_row, self._phrase_highlight_color_control = self._build_color_row(
+            "Phrase Highlight Color",
+            DEFAULT_HIGHLIGHT_COLOR,
+        )
+        highlight_group.add(phrase_color_row)
 
         highlight_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         highlight_box.set_margin_top(6)
@@ -6122,6 +6194,48 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if hasattr(row, "set_hexpand"):
             row.set_hexpand(True)
         return row
+
+    def _build_color_row(self, title: str, default: str) -> tuple[Gtk.Widget, Gtk.Widget]:
+        color_button_cls = getattr(Gtk, "ColorButton", None)
+        if color_button_cls is not None:
+            row = Adw.ActionRow(title=title)
+            button = color_button_cls()
+            if hasattr(button, "set_use_alpha"):
+                button.set_use_alpha(True)
+            if hasattr(button, "add_css_class"):
+                button.add_css_class("flat")
+            row.add_suffix(button)
+            row.set_activatable_widget(button)
+            self._set_color_control_value(button, default, default)
+            return row, button
+        fallback = Adw.EntryRow(title=title)
+        fallback.set_hexpand(True)
+        fallback.set_text(default)
+        return fallback, fallback
+
+    def _set_color_control_value(self, control: Gtk.Widget | None, value: str, default: str) -> None:
+        if control is None:
+            return
+        normalized = _coerce_color_value(value, default)
+        if hasattr(control, "set_rgba"):
+            rgba = Gdk.RGBA()
+            rgba.parse(normalized)
+            control.set_rgba(rgba)
+            return
+        if hasattr(control, "set_text"):
+            control.set_text(normalized)
+
+    def _read_color_control_value(self, control: Gtk.Widget | None, default: str) -> str:
+        if control is None:
+            return default
+        if hasattr(control, "get_rgba"):
+            rgba = control.get_rgba()
+            if rgba is not None:
+                return _coerce_color_value(rgba.to_string(), default)
+            return default
+        if hasattr(control, "get_text"):
+            return _coerce_color_value(control.get_text(), default)
+        return default
 
     def _build_prompt_editor(self, text: str) -> tuple[Gtk.ScrolledWindow, Gtk.TextBuffer]:
         scroller = Gtk.ScrolledWindow()
@@ -6334,6 +6448,16 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._highlight_phrases_buffer.set_text(
                 _format_highlight_phrases(settings.highlight_phrases)
             )
+        self._set_color_control_value(
+            self._grep_highlight_color_control,
+            settings.grep_highlight_color,
+            DEFAULT_MATCH_COLOR,
+        )
+        self._set_color_control_value(
+            self._phrase_highlight_color_control,
+            settings.phrase_highlight_color,
+            DEFAULT_HIGHLIGHT_COLOR,
+        )
         self._set_status("Loaded saved values.")
 
     def _set_status(self, text: str) -> None:
@@ -6375,6 +6499,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             if self._highlight_phrases_buffer is not None
             else []
         )
+        grep_highlight_color = self._read_color_control_value(
+            self._grep_highlight_color_control,
+            DEFAULT_MATCH_COLOR,
+        )
+        phrase_highlight_color = self._read_color_control_value(
+            self._phrase_highlight_color_control,
+            DEFAULT_HIGHLIGHT_COLOR,
+        )
 
         record_font_size = (
             int(round(self._record_font_size_row.get_value()))
@@ -6406,6 +6538,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_api_key=rag_api_key or page_api_key,
             rag_chunk_count=rag_chunk_count,
             highlight_phrases=highlight_phrases,
+            grep_highlight_color=grep_highlight_color,
+            phrase_highlight_color=phrase_highlight_color,
         )
         save_ai_settings(settings)
         self.app.update_font_sizes(font_size_pt=record_font_size, ai_font_size_pt=ai_font_size)
