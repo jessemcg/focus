@@ -6196,12 +6196,25 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         return row
 
     def _build_color_row(self, title: str, default: str) -> tuple[Gtk.Widget, Gtk.Widget]:
+        color_dialog_cls = getattr(Gtk, "ColorDialog", None)
+        color_dialog_button_cls = getattr(Gtk, "ColorDialogButton", None)
+        if color_dialog_cls is not None and color_dialog_button_cls is not None:
+            row = Adw.ActionRow(title=title)
+            dialog = color_dialog_cls()
+            if hasattr(dialog, "set_with_alpha"):
+                dialog.set_with_alpha(True)
+            button = color_dialog_button_cls.new(dialog)
+            if hasattr(button, "add_css_class"):
+                button.add_css_class("flat")
+            row.add_suffix(button)
+            row.set_activatable_widget(button)
+            self._set_color_control_value(button, default, default)
+            return row, button
+
         color_button_cls = getattr(Gtk, "ColorButton", None)
         if color_button_cls is not None:
             row = Adw.ActionRow(title=title)
             button = color_button_cls()
-            if hasattr(button, "set_use_alpha"):
-                button.set_use_alpha(True)
             if hasattr(button, "add_css_class"):
                 button.add_css_class("flat")
             row.add_suffix(button)
