@@ -11,6 +11,7 @@ Features
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
 - Grep matches render in red and can show all matching pages in a single scrollable view.
 - Ctrl+Shift+A opens case tools and focuses the RAG question box.
+- Ctrl+Tab toggles between Primary View and Secondary View.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
 
@@ -2362,6 +2363,10 @@ class Focus(Adw.Application):
         self._update_view_buttons()
         self._restore_view_state(self._current_view_state())
 
+    def _toggle_active_view(self) -> None:
+        target_view = VIEW_TWO_ID if self._active_view_id == VIEW_ONE_ID else VIEW_ONE_ID
+        self._switch_view(target_view)
+
     def _update_view_buttons(self) -> None:
         if not self._view_buttons:
             return
@@ -4481,6 +4486,10 @@ class Focus(Adw.Application):
         focus_rag_question.connect("activate", lambda _a, _p: self._focus_rag_question_entry())
         self.add_action(focus_rag_question)
 
+        toggle_view = Gio.SimpleAction.new("toggle_view", None)
+        toggle_view.connect("activate", lambda _a, _p: self._toggle_active_view())
+        self.add_action(toggle_view)
+
         for name, cb in {
             "next": self._go_next,
             "prev": self._go_prev,
@@ -4499,6 +4508,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.toggle_continuous_view", ["<Primary><Shift>c"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
+        self.set_accels_for_action("app.toggle_view", ["<Primary>Tab"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
     def _on_choose_input_dir(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
