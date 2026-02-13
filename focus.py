@@ -11,7 +11,7 @@ Features
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
 - Grep matches render in red and can show all matching pages in a single scrollable view.
 - Ctrl+Shift+A opens case tools and focuses the RAG question box.
-- Ctrl+Tab toggles between Primary View and Secondary View.
+- F6 toggles between Primary View and Secondary View.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
 
@@ -4784,7 +4784,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.toggle_continuous_view", ["<Primary><Shift>c"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
-        self.set_accels_for_action("app.toggle_view", ["<Primary>Tab"])
+        self.set_accels_for_action("app.toggle_view", ["F6"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
     def _on_choose_input_dir(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
