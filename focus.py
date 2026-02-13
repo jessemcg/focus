@@ -33,6 +33,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -1447,6 +1448,9 @@ class Focus(Adw.Application):
         self._grep_combined_text: str | None = None
         self._grep_combined_highlights: list[tuple[int, int]] = []
         self._showing_grep_results = False
+        self._grep_search_thread: threading.Thread | None = None
+        self._grep_search_cancel_event: threading.Event | None = None
+        self._grep_search_generation = 0
 
         self._page_cache: dict[int, str] = {}
         self._page_search_cache: dict[int, str] = {}
@@ -2290,6 +2294,7 @@ class Focus(Adw.Application):
         return self._get_view_state(self._active_view_id)
 
     def _reset_view_states(self) -> None:
+        self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
         self._views = {
             VIEW_ONE_ID: FocusViewState(name=VIEW_LABELS[VIEW_ONE_ID]),
@@ -2451,6 +2456,7 @@ class Focus(Adw.Application):
         if view_id == self._active_view_id or view_id not in self._views:
             self._update_view_buttons()
             return
+        self._stop_grep_search_if_running()
         self._persist_active_view_state()
         self._active_view_id = view_id
         self._update_view_buttons()
@@ -3950,6 +3956,8 @@ class Focus(Adw.Application):
 
     def _activate_ai_link(self, phrase: str) -> None:
         cleaned = phrase.strip()
+        if not cleaned:
+            return
         if self._grep_entry:
             self._grep_entry.set_text(cleaned)
         self._apply_grep(cleaned)
@@ -4318,18 +4326,21 @@ class Focus(Adw.Application):
         path = self.page_to_path.get(page)
         if not path:
             return "", "", []
-        try:
-            with io.open(path, "r", encoding="utf-8", errors="replace") as handle:
-                content = handle.read()
-        except Exception as exc:  # noqa: BLE001
-            content = f"Error reading {path.name}: {exc}"
-        content = content.replace("\r\n", "\n").replace("\r", "\n")
+        content = self._read_text_file(path)
         normalized, norm_to_orig = normalize_text_for_search_with_map(content)
 
         self._page_cache[page] = content
         self._page_search_cache[page] = normalized
         self._page_search_map_cache[page] = norm_to_orig
         return content, normalized, norm_to_orig
+
+    def _read_text_file(self, path: Path) -> str:
+        try:
+            with io.open(path, "r", encoding="utf-8", errors="replace") as handle:
+                content = handle.read()
+        except Exception as exc:  # noqa: BLE001
+            content = f"Error reading {path.name}: {exc}"
+        return content.replace("\r\n", "\n").replace("\r", "\n")
 
     def _render_page_display(
         self,
@@ -4380,6 +4391,7 @@ class Focus(Adw.Application):
         self._sync_sidebar_active_page()
 
     def _clear_grep_state(self) -> None:
+        self._stop_grep_search_if_running()
         self._grep_regex = None
         self._grep_hits.clear()
         self._matching_pages.clear()
@@ -4388,7 +4400,19 @@ class Focus(Adw.Application):
         self._grep_combined_highlights = []
         self._showing_grep_results = False
 
+    def _stop_grep_search_if_running(self) -> None:
+        if self._grep_search_cancel_event:
+            self._grep_search_cancel_event.set()
+        if self._grep_search_thread and self._grep_search_thread.is_alive():
+            try:
+                self._grep_search_thread.join(timeout=0.1)
+            except Exception:
+                pass
+        self._grep_search_thread = None
+        self._grep_search_cancel_event = None
+
     def _apply_grep(self, phrase: str) -> None:
+        self._stop_grep_search_if_running()
         phrase = phrase.strip()
         self._deactivate_continuous_view(reload=False)
         if phrase:
@@ -4401,30 +4425,198 @@ class Focus(Adw.Application):
 
         self._grep_phrase_raw = phrase
         try:
-            self._prepare_grep()
+            self._grep_regex = re.compile(
+                build_pattern(preprocess_phrase(self._grep_phrase_raw), MAX_BREAKS),
+                re.IGNORECASE | re.DOTALL,
+            )
         except re.error as exc:
             self._transient_toast(f"Invalid grep pattern: {exc}")
             return
+        self._grep_hits.clear()
+        self._matching_pages.clear()
+        self._matching_lookup.clear()
+        self._grep_combined_text = None
+        self._grep_combined_highlights = []
+        self._showing_grep_results = False
+        self._grep_search_generation += 1
+        generation = self._grep_search_generation
+        cancel_event = threading.Event()
+        pages = list(self.pages)
+        page_to_path = dict(self.page_to_path)
+        assert self._grep_regex is not None
+        worker = threading.Thread(
+            target=self._grep_search_worker,
+            args=(self._grep_regex, generation, cancel_event, pages, page_to_path),
+            daemon=True,
+        )
+        self._grep_search_cancel_event = cancel_event
+        self._grep_search_thread = worker
+        worker.start()
 
-        if not self._matching_pages:
-            self._showing_grep_results = False
-            self._transient_toast("No pages matched the grep phrase")
-            self._load_current()
-            return
+    def _grep_search_worker(
+        self,
+        regex: re.Pattern[str],
+        generation: int,
+        cancel_event: threading.Event,
+        pages: list[int],
+        page_to_path: dict[int, Path],
+    ) -> None:
+        local_hits: dict[int, list[tuple[int, int]]] = {}
+        local_contents: dict[int, str] = {}
+        separator = f"\n\n{CONTINUOUS_PAGE_DIVIDER}\n\n"
+        phrase_source = self._grep_phrase_raw or ""
+        phrase_prepared = preprocess_phrase(phrase_source)
+        candidate_pages = self._find_grep_candidate_pages(
+            regex.pattern,
+            pages,
+            page_to_path,
+            cancel_event,
+        )
+        if candidate_pages is None:
+            anchor_token = ""
+            word_tokens = re.findall(r"[A-Za-z0-9]{4,}", phrase_prepared)
+            if word_tokens:
+                anchor_token = max(word_tokens, key=len).lower()
+            candidate_pages = []
+            for page in pages:
+                if cancel_event.is_set():
+                    return
+                path = page_to_path.get(page)
+                if not path:
+                    continue
+                if not anchor_token:
+                    candidate_pages.append(page)
+                    continue
+                content = self._read_text_file(path)
+                normalized = normalize_text_for_search(content)
+                if anchor_token in normalized.lower():
+                    candidate_pages.append(page)
 
-        first_page = self._matching_pages[0]
-        if first_page in self.pages:
-            self.current_index = self.pages.index(first_page)
+        for page in candidate_pages:
+            if cancel_event.is_set():
+                return
+            path = page_to_path.get(page)
+            if not path:
+                continue
+            content = self._read_text_file(path)
+            normalized, norm_to_orig = normalize_text_for_search_with_map(content)
+            if not normalized:
+                continue
+            matches = list(regex.finditer(normalized))
+            if not matches:
+                continue
+            mapped_hits: list[tuple[int, int]] = []
+            for match in matches:
+                mapped = self._map_normalized_span_to_original(
+                    norm_to_orig,
+                    match.start(),
+                    match.end(),
+                    len(content),
+                )
+                if mapped:
+                    mapped_hits.append(mapped)
+            if mapped_hits:
+                local_hits[page] = mapped_hits
+                local_contents[page] = content
 
-        if len(self._matching_pages) == 1:
-            self._showing_grep_results = False
-            self._grep_combined_text = None
-            self._grep_combined_highlights = []
-            self._load_current()
-            return
+        matching_pages = sorted(local_hits.keys())
+        combined_text: str | None = None
+        combined_highlights: list[tuple[int, int]] = []
 
-        self._showing_grep_results = True
-        self._show_grep_results()
+        if len(matching_pages) > 1:
+            parts: list[str] = []
+            offset = 0
+            for idx, page in enumerate(matching_pages):
+                if cancel_event.is_set():
+                    return
+                content = local_contents.get(page)
+                if content is None:
+                    path = page_to_path.get(page)
+                    content = self._read_text_file(path) if path else ""
+                header = f"{page:04d}\n\n"
+                parts.append(header)
+                parts.append(content)
+                header_len = len(header)
+                for start, end in local_hits.get(page, []):
+                    combined_highlights.append((offset + header_len + start, offset + header_len + end))
+                if idx != len(matching_pages) - 1:
+                    parts.append(separator)
+                    offset += header_len + len(content) + len(separator)
+                else:
+                    parts.append("\n\n")
+                    offset += header_len + len(content) + 2
+            combined_text = "".join(parts) if parts else None
+
+        GLib.idle_add(
+            self._on_grep_search_finished,
+            generation,
+            local_hits,
+            matching_pages,
+            combined_text,
+            combined_highlights,
+        )
+
+    def _find_grep_candidate_pages(
+        self,
+        pattern: str,
+        pages: list[int],
+        page_to_path: dict[int, Path],
+        cancel_event: threading.Event,
+    ) -> list[int] | None:
+        rg_path = shutil.which("rg")
+        if not rg_path:
+            return None
+        search_root = str(self.text_dir)
+        order = {page: idx for idx, page in enumerate(pages)}
+        cmd = [
+            rg_path,
+            "--pcre2",
+            "--ignore-case",
+            "--files-with-matches",
+            "--no-messages",
+            "--glob",
+            "*.txt",
+            "--regexp",
+            pattern,
+            search_root,
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except Exception:
+            return None
+        try:
+            while True:
+                if cancel_event.is_set():
+                    proc.terminate()
+                    return []
+                try:
+                    proc.wait(timeout=0.05)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            output = proc.stdout.read() if proc.stdout else ""
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            return None
+
+        allowed_pages = set(pages)
+        matched: set[int] = set()
+        for raw_line in output.splitlines():
+            stem = Path(raw_line.strip()).stem
+            if not stem.isdigit():
+                continue
+            page = int(stem)
+            if page in allowed_pages:
+                matched.add(page)
+        return sorted(matched, key=lambda page: order.get(page, 0))
 
     def _map_normalized_span_to_original(
         self,
@@ -4454,59 +4646,50 @@ class Focus(Adw.Application):
             end_orig = original_len
         return start_orig, end_orig
 
-    def _prepare_grep(self) -> None:
-        assert self._grep_phrase_raw is not None
-        phrase = preprocess_phrase(self._grep_phrase_raw)
-        self._clear_grep_state()
-        self._grep_regex = re.compile(build_pattern(phrase, MAX_BREAKS), re.IGNORECASE | re.DOTALL)
+    def _on_grep_search_finished(
+        self,
+        generation: int,
+        grep_hits: dict[int, list[tuple[int, int]]],
+        matching_pages: list[int],
+        combined_text: str | None,
+        combined_highlights: list[tuple[int, int]],
+    ) -> bool:
+        if generation != self._grep_search_generation:
+            return False
 
-        for page in self.pages:
-            content, normalized, norm_to_orig = self._read_page_text(page)
-            if not normalized or not self._grep_regex:
-                continue
-            matches = list(self._grep_regex.finditer(normalized))
-            if matches:
-                original_hits: list[tuple[int, int]] = []
-                original_len = len(content)
-                for match in matches:
-                    mapped = self._map_normalized_span_to_original(
-                        norm_to_orig,
-                        match.start(),
-                        match.end(),
-                        original_len,
-                    )
-                    if mapped:
-                        original_hits.append(mapped)
-                if original_hits:
-                    self._grep_hits[page] = original_hits
+        self._grep_search_thread = None
+        self._grep_search_cancel_event = None
+        self._grep_hits = {page: list(hits) for page, hits in grep_hits.items()}
+        self._matching_pages = list(matching_pages)
+        self._matching_lookup = {page: idx for idx, page in enumerate(self._matching_pages)}
 
-        if self._grep_hits:
-            self._matching_pages.extend(sorted(self._grep_hits.keys()))
-            self._matching_lookup.update({page: idx for idx, page in enumerate(self._matching_pages)})
-            self._build_grep_document()
+        if not self._matching_pages:
+            self._showing_grep_results = False
+            self._grep_combined_text = None
+            self._grep_combined_highlights = []
+            self._transient_toast("No pages matched the grep phrase")
+            self._load_current()
+            return False
 
-    def _build_grep_document(self) -> None:
-        parts: list[str] = []
-        highlights: list[tuple[int, int]] = []
-        offset = 0
-        separator = f"\n\n{self._continuous_divider_text()}\n\n"
-        for idx, page in enumerate(self._matching_pages):
-            content, _, _ = self._read_page_text(page)
-            header = f"{page:04d}\n\n"
-            parts.append(header)
-            parts.append(content)
-            header_len = len(header)
-            for start, end in self._grep_hits.get(page, []):
-                highlights.append((offset + header_len + start, offset + header_len + end))
-            if idx != len(self._matching_pages) - 1:
-                parts.append(separator)
-                offset += header_len + len(content) + len(separator)
-            else:
-                parts.append("\n\n")
-                offset += header_len + len(content) + 2
-        self._grep_combined_text = "".join(parts) if parts else None
-        self._grep_combined_highlights = highlights
-        self._showing_grep_results = bool(parts)
+        first_page = self._matching_pages[0]
+        if first_page in self.pages:
+            self.current_index = self.pages.index(first_page)
+
+        if len(self._matching_pages) == 1:
+            self._showing_grep_results = False
+            self._grep_combined_text = None
+            self._grep_combined_highlights = []
+            self._load_current()
+            return False
+
+        self._grep_combined_text = combined_text
+        self._grep_combined_highlights = list(combined_highlights)
+        self._showing_grep_results = bool(self._grep_combined_text)
+        if not self._showing_grep_results:
+            self._load_current()
+            return False
+        self._show_grep_results()
+        return False
 
     def _show_grep_results(self) -> None:
         if not self._showing_grep_results or not self._grep_combined_text:
@@ -4654,6 +4837,7 @@ class Focus(Adw.Application):
         return False
 
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
+        self._stop_grep_search_if_running()
         if self._summary_scroll_save_source_id is not None:
             GLib.source_remove(self._summary_scroll_save_source_id)
             self._summary_scroll_save_source_id = None
@@ -4675,6 +4859,7 @@ class Focus(Adw.Application):
         self._transient_toast("AI settings updated.")
 
     def _apply_input_dir(self, path: Path) -> None:
+        self._stop_grep_search_if_running()
         target = path.expanduser()
         resolved = target.resolve(strict=False)
         if not resolved.exists() or not resolved.is_dir():
