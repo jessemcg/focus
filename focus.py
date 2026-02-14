@@ -1057,7 +1057,6 @@ listbox.focus-sidebar-listview row {
   color: alpha(@window_fg_color, 0.62);
 }
 
-
 #page-text {
   background-color: transparent;
 }
@@ -1434,11 +1433,11 @@ class Focus(Adw.Application):
         self._color_provider = Gtk.CssProvider()
         self._css_provider_registered = False
 
-        self._page_back_ten_button: Gtk.Button | None = None
         self._page_back_one_button: Gtk.Button | None = None
         self._page_forward_one_button: Gtk.Button | None = None
-        self._page_forward_ten_button: Gtk.Button | None = None
-        self._page_status_label: Gtk.Label | None = None
+        self._scroll_help_button: Gtk.Button | None = None
+        self._page_number_entry: Gtk.Entry | None = None
+        self._page_total_label: Gtk.Label | None = None
 
         self._grep_phrase_raw: str | None = None
         self._grep_regex: re.Pattern[str] | None = None
@@ -2093,26 +2092,19 @@ class Focus(Adw.Application):
         text_controls.set_valign(Gtk.Align.CENTER)
         text_controls.set_halign(Gtk.Align.FILL)
 
-        prev_icon_name = self._choose_icon("go-previous-symbolic", "go-previous")
-        next_icon_name = self._choose_icon("go-next-symbolic", "go-next")
-
-        def _double_icon(name: str) -> Gtk.Box:
-            wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-            wrapper.set_valign(Gtk.Align.CENTER)
-            wrapper.set_halign(Gtk.Align.CENTER)
-            wrapper.append(Gtk.Image.new_from_icon_name(name))
-            wrapper.append(Gtk.Image.new_from_icon_name(name))
-            return wrapper
+        prev_icon_name = self._choose_icon("go-up-symbolic", "go-up")
+        next_icon_name = self._choose_icon("go-down-symbolic", "go-down")
 
         paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
 
-        self._page_back_ten_button = Gtk.Button()
-        self._page_back_ten_button.add_css_class("flat")
-        self._page_back_ten_button.set_valign(Gtk.Align.CENTER)
-        self._page_back_ten_button.set_tooltip_text("Back 10 pages")
-        self._page_back_ten_button.set_child(_double_icon(prev_icon_name))
-        self._page_back_ten_button.connect("clicked", self._on_page_back_ten_clicked)
-        paginator.append(self._page_back_ten_button)
+        self._scroll_help_button = Gtk.Button(label="Scroll")
+        self._scroll_help_button.add_css_class("flat")
+        self._scroll_help_button.add_css_class("no-bold")
+        self._scroll_help_button.add_css_class("focus-subdued")
+        self._scroll_help_button.set_valign(Gtk.Align.CENTER)
+        self._scroll_help_button.set_tooltip_text("Mouse wheel scrolls content.")
+        self._scroll_help_button.connect("clicked", self._on_scroll_help_clicked)
+        paginator.append(self._scroll_help_button)
 
         self._page_back_one_button = Gtk.Button()
         self._page_back_one_button.add_css_class("flat")
@@ -2122,12 +2114,6 @@ class Focus(Adw.Application):
         self._page_back_one_button.connect("clicked", self._on_page_back_one_clicked)
         paginator.append(self._page_back_one_button)
 
-        self._page_status_label = Gtk.Label(label="--/--")
-        self._page_status_label.add_css_class("dim-label")
-        self._page_status_label.set_width_chars(10)
-        self._page_status_label.set_xalign(0.5)
-        paginator.append(self._page_status_label)
-
         self._page_forward_one_button = Gtk.Button()
         self._page_forward_one_button.add_css_class("flat")
         self._page_forward_one_button.set_valign(Gtk.Align.CENTER)
@@ -2136,19 +2122,28 @@ class Focus(Adw.Application):
         self._page_forward_one_button.connect("clicked", self._on_page_forward_one_clicked)
         paginator.append(self._page_forward_one_button)
 
-        self._page_forward_ten_button = Gtk.Button()
-        self._page_forward_ten_button.add_css_class("flat")
-        self._page_forward_ten_button.set_valign(Gtk.Align.CENTER)
-        self._page_forward_ten_button.set_tooltip_text("Forward 10 pages")
-        self._page_forward_ten_button.set_child(_double_icon(next_icon_name))
-        self._page_forward_ten_button.connect("clicked", self._on_page_forward_ten_clicked)
-        paginator.append(self._page_forward_ten_button)
+        self._page_number_entry = Gtk.Entry()
+        self._page_number_entry.set_width_chars(5)
+        self._page_number_entry.set_max_width_chars(5)
+        self._page_number_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self._page_number_entry.set_alignment(1.0)
+        self._page_number_entry.set_valign(Gtk.Align.CENTER)
+        self._page_number_entry.set_tooltip_text("Type a page number and press Enter")
+        self._page_number_entry.connect("activate", self._on_page_number_activate)
+        paginator.append(self._page_number_entry)
+
+        self._page_total_label = Gtk.Label(label="/ --")
+        self._page_total_label.add_css_class("dim-label")
+        self._page_total_label.set_xalign(0.0)
+        self._page_total_label.set_valign(Gtk.Align.CENTER)
+        paginator.append(self._page_total_label)
 
         text_controls.set_start_widget(paginator)
 
         trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trailing_controls.set_valign(Gtk.Align.CENTER)
         trailing_controls.set_halign(Gtk.Align.END)
+        trailing_controls.set_margin_start(10)
 
         self._show_image_icon = Gtk.Image.new_from_icon_name(self._image_icon_name_off)
         self._show_image_icon.add_css_class("focus-toggle-icon")
@@ -4276,21 +4271,23 @@ class Focus(Adw.Application):
 
     def _update_page_nav_buttons(self) -> None:
         enabled = bool(self.pages) and not self._continuous_view and not self._showing_grep_results
-        if self._page_back_ten_button:
-            self._page_back_ten_button.set_sensitive(enabled)
         if self._page_back_one_button:
             self._page_back_one_button.set_sensitive(enabled)
         if self._page_forward_one_button:
             self._page_forward_one_button.set_sensitive(enabled)
-        if self._page_forward_ten_button:
-            self._page_forward_ten_button.set_sensitive(enabled)
-        if self._page_status_label:
+        if self._page_number_entry:
+            self._page_number_entry.set_sensitive(bool(self.pages))
+        if self._page_total_label and self._page_number_entry:
             if self.pages and 0 <= self.current_index < len(self.pages):
                 current_page = self.pages[self.current_index]
                 total_pages = len(self.pages)
-                self._page_status_label.set_text(f"{current_page}/{total_pages}")
+                if not self._page_number_entry.has_focus():
+                    self._page_number_entry.set_text(str(current_page))
+                self._page_total_label.set_text(f"/ {total_pages}")
             else:
-                self._page_status_label.set_text("--/--")
+                if not self._page_number_entry.has_focus():
+                    self._page_number_entry.set_text("")
+                self._page_total_label.set_text("/ --")
 
     def _update_header(self) -> None:
         self._update_page_nav_buttons()
@@ -4716,6 +4713,7 @@ class Focus(Adw.Application):
         if not attached:
             attach_scroll_controller(self.win)
         attach_scroll_controller(self._image_scroller)
+        attach_scroll_controller(self._scroll_help_button)
 
         key_ctrl = Gtk.EventControllerKey.new()
         key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -4898,6 +4896,14 @@ class Focus(Adw.Application):
             self._set_text("No .txt pages found in:\n" + str(self.text_dir))
 
     def _on_scroll(self, ctrl: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
+        if self._scroll_help_button and ctrl.get_widget() is self._scroll_help_button:
+            if dy > 0:
+                self._go_next()
+                return True
+            if dy < 0:
+                self._go_prev()
+                return True
+            return False
         state = ctrl.get_current_event_state()
         if state & Gdk.ModifierType.CONTROL_MASK:
             if dy > 0:
@@ -4933,11 +4939,6 @@ class Focus(Adw.Application):
             return True
         return False
 
-    def _on_page_back_ten_clicked(self, _button: Gtk.Button) -> None:
-        if self._continuous_view or self._showing_grep_results:
-            return
-        self._go_prev_ten()
-
     def _on_page_back_one_clicked(self, _button: Gtk.Button) -> None:
         if self._continuous_view or self._showing_grep_results:
             return
@@ -4948,10 +4949,22 @@ class Focus(Adw.Application):
             return
         self._go_next()
 
-    def _on_page_forward_ten_clicked(self, _button: Gtk.Button) -> None:
-        if self._continuous_view or self._showing_grep_results:
+    def _on_scroll_help_clicked(self, _button: Gtk.Button) -> None:
+        self._transient_toast("Mouse wheel scrolls content.")
+
+    def _on_page_number_activate(self, entry: Gtk.Entry) -> None:
+        if not self.pages:
             return
-        self._go_next_ten()
+        target = entry.get_text().strip()
+        if not target:
+            self._update_page_nav_buttons()
+            return
+        if not target.isdigit():
+            self._transient_toast("Enter a numeric page value.")
+            self._update_page_nav_buttons()
+            return
+        self._show_page_from_link(target)
+        self._update_page_nav_buttons()
 
     def _focus_grep_entry(self) -> None:
         if self._grep_entry:
@@ -6459,8 +6472,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             prompt_stack.add_named(page, key)
 
         if first_row is not None:
-            prompt_list.select_row(first_row)
             prompt_stack.set_visible_child_name(self._prompt_row_keys[first_row])
+
+            def _select_first_prompt_row() -> bool:
+                if first_row.get_parent() is prompt_list:
+                    prompt_list.select_row(first_row)
+                return False
+
+            GLib.idle_add(_select_first_prompt_row)
 
         split.set_start_child(prompt_list_scroller)
         split.set_end_child(prompt_stack)
