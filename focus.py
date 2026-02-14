@@ -151,6 +151,10 @@ CONTINUOUS_DIVIDER_GLYPH = "─"
 CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
 CONTINUOUS_PAGE_DIVIDER_BG = "#e8e8e8"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
+RIGHT_SCROLL_ZONE_WIDTH_PX = 172
+RIGHT_SCROLL_ZONE_MARGIN_TOP_PX = 72
+RIGHT_SCROLL_ZONE_MARGIN_BOTTOM_PX = 72
+RIGHT_SCROLL_ZONE_MARGIN_END_PX = 14
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
@@ -1027,6 +1031,38 @@ listbox.focus-sidebar-listview row {
   background: __PAGE_TEXT_BG__;
 }
 
+button.focus-right-scroll-zone {
+  min-width: 172px;
+  border-radius: 10px;
+  border-left: 1px solid rgba(128, 128, 128, 0.00);
+  padding: 0;
+  background-color: rgba(128, 128, 128, 0.00);
+  background-image: none;
+  box-shadow: none;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+button.focus-right-scroll-zone:hover,
+button.focus-right-scroll-zone.hover,
+button.focus-right-scroll-zone:active {
+  background-color: rgba(128, 128, 128, 0.12);
+  border-left: 1px solid rgba(128, 128, 128, 0.24);
+  background-image: none;
+  box-shadow: none;
+}
+
+button.focus-right-scroll-zone label.focus-right-scroll-label {
+  color: rgba(95, 95, 95, 0.00);
+  font-size: 11px;
+  font-weight: 500;
+  transition: color 120ms ease;
+}
+
+button.focus-right-scroll-zone:hover label.focus-right-scroll-label,
+button.focus-right-scroll-zone.hover label.focus-right-scroll-label,
+button.focus-right-scroll-zone:active label.focus-right-scroll-label {
+  color: rgba(95, 95, 95, 0.62);
+}
 
 .ai-output-frame {
   background-color: __AI_PANEL_BG__;
@@ -1403,6 +1439,10 @@ class Focus(Adw.Application):
         self._summary_file_path: Path | None = load_summary_file_from_config(self.input_dir)
         self.textview: Gtk.TextView | None = None
         self.scroller: Gtk.ScrolledWindow | None = None
+        self._text_scroll_overlay: Gtk.Overlay | None = None
+        self._right_scroll_zone: Gtk.Button | None = None
+        self._right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
+        self._right_scroll_active = False
         self._grep_entry: Gtk.Entry | None = None
         self._center_label: Gtk.Label | None = None
         self._split_view: Adw.NavigationSplitView | None = None
@@ -1435,7 +1475,6 @@ class Focus(Adw.Application):
 
         self._page_back_one_button: Gtk.Button | None = None
         self._page_forward_one_button: Gtk.Button | None = None
-        self._scroll_help_button: Gtk.Button | None = None
         self._page_number_entry: Gtk.Entry | None = None
         self._page_total_label: Gtk.Label | None = None
 
@@ -1773,6 +1812,40 @@ class Focus(Adw.Application):
         self.scroller.set_size_request(-1, 0)
         self.scroller.set_child(self.textview)
         self._update_text_rounding()
+        self._text_scroll_overlay = Gtk.Overlay()
+        self._text_scroll_overlay.set_hexpand(True)
+        self._text_scroll_overlay.set_vexpand(True)
+        self._text_scroll_overlay.set_child(self.scroller)
+
+        self._right_scroll_zone = Gtk.Button()
+        self._right_scroll_zone.add_css_class("flat")
+        self._right_scroll_zone.add_css_class("focus-right-scroll-zone")
+        self._right_scroll_zone.set_halign(Gtk.Align.END)
+        self._right_scroll_zone.set_valign(Gtk.Align.FILL)
+        self._right_scroll_zone.set_vexpand(True)
+        self._right_scroll_zone.set_size_request(RIGHT_SCROLL_ZONE_WIDTH_PX, -1)
+        self._right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_MARGIN_TOP_PX)
+        self._right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_MARGIN_BOTTOM_PX)
+        self._right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_MARGIN_END_PX)
+        self._right_scroll_zone.set_can_target(True)
+        self._right_scroll_zone.set_focus_on_click(False)
+        right_scroll_label = Gtk.Label(label="Scroll Area")
+        right_scroll_label.add_css_class("focus-right-scroll-label")
+        right_scroll_label.set_halign(Gtk.Align.CENTER)
+        right_scroll_label.set_valign(Gtk.Align.END)
+        right_scroll_label.set_margin_bottom(16)
+        self._right_scroll_zone.set_child(right_scroll_label)
+        self._right_scroll_zone.connect("clicked", self._on_right_scroll_zone_clicked)
+
+        self._right_scroll_zone_scroll_controller = Gtk.EventControllerScroll.new(
+            Gtk.EventControllerScrollFlags.VERTICAL
+        )
+        self._right_scroll_zone_scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self._right_scroll_zone_scroll_controller.connect("scroll", self._on_right_scroll_zone_scroll)
+        self._right_scroll_zone.add_controller(self._right_scroll_zone_scroll_controller)
+        self._text_scroll_overlay.add_overlay(self._right_scroll_zone)
+        if hasattr(self._text_scroll_overlay, "set_overlay_pass_through"):
+            self._text_scroll_overlay.set_overlay_pass_through(self._right_scroll_zone, False)
 
         self._image_picture = Gtk.Picture()
         self._image_picture.set_hexpand(False)
@@ -1819,7 +1892,7 @@ class Focus(Adw.Application):
         self._content_stack.set_transition_duration(120)
         self._content_stack.set_hhomogeneous(False)
         self._content_stack.set_vhomogeneous(False)
-        self._content_stack.add_named(self.scroller, "text")
+        self._content_stack.add_named(self._text_scroll_overlay, "text")
         self._content_stack.add_named(self._image_scroller, "image")
         self._content_stack.set_visible_child_name("text")
 
@@ -2096,15 +2169,6 @@ class Focus(Adw.Application):
         next_icon_name = self._choose_icon("go-down-symbolic", "go-down")
 
         paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-
-        self._scroll_help_button = Gtk.Button(label="Scroll")
-        self._scroll_help_button.add_css_class("flat")
-        self._scroll_help_button.add_css_class("no-bold")
-        self._scroll_help_button.add_css_class("focus-subdued")
-        self._scroll_help_button.set_valign(Gtk.Align.CENTER)
-        self._scroll_help_button.set_tooltip_text("Mouse wheel scrolls content.")
-        self._scroll_help_button.connect("clicked", self._on_scroll_help_clicked)
-        paginator.append(self._scroll_help_button)
 
         self._page_back_one_button = Gtk.Button()
         self._page_back_one_button.add_css_class("flat")
@@ -3534,10 +3598,22 @@ class Focus(Adw.Application):
             self.textview.set_cursor_from_name("pointer")
         else:
             self.textview.set_cursor_from_name(None)
+        width = self.textview.get_width()
+        height = self.textview.get_height()
+        within_x = width > 0 and x >= (
+            width - RIGHT_SCROLL_ZONE_WIDTH_PX - RIGHT_SCROLL_ZONE_MARGIN_END_PX
+        )
+        within_y = (
+            height > 0
+            and y >= RIGHT_SCROLL_ZONE_MARGIN_TOP_PX
+            and y <= (height - RIGHT_SCROLL_ZONE_MARGIN_BOTTOM_PX)
+        )
+        self._set_right_scroll_active(within_x and within_y)
 
     def _on_textview_leave(self, _controller: Gtk.EventControllerMotion) -> None:
         if self.textview:
             self.textview.set_cursor_from_name(None)
+        self._set_right_scroll_active(False)
 
     def _on_textview_click(
         self,
@@ -4713,7 +4789,6 @@ class Focus(Adw.Application):
         if not attached:
             attach_scroll_controller(self.win)
         attach_scroll_controller(self._image_scroller)
-        attach_scroll_controller(self._scroll_help_button)
 
         key_ctrl = Gtk.EventControllerKey.new()
         key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -4896,7 +4971,7 @@ class Focus(Adw.Application):
             self._set_text("No .txt pages found in:\n" + str(self.text_dir))
 
     def _on_scroll(self, ctrl: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
-        if self._scroll_help_button and ctrl.get_widget() is self._scroll_help_button:
+        if self.scroller and ctrl.get_widget() is self.scroller and self._right_scroll_active:
             if dy > 0:
                 self._go_next()
                 return True
@@ -4949,9 +5024,6 @@ class Focus(Adw.Application):
             return
         self._go_next()
 
-    def _on_scroll_help_clicked(self, _button: Gtk.Button) -> None:
-        self._transient_toast("Mouse wheel scrolls content.")
-
     def _on_page_number_activate(self, entry: Gtk.Entry) -> None:
         if not self.pages:
             return
@@ -4965,6 +5037,31 @@ class Focus(Adw.Application):
             return
         self._show_page_from_link(target)
         self._update_page_nav_buttons()
+
+    def _set_right_scroll_active(self, active: bool) -> None:
+        if self._right_scroll_active == active:
+            return
+        self._right_scroll_active = active
+        if not self._right_scroll_zone:
+            return
+        if active:
+            self._right_scroll_zone.add_css_class("hover")
+        else:
+            self._right_scroll_zone.remove_css_class("hover")
+
+    def _on_right_scroll_zone_clicked(self, _button: Gtk.Button) -> None:
+        self._go_next()
+
+    def _on_right_scroll_zone_scroll(
+        self, _ctrl: Gtk.EventControllerScroll, _dx: float, dy: float
+    ) -> bool:
+        if dy > 0:
+            self._go_next()
+            return True
+        if dy < 0:
+            self._go_prev()
+            return True
+        return False
 
     def _focus_grep_entry(self) -> None:
         if self._grep_entry:
