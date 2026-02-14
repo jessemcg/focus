@@ -149,10 +149,7 @@ CONTINUOUS_DIVIDER_GLYPH = "─"
 CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
 CONTINUOUS_PAGE_DIVIDER_BG = "#e8e8e8"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
-RIGHT_SCROLL_ZONE_WIDTH_PX = 172
-RIGHT_SCROLL_ZONE_MARGIN_TOP_PX = 72
-RIGHT_SCROLL_ZONE_MARGIN_BOTTOM_PX = 72
-RIGHT_SCROLL_ZONE_MARGIN_END_PX = 14
+RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.5
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
@@ -1004,8 +1001,7 @@ listbox.focus-sidebar-listview row {
 }
 
 button.focus-right-scroll-zone {
-  min-width: 172px;
-  border-radius: 10px;
+  border-radius: 0;
   border-left: 1px solid rgba(128, 128, 128, 0.00);
   padding: 0;
   background-color: rgba(128, 128, 128, 0.00);
@@ -1788,16 +1784,17 @@ class Focus(Adw.Application):
         self._right_scroll_zone = Gtk.Button()
         self._right_scroll_zone.add_css_class("flat")
         self._right_scroll_zone.add_css_class("focus-right-scroll-zone")
-        self._right_scroll_zone.set_halign(Gtk.Align.END)
+        self._right_scroll_zone.set_halign(Gtk.Align.FILL)
         self._right_scroll_zone.set_valign(Gtk.Align.FILL)
+        self._right_scroll_zone.set_hexpand(True)
         self._right_scroll_zone.set_vexpand(True)
-        self._right_scroll_zone.set_size_request(RIGHT_SCROLL_ZONE_WIDTH_PX, -1)
-        self._right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_MARGIN_TOP_PX)
-        self._right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_MARGIN_BOTTOM_PX)
-        self._right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_MARGIN_END_PX)
+        self._right_scroll_zone.set_margin_start(0)
+        self._right_scroll_zone.set_margin_top(0)
+        self._right_scroll_zone.set_margin_bottom(0)
+        self._right_scroll_zone.set_margin_end(0)
         self._right_scroll_zone.set_can_target(True)
         self._right_scroll_zone.set_focus_on_click(False)
-        right_scroll_label = Gtk.Label(label="Scroll Area")
+        right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
         right_scroll_label.add_css_class("focus-right-scroll-label")
         right_scroll_label.set_halign(Gtk.Align.CENTER)
         right_scroll_label.set_valign(Gtk.Align.END)
@@ -1814,6 +1811,7 @@ class Focus(Adw.Application):
         self._text_scroll_overlay.add_overlay(self._right_scroll_zone)
         if hasattr(self._text_scroll_overlay, "set_overlay_pass_through"):
             self._text_scroll_overlay.set_overlay_pass_through(self._right_scroll_zone, False)
+        GLib.idle_add(self._refresh_right_scroll_zone_geometry)
 
         self._image_picture = Gtk.Picture()
         self._image_picture.set_hexpand(False)
@@ -3561,15 +3559,40 @@ class Focus(Adw.Application):
             self.textview.set_cursor_from_name(None)
         width = self.textview.get_width()
         height = self.textview.get_height()
-        within_x = width > 0 and x >= (
-            width - RIGHT_SCROLL_ZONE_WIDTH_PX - RIGHT_SCROLL_ZONE_MARGIN_END_PX
+        left, right, top, bottom = self._sync_right_scroll_zone_geometry(width, height)
+        within_x = (
+            width > 0
+            and x >= left
+            and x <= right
         )
         within_y = (
             height > 0
-            and y >= RIGHT_SCROLL_ZONE_MARGIN_TOP_PX
-            and y <= (height - RIGHT_SCROLL_ZONE_MARGIN_BOTTOM_PX)
+            and y >= top
+            and y <= bottom
         )
         self._set_right_scroll_active(within_x and within_y)
+
+    def _sync_right_scroll_zone_geometry(
+        self, width: int, height: int
+    ) -> tuple[float, float, float, float]:
+        coverage = min(1.0, max(0.0, float(RIGHT_SCROLL_ZONE_COVERAGE_RATIO)))
+        right = max(0.0, float(width))
+        left = max(0.0, right * (1.0 - coverage))
+        top = 0.0
+        bottom = max(0.0, float(height))
+
+        if self._right_scroll_zone:
+            self._right_scroll_zone.set_margin_start(int(left))
+            self._right_scroll_zone.set_margin_top(0)
+            self._right_scroll_zone.set_margin_bottom(0)
+            self._right_scroll_zone.set_margin_end(0)
+        return left, right, top, bottom
+
+    def _refresh_right_scroll_zone_geometry(self) -> bool:
+        if not self.textview:
+            return False
+        self._sync_right_scroll_zone_geometry(self.textview.get_width(), self.textview.get_height())
+        return False
 
     def _on_textview_leave(self, _controller: Gtk.EventControllerMotion) -> None:
         if self.textview:
