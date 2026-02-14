@@ -88,8 +88,6 @@ CONFIG_KEY_RAG_PROMPT = "rag_prompt"
 CONFIG_KEY_RAG_API_URL = "rag_api_url"
 CONFIG_KEY_RAG_API_KEY = "rag_api_key"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
-CONFIG_KEY_SUMMARY_FILE = "summary_file"
-CONFIG_KEY_SUMMARY_READ_POSITIONS = "summary_read_positions"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
@@ -122,7 +120,7 @@ MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
 SUMMARY_SOURCE_MINUTES = "minutes"
 SUMMARY_SOURCE_HEARING = "hearing"
 SUMMARY_SOURCE_REPORTS = "reports"
-SUMMARY_SOURCE_CUSTOM = "custom"
+SUMMARY_BOOKMARKS_FILENAME = "summary_bookmarks.json"
 
 # =====================
 # UI Defaults
@@ -476,43 +474,17 @@ def _coerce_color_value(value: Any, default: str) -> str:
     return default
 
 
-def load_summary_file_from_config(base_dir: Path | None = None) -> Path | None:
+def prune_deprecated_summary_bookmarking_config() -> None:
     config = _read_config()
-    candidate = config.get(CONFIG_KEY_SUMMARY_FILE)
-    if isinstance(candidate, str) and candidate.strip():
-        raw_path = Path(candidate).expanduser()
-        if not raw_path.is_absolute() and base_dir:
-            raw_path = base_dir / raw_path
-        return raw_path.resolve(strict=False)
-    return None
-
-
-def save_summary_file_to_config(path: Path) -> None:
-    config = _read_config()
-    config[CONFIG_KEY_SUMMARY_FILE] = str(path.expanduser().resolve(strict=False))
-    _write_config(config)
-
-
-def load_summary_read_positions() -> dict[str, float]:
-    config = _read_config()
-    raw = config.get(CONFIG_KEY_SUMMARY_READ_POSITIONS)
-    if not isinstance(raw, dict):
-        return {}
-    positions: dict[str, float] = {}
-    for key, value in raw.items():
-        if not isinstance(key, str):
-            continue
-        try:
-            fraction = float(value)
-        except (TypeError, ValueError):
-            continue
-        positions[key] = min(1.0, max(0.0, fraction))
-    return positions
-
-
-def save_summary_read_positions(positions: dict[str, float]) -> None:
-    config = _read_config()
-    config[CONFIG_KEY_SUMMARY_READ_POSITIONS] = positions
+    changed = False
+    if "summary_read_positions" in config:
+        config.pop("summary_read_positions", None)
+        changed = True
+    if "summary_file" in config:
+        config.pop("summary_file", None)
+        changed = True
+    if not changed:
+        return
     _write_config(config)
 
 
@@ -1420,6 +1392,7 @@ class Focus(Adw.Application):
         except Exception:
             pass
         self.connect("activate", self.on_activate)
+        prune_deprecated_summary_bookmarking_config()
 
         if input_override is not None:
             self.input_dir = input_override
@@ -1435,8 +1408,6 @@ class Focus(Adw.Application):
 
         self.win: Adw.ApplicationWindow | None = None
         self._input_dir_dialog: Gtk.FileDialog | None = None
-        self._summary_file_dialog: Gtk.FileDialog | None = None
-        self._summary_file_path: Path | None = load_summary_file_from_config(self.input_dir)
         self.textview: Gtk.TextView | None = None
         self.scroller: Gtk.ScrolledWindow | None = None
         self._text_scroll_overlay: Gtk.Overlay | None = None
@@ -1521,14 +1492,12 @@ class Focus(Adw.Application):
         self._summary_loaded_path: Path | None = None
         self._summary_raw = ""
         self._auto_loading_summary = False
-        self._summary_scroll_positions = load_summary_read_positions()
-        self._summary_scroll_save_source_id: int | None = None
         self._summary_scroll_handler_id: int | None = None
         self._summary_scroll_restore_guard = False
         self._summary_active_source: str | None = None
         self._summary_toggle_guard = False
         self._summary_toggles: dict[str, Gtk.ToggleButton] = {}
-        self._summary_previous_source: str | None = None
+        self._summary_bookmark_button: Gtk.Button | None = None
         self._summary_print_button: Gtk.Button | None = None
         self._summary_print_text = ""
         self._summary_print_layout: Pango.Layout | None = None
@@ -1569,7 +1538,6 @@ class Focus(Adw.Application):
         self._minutes_summary_button: Gtk.Button | None = None
         self._hearing_summary_button: Gtk.Button | None = None
         self._reports_summary_button: Gtk.Button | None = None
-        self._choose_summary_button: Gtk.Button | None = None
         self._ai_stream_thread: threading.Thread | None = None
         self._ai_cancel_event: threading.Event | None = None
         self._ai_settings_window: AiSettingsWindow | None = None
@@ -2071,16 +2039,6 @@ class Focus(Adw.Application):
         summary_button_group.append(self._reports_summary_button)
         self._summary_toggles[SUMMARY_SOURCE_REPORTS] = self._reports_summary_button
 
-        self._choose_summary_button = Gtk.ToggleButton(label="Choose File")
-        self._choose_summary_button.add_css_class("flat")
-        self._choose_summary_button.add_css_class("no-bold")
-        self._choose_summary_button.add_css_class("round")
-        self._choose_summary_button.set_valign(Gtk.Align.CENTER)
-        self._choose_summary_button.set_tooltip_text("Pick a different text or markdown summary file")
-        self._choose_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_CUSTOM)
-        summary_button_group.append(self._choose_summary_button)
-        self._summary_toggles[SUMMARY_SOURCE_CUSTOM] = self._choose_summary_button
-
         self._summary_search_entry = Gtk.SearchEntry()
         self._summary_search_entry.set_placeholder_text("Search file")
         self._summary_search_entry.set_width_chars(24)
@@ -2089,6 +2047,14 @@ class Focus(Adw.Application):
         self._summary_search_entry.set_valign(Gtk.Align.CENTER)
         self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
         self._summary_search_entry.connect("activate", self._on_summary_search_activate)
+
+        self._summary_bookmark_button = Gtk.Button()
+        self._summary_bookmark_button.add_css_class("flat")
+        self._summary_bookmark_button.set_valign(Gtk.Align.CENTER)
+        self._summary_bookmark_button.set_tooltip_text("Bookmark selected summary line")
+        bookmark_icon = self._choose_icon("bookmark-new-symbolic", "bookmark-new", "starred-symbolic")
+        self._summary_bookmark_button.set_child(Gtk.Image.new_from_icon_name(bookmark_icon))
+        self._summary_bookmark_button.connect("clicked", self._on_summary_bookmark_clicked)
 
         self._summary_print_button = Gtk.Button()
         self._summary_print_button.add_css_class("flat")
@@ -2100,9 +2066,8 @@ class Focus(Adw.Application):
         self._summary_print_button.connect("clicked", self._on_summary_print_clicked)
         summary_row.append(summary_button_group)
         summary_row.append(self._summary_search_entry)
+        summary_row.append(self._summary_bookmark_button)
         summary_row.append(self._summary_print_button)
-
-        self._update_summary_buttons()
 
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
@@ -2405,10 +2370,6 @@ class Focus(Adw.Application):
             if vadj:
                 fraction = self._summary_scroll_fraction(vadj)
                 fraction = min(1.0, max(0.0, fraction))
-                key = self._summary_scroll_key(self._summary_loaded_path, self._active_view_id)
-                if abs(self._summary_scroll_positions.get(key, -1.0) - fraction) >= 0.001:
-                    self._summary_scroll_positions[key] = fraction
-                    self._schedule_summary_scroll_save()
                 state.summary_scroll_fraction = fraction
         state.current_index = self.current_index
         state.show_image = self._show_image
@@ -3890,11 +3851,6 @@ class Focus(Adw.Application):
                 pass
         self._summary_scroll_handler_id = vadj.connect("value-changed", self._on_summary_scroll)
 
-    def _summary_scroll_key(self, path: Path, view_id: str | None = None) -> str:
-        resolved = str(path.expanduser().resolve(strict=False))
-        view_key = view_id or self._active_view_id or ""
-        return f"{view_key}::{resolved}"
-
     def _summary_scroll_fraction(self, adjustment: Gtk.Adjustment) -> float:
         lower = adjustment.get_lower()
         upper = adjustment.get_upper()
@@ -3910,38 +3866,135 @@ class Focus(Adw.Application):
             return
         if self._summary_scroll_restore_guard:
             return
-        path = self._summary_loaded_path
-        if not path:
-            return
         fraction = self._summary_scroll_fraction(adjustment)
         fraction = min(1.0, max(0.0, fraction))
-        key = self._summary_scroll_key(path, self._active_view_id)
-        if abs(self._summary_scroll_positions.get(key, -1.0) - fraction) < 0.001:
-            return
-        self._summary_scroll_positions[key] = fraction
-        self._schedule_summary_scroll_save()
         self._current_view_state().summary_scroll_fraction = fraction
-
-    def _schedule_summary_scroll_save(self) -> None:
-        if self._summary_scroll_save_source_id is not None:
-            return
-        self._summary_scroll_save_source_id = GLib.timeout_add(
-            500, self._flush_summary_scroll_positions
-        )
-
-    def _flush_summary_scroll_positions(self) -> bool:
-        self._summary_scroll_save_source_id = None
-        save_summary_read_positions(self._summary_scroll_positions)
-        return False
 
     def _restore_summary_scroll_position(self, path: Path | None) -> None:
         if not path or not self._summary_scroller:
             return
-        key = self._summary_scroll_key(path, self._active_view_id)
-        fraction = self._summary_scroll_positions.get(key)
+        state = self._current_view_state()
+        if not state.summary_loaded_path or state.summary_loaded_path != path:
+            return
+        fraction = state.summary_scroll_fraction
         if fraction is None:
             return
         self._restore_summary_scroll_fraction(fraction)
+
+    def _summary_bookmarks_path_for(self, summary_path: Path) -> Path:
+        return summary_path.parent / SUMMARY_BOOKMARKS_FILENAME
+
+    def _read_summary_bookmarks(self, bookmarks_path: Path) -> dict[str, Any]:
+        try:
+            raw = bookmarks_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(data, dict):
+            return data
+        return {}
+
+    def _extract_summary_bookmark_line(self, summary_path: Path) -> int | None:
+        bookmarks_path = self._summary_bookmarks_path_for(summary_path)
+        data = self._read_summary_bookmarks(bookmarks_path)
+        bookmarks = data.get("bookmarks")
+        if not isinstance(bookmarks, dict):
+            return None
+        entry = bookmarks.get(summary_path.name)
+        if not isinstance(entry, dict):
+            return None
+        try:
+            line_num = int(entry.get("line"))
+        except (TypeError, ValueError):
+            return None
+        if line_num < 1:
+            return None
+        return line_num
+
+    def _scroll_summary_to_line(self, line_num: int) -> None:
+        if not self._summary_view or not self._summary_buffer:
+            return
+        clamped = max(1, line_num)
+
+        def _apply(remaining: int) -> bool:
+            if not self._summary_view or not self._summary_buffer:
+                return False
+            line_count = self._summary_buffer.get_line_count()
+            if line_count <= 0:
+                if remaining <= 0:
+                    return False
+                GLib.timeout_add(50, _apply, remaining - 1)
+                return False
+            target_line = min(clamped, line_count) - 1
+            iter_result = self._summary_buffer.get_iter_at_line(target_line)
+            if isinstance(iter_result, tuple):
+                if len(iter_result) == 2:
+                    success, iter_ = iter_result
+                    if not success:
+                        iter_ = self._summary_buffer.get_start_iter()
+                else:
+                    iter_ = iter_result[-1]
+            else:
+                iter_ = iter_result
+            self._summary_view.scroll_to_iter(iter_, 0.08, True, 0.0, 0.0)
+            return False
+
+        GLib.idle_add(_apply, 8)
+
+    def _restore_summary_bookmark_or_top(self, summary_path: Path) -> None:
+        line_num = self._extract_summary_bookmark_line(summary_path)
+        if line_num is None:
+            self._scroll_summary_to_line(1)
+            return
+        self._scroll_summary_to_line(line_num)
+
+    def _selected_summary_line_number(self) -> int | None:
+        if not self._summary_buffer:
+            return None
+        selection = self._summary_buffer.get_selection_bounds()
+        if not selection:
+            return None
+        if len(selection) == 3:
+            has_selection, start_iter, end_iter = selection
+            if not has_selection:
+                return None
+        else:
+            start_iter, end_iter = selection
+        start_line = start_iter.get_line()
+        end_line = end_iter.get_line()
+        return min(start_line, end_line) + 1
+
+    def _on_summary_bookmark_clicked(self, _button: Gtk.Button) -> None:
+        if not self._summary_loaded_path:
+            self._transient_toast("No summary file is loaded.")
+            return
+        line_num = self._selected_summary_line_number()
+        if line_num is None:
+            self._transient_toast("Select summary text first to create a bookmark.")
+            return
+        bookmarks_path = self._summary_bookmarks_path_for(self._summary_loaded_path)
+        data = self._read_summary_bookmarks(bookmarks_path)
+        bookmarks = data.get("bookmarks")
+        if not isinstance(bookmarks, dict):
+            bookmarks = {}
+        bookmarks[self._summary_loaded_path.name] = {
+            "line": line_num,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        data["version"] = 1
+        data["bookmarks"] = bookmarks
+        try:
+            bookmarks_path.parent.mkdir(parents=True, exist_ok=True)
+            bookmarks_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError as exc:  # noqa: BLE001
+            self._transient_toast(f"Could not save summary bookmark: {exc}")
+            return
+        self._transient_toast(
+            f"Bookmarked {self._summary_loaded_path.name} at line {line_num}."
+        )
 
     def _restore_summary_scroll_fraction(self, fraction: float) -> None:
         if not self._summary_scroller:
@@ -4184,18 +4237,6 @@ class Focus(Adw.Application):
         tooltip = "Disable image view (Ctrl+I)" if self._show_image else "Enable image view (Ctrl+I)"
         self._show_image_button.set_tooltip_text(tooltip)
 
-    def _update_summary_buttons(self) -> None:
-        if self._choose_summary_button:
-            choose_hint = "Pick a text or markdown summary file to view"
-            if self._summary_file_path:
-                if self._summary_file_path.exists():
-                    choose_hint = f"Change summary file (current: {self._summary_file_path.name})"
-                else:
-                    choose_hint = (
-                        f"Saved summary missing, choose a new file (expected {self._summary_file_path.name})"
-                    )
-            self._choose_summary_button.set_tooltip_text(choose_hint)
-
     def _set_summary_active_source(self, source: str | None) -> None:
         self._summary_active_source = source
         self._sync_summary_toggles(source)
@@ -4227,9 +4268,6 @@ class Focus(Adw.Application):
         if source == SUMMARY_SOURCE_REPORTS:
             self._on_reports_summary_clicked(button)
             return
-        if source == SUMMARY_SOURCE_CUSTOM:
-            self._summary_previous_source = self._summary_active_source
-            self._on_choose_summary_file_clicked(button)
 
     def _infer_summary_source(self, path: Path) -> str:
         name = path.name.casefold()
@@ -4247,7 +4285,7 @@ class Focus(Adw.Application):
             )
             if summary_path and summary_path.resolve() == path.resolve():
                 return SUMMARY_SOURCE_MINUTES
-        return SUMMARY_SOURCE_CUSTOM
+        return SUMMARY_SOURCE_HEARING
 
     def _set_font_preferences(self, *, font_size_pt: int | None = None, ai_font_size_pt: int | None = None) -> None:
         base = self._font_size_pt
@@ -4911,11 +4949,6 @@ class Focus(Adw.Application):
 
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
         self._stop_grep_search_if_running()
-        if self._summary_scroll_save_source_id is not None:
-            GLib.source_remove(self._summary_scroll_save_source_id)
-            self._summary_scroll_save_source_id = None
-        if self._summary_scroll_positions:
-            save_summary_read_positions(self._summary_scroll_positions)
         return False
 
     def on_ai_settings_saved(self, settings: AiSettings) -> None:
@@ -5212,12 +5245,7 @@ class Focus(Adw.Application):
         ):
             self._ai_controls_stack.set_visible_child_name(target)
         self._sync_ai_view_toggles(target)
-        if target in self._ai_outputs:
-            state = self._get_ai_output_state(target)
-            if state.scroller:
-                state.scroller.queue_resize()
-        if target == AI_VIEW_FILE and self._summary_scroller:
-            self._summary_scroller.queue_resize()
+        if target == AI_VIEW_FILE:
             self._restore_summary_scroll_position(self._summary_loaded_path)
 
     def _ensure_summary_for_active_view(self) -> None:
@@ -5235,7 +5263,6 @@ class Focus(Adw.Application):
                 state.summary_loaded_path,
                 allow_auto=True,
                 source=state.summary_active_source,
-                save_config=False,
                 show_toast=False,
             )
             return
@@ -5259,10 +5286,9 @@ class Focus(Adw.Application):
                 state.summary_loaded_path,
                 allow_auto=True,
                 source=state.summary_active_source,
-                save_config=False,
                 show_toast=False,
             )
-        elif self._summary_file_path:
+        else:
             self._auto_load_summary_file()
 
     def _sync_ai_view_toggles(self, target: str) -> None:
@@ -5372,6 +5398,8 @@ class Focus(Adw.Application):
         label: str,
         candidates: tuple[str, ...],
         keywords: tuple[str, ...],
+        *,
+        show_toast: bool = True,
     ) -> Path | None:
         summaries_dir = self.input_dir / SUMMARY_DIR_NAME
         if not summaries_dir.exists():
@@ -5392,11 +5420,13 @@ class Focus(Adw.Application):
                 if any(keyword in lowered for keyword in keywords):
                     matches.append(item)
         except OSError as exc:  # noqa: BLE001
-            self._transient_toast(f"Could not read summaries folder: {exc}")
+            if show_toast:
+                self._transient_toast(f"Could not read summaries folder: {exc}")
             return None
         if matches:
             return sorted(matches)[0]
-        self._transient_toast(f"{label} summary not found in {summaries_dir}")
+        if show_toast:
+            self._transient_toast(f"{label} summary not found in {summaries_dir}")
         return None
 
     def _load_summary_from_summaries_dir(
@@ -5408,7 +5438,7 @@ class Focus(Adw.Application):
     ) -> None:
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_FILE)
-        path = self._find_summary_in_dir(label, candidates, keywords)
+        path = self._find_summary_in_dir(label, candidates, keywords, show_toast=True)
         if not path:
             return
         self._load_summary_from_path(path, source=source)
@@ -5466,89 +5496,53 @@ class Focus(Adw.Application):
             SUMMARY_SOURCE_REPORTS,
         )
 
-    def _on_choose_summary_file_clicked(self, _button: Gtk.Button) -> None:
-        self._ensure_ai_panel_visible()
-        self._set_ai_view(AI_VIEW_FILE)
-        self._open_summary_file_dialog(initial_path=self._summary_file_path or self.input_dir)
-
-    def _open_summary_file_dialog(self, *, initial_path: Path | None = None) -> None:
-        if not self.win:
-            return
-        self._ensure_ai_panel_visible()
-        dialog = Gtk.FileDialog()
-        dialog.set_title("Select summary file")
-        dialog.set_modal(True)
-        filters = Gio.ListStore.new(Gtk.FileFilter)
-        text_filter = Gtk.FileFilter()
-        text_filter.set_name("Text or Markdown")
-        text_filter.add_pattern("*.txt")
-        text_filter.add_pattern("*.md")
-        text_filter.add_mime_type("text/plain")
-        text_filter.add_mime_type("text/markdown")
-        filters.append(text_filter)
-        dialog.set_filters(filters)
-        dialog.set_default_filter(text_filter)
-        start_path = initial_path
-        if start_path is None and self._summary_file_path:
-            start_path = self._summary_file_path
-        if start_path is None and self.input_dir.exists():
-            start_path = self.input_dir
-        if start_path:
-            folder = start_path if start_path.is_dir() else start_path.parent
-            if folder.exists():
-                try:
-                    dialog.set_initial_folder(Gio.File.new_for_path(str(folder)))
-                except (TypeError, AttributeError):
-                    pass
-        dialog.open(self.win, None, self._on_summary_file_response)
-        self._summary_file_dialog = dialog
-
-    def _on_summary_file_response(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
-        try:
-            file = dialog.open_finish(result)
-        except GLib.Error as exc:
-            if not exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
-                self._transient_toast(f"File selection failed: {exc.message}")
-            else:
-                if self._summary_previous_source:
-                    self._set_summary_active_source(self._summary_previous_source)
-        else:
-            path_str = file.get_path() if file else None
-            if path_str:
-                self._load_summary_from_path(Path(path_str), source=SUMMARY_SOURCE_CUSTOM)
-            elif self._summary_previous_source:
-                self._set_summary_active_source(self._summary_previous_source)
-        if self._summary_file_dialog is dialog:
-            self._summary_file_dialog = None
-        self._summary_previous_source = None
-        self._auto_load_summary_file()
-
     def _auto_load_summary_file(self) -> None:
         if self._auto_loading_summary:
             return
         self._auto_loading_summary = True
         try:
-            if not self._summary_file_path:
-                self._summary_file_path = load_summary_file_from_config(self.input_dir)
-            self._update_summary_buttons()
-            if not self._summary_file_path:
+            if self._summary_has_text():
                 return
-            if not self._summary_file_path.exists():
-                return
-            if (
-                self._summary_loaded_path
-                and self._summary_loaded_path == self._summary_file_path
-                and self._summary_has_text()
-            ):
-                return
-            source = self._infer_summary_source(self._summary_file_path)
-            self._load_summary_from_path(
-                self._summary_file_path,
-                allow_auto=True,
-                source=source,
-                save_config=False,
+            manifest_path = _find_manifest_near_path(self.input_dir)
+            if manifest_path:
+                manifest = _read_manifest_file(manifest_path)
+                files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+                summary_path = _path_from_manifest(files.get(MINUTES_SUMMARY_MANIFEST_KEY), manifest_path.parent)
+                if summary_path and summary_path.exists():
+                    self._load_summary_from_path(
+                        summary_path,
+                        allow_auto=True,
+                        source=SUMMARY_SOURCE_MINUTES,
+                        show_toast=False,
+                    )
+                    return
+            hearing = self._find_summary_in_dir(
+                "Hearing",
+                HEARING_SUMMARY_CANDIDATES,
+                ("hearing",),
                 show_toast=False,
             )
+            if hearing:
+                self._load_summary_from_path(
+                    hearing,
+                    allow_auto=True,
+                    source=SUMMARY_SOURCE_HEARING,
+                    show_toast=False,
+                )
+                return
+            reports = self._find_summary_in_dir(
+                "Reports",
+                REPORTS_SUMMARY_CANDIDATES,
+                ("report", "reports"),
+                show_toast=False,
+            )
+            if reports:
+                self._load_summary_from_path(
+                    reports,
+                    allow_auto=True,
+                    source=SUMMARY_SOURCE_REPORTS,
+                    show_toast=False,
+                )
         finally:
             self._auto_loading_summary = False
 
@@ -5657,7 +5651,6 @@ class Focus(Adw.Application):
         *,
         allow_auto: bool = False,
         source: str | None = None,
-        save_config: bool = True,
         show_toast: bool = True,
     ) -> None:
         if self._auto_loading_summary and not allow_auto:
@@ -5674,21 +5667,23 @@ class Focus(Adw.Application):
             self._transient_toast(f"Could not read {resolved.name}: {exc}")
             return
         self._stop_ai_stream_if_running(self._active_view_id)
-        self._summary_file_path = resolved
         self._summary_loaded_path = resolved
-        if save_config:
-            save_summary_file_to_config(resolved)
         if source is None:
             source = self._infer_summary_source(resolved)
         self._set_summary_active_source(source)
         state = self._current_view_state()
+        if state.summary_loaded_path != resolved:
+            state.summary_scroll_fraction = None
         state.summary_loaded_path = resolved
         state.summary_active_source = source
         self._set_summary_text(text, switch_view=not allow_auto)
+        if state.summary_scroll_fraction is None:
+            self._restore_summary_bookmark_or_top(resolved)
+        else:
+            self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
         self._update_ai_status("", spinning=False, view_id=self._active_view_id)
         if show_toast:
             self._transient_toast(f"Loaded {resolved.name}")
-        self._update_summary_buttons()
         if not allow_auto:
             self._ensure_ai_panel_visible()
 
