@@ -606,7 +606,7 @@ class AiOutputView:
     buffer: Gtk.TextBuffer | None = None
     scroller: Gtk.ScrolledWindow | None = None
     link_tags: list[Gtk.TextTag] = field(default_factory=list)
-    link_lookup: dict[Gtk.TextTag, str] = field(default_factory=dict)
+    link_lookup: dict[Gtk.TextTag, tuple[str, str]] = field(default_factory=dict)
     motion_controller: Gtk.EventControllerMotion | None = None
     click_gesture: Gtk.GestureClick | None = None
     focus_controller: Gtk.EventControllerFocus | None = None
@@ -1205,6 +1205,10 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
 PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
+MARKDOWN_PAGE_LINK_RE = re.compile(
+    r"\[(?P<label>[^\]\n]*?)\]\(\s*page\s*:\s*(?P<page>\d{1,8})\s*\)",
+    re.IGNORECASE,
+)
 MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*(?!\s)([^*\n]+?)\*\*|\*(?!\s)([^*\n]+?)\*")
 ROUNDED_GRID_TOP_BORDER_RE = re.compile(r"^\s*╭[─┬]+╮\s*$")
 ROUNDED_GRID_MIDDLE_BORDER_RE = re.compile(r"^\s*├[─┼]+┤\s*$")
@@ -1477,7 +1481,7 @@ class Focus(Adw.Application):
         self._textview_focus_controller: Gtk.EventControllerFocus | None = None
         self._textview_motion_controller: Gtk.EventControllerMotion | None = None
         self._summary_link_tags: list[Gtk.TextTag] = []
-        self._summary_link_tag_lookup: dict[Gtk.TextTag, str] = {}
+        self._summary_link_tag_lookup: dict[Gtk.TextTag, tuple[str, str]] = {}
         self._summary_click_gesture: Gtk.GestureClick | None = None
         self._summary_focus_controller: Gtk.EventControllerFocus | None = None
         self._summary_motion_controller: Gtk.EventControllerMotion | None = None
@@ -3452,7 +3456,7 @@ class Focus(Adw.Application):
         text: str,
         buffer: Gtk.TextBuffer | None,
         link_tags: list[Gtk.TextTag],
-        link_lookup: dict[Gtk.TextTag, str],
+        link_lookup: dict[Gtk.TextTag, tuple[str, str]],
         scroller: Gtk.ScrolledWindow | None,
     ) -> None:
         if not buffer:
@@ -3468,7 +3472,18 @@ class Focus(Adw.Application):
         link_tags.clear()
         link_lookup.clear()
 
-        rendered_text, spans = self._extract_ai_link_spans(text)
+        rendered_text, phrase_spans = self._extract_ai_link_spans(text)
+        rendered_text, page_spans, phrase_to_page_map = self._extract_markdown_page_link_spans(
+            rendered_text
+        )
+        mapped_phrase_spans: list[tuple[int, int, str]] = []
+        for start, end, phrase in phrase_spans:
+            mapped_start = self._map_markdown_offset(start, phrase_to_page_map)
+            mapped_end = self._map_markdown_offset(end, phrase_to_page_map)
+            if mapped_end <= mapped_start:
+                continue
+            mapped_phrase_spans.append((mapped_start, mapped_end, phrase))
+
         rendered_text, markdown_spans, orig_to_clean = _render_markdown_text(rendered_text)
         buffer.set_text(rendered_text)
         self._apply_markdown_spans(buffer, markdown_spans)
@@ -3481,7 +3496,7 @@ class Focus(Adw.Application):
                 if state.buffer is buffer:
                     quote_color = self._resolve_ai_quote_color(state.view)
                     break
-        for start, end, phrase in spans:
+        for start, end, phrase in mapped_phrase_spans:
             if end <= start:
                 continue
             start = self._map_markdown_offset(start, orig_to_clean)
@@ -3495,7 +3510,31 @@ class Focus(Adw.Application):
                 foreground_rgba=quote_color,
                 underline=Pango.Underline.NONE,
             )
-            link_lookup[tag] = phrase
+            link_lookup[tag] = ("phrase", phrase)
+            buffer.apply_tag(tag, start_iter, end_iter)
+            link_tags.append(tag)
+
+        for start, end, page_str in page_spans:
+            if end <= start:
+                continue
+            start = self._map_markdown_offset(start, orig_to_clean)
+            end = self._map_markdown_offset(end, orig_to_clean)
+            if end <= start:
+                continue
+            start_iter = buffer.get_iter_at_offset(start)
+            end_iter = buffer.get_iter_at_offset(end)
+            page_link_color = Gdk.RGBA()
+            brighten = 0.18
+            page_link_color.red = min(1.0, quote_color.red + brighten)
+            page_link_color.green = min(1.0, quote_color.green + brighten)
+            page_link_color.blue = min(1.0, quote_color.blue + brighten)
+            page_link_color.alpha = 1.0
+            tag = buffer.create_tag(
+                None,
+                foreground_rgba=page_link_color,
+                underline=Pango.Underline.NONE,
+            )
+            link_lookup[tag] = ("page", page_str)
             buffer.apply_tag(tag, start_iter, end_iter)
             link_tags.append(tag)
         if scroller:
@@ -3559,6 +3598,51 @@ class Focus(Adw.Application):
             cursor = end
         parts.append(text[cursor:])
         return "".join(parts), spans
+
+    def _extract_markdown_page_link_spans(
+        self,
+        text: str,
+    ) -> tuple[str, list[tuple[int, int, str]], list[int]]:
+        spans: list[tuple[int, int, str]] = []
+        parts: list[str] = []
+        orig_to_clean = [0] * (len(text) + 1)
+        cursor = 0
+        clean_offset = 0
+
+        for match in MARKDOWN_PAGE_LINK_RE.finditer(text):
+            start, end = match.span()
+            if start > cursor:
+                before = text[cursor:start]
+                parts.append(before)
+                for idx in range(cursor, start):
+                    orig_to_clean[idx] = clean_offset + (idx - cursor)
+                clean_offset += len(before)
+
+            label = (match.group("label") or "").strip()
+            page_str = (match.group("page") or "").strip()
+            page_value = page_str.zfill(4) if page_str else ""
+            link_label = label or f"page {page_value}" if page_value else label
+
+            span_start = clean_offset
+            if link_label:
+                parts.append(link_label)
+                clean_offset += len(link_label)
+                spans.append((span_start, clean_offset, page_value))
+
+            for idx in range(start, end):
+                orig_to_clean[idx] = span_start
+            orig_to_clean[end] = clean_offset
+            cursor = end
+
+        if cursor < len(text):
+            tail = text[cursor:]
+            parts.append(tail)
+            for idx in range(cursor, len(text)):
+                orig_to_clean[idx] = clean_offset + (idx - cursor)
+            clean_offset += len(tail)
+
+        orig_to_clean[len(text)] = clean_offset
+        return "".join(parts), spans, orig_to_clean
 
     def _install_textview_link_controllers(self) -> None:
         if not self.textview:
@@ -3753,8 +3837,8 @@ class Focus(Adw.Application):
         textview: Gtk.TextView,
         x: float,
         y: float,
-        lookup: dict[Gtk.TextTag, str],
-    ) -> str | None:
+        lookup: dict[Gtk.TextTag, tuple[str, str]],
+    ) -> tuple[str, str] | None:
         bx, by = textview.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
         iter_result = textview.get_iter_at_location(int(bx), int(by))
         if isinstance(iter_result, tuple):
@@ -3777,7 +3861,7 @@ class Focus(Adw.Application):
         x: float,
         y: float,
         view: Gtk.TextView,
-        lookup: dict[Gtk.TextTag, str],
+        lookup: dict[Gtk.TextTag, tuple[str, str]],
     ) -> None:
         link = self._ai_link_at_coords(view, x, y, lookup)
         if link:
@@ -3795,17 +3879,17 @@ class Focus(Adw.Application):
         x: float,
         y: float,
         view: Gtk.TextView,
-        lookup: dict[Gtk.TextTag, str],
+        lookup: dict[Gtk.TextTag, tuple[str, str]],
     ) -> None:
         button = gesture.get_current_button()
         if button and button != Gdk.BUTTON_PRIMARY:
             return
         view.grab_focus()
         view.set_cursor_visible(False)
-        phrase = self._ai_link_at_coords(view, x, y, lookup)
-        if not phrase:
+        link = self._ai_link_at_coords(view, x, y, lookup)
+        if not link:
             return
-        self._activate_ai_link(phrase)
+        self._activate_link(link)
 
     def _install_summary_link_controllers(self) -> None:
         if not self._summary_view:
@@ -4145,7 +4229,12 @@ class Focus(Adw.Application):
 
         GLib.idle_add(_apply_remaining, retries)
 
-    def _summary_link_at_coords(self, textview: Gtk.TextView, x: float, y: float) -> str | None:
+    def _summary_link_at_coords(
+        self,
+        textview: Gtk.TextView,
+        x: float,
+        y: float,
+    ) -> tuple[str, str] | None:
         bx, by = textview.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
         iter_result = textview.get_iter_at_location(int(bx), int(by))
         if isinstance(iter_result, tuple):
@@ -4194,13 +4283,17 @@ class Focus(Adw.Application):
             return
         self._summary_view.grab_focus()
         self._summary_view.set_cursor_visible(False)
-        phrase = self._summary_link_at_coords(self._summary_view, x, y)
-        if not phrase:
+        link = self._summary_link_at_coords(self._summary_view, x, y)
+        if not link:
             return
-        self._activate_ai_link(phrase)
+        self._activate_link(link)
 
-    def _activate_ai_link(self, phrase: str) -> None:
-        cleaned = phrase.strip()
+    def _activate_link(self, link: tuple[str, str]) -> None:
+        kind, value = link
+        if kind == "page":
+            self._show_page_from_link(value)
+            return
+        cleaned = value.strip()
         if not cleaned:
             return
         if self._grep_entry:
