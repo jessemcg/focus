@@ -1780,6 +1780,7 @@ class Focus(Adw.Application):
         self.scroller.set_hexpand(True)
         self.scroller.set_vexpand(True)
         self.scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.scroller.set_placement(Gtk.CornerType.TOP_RIGHT)
         self.scroller.set_propagate_natural_height(False)
         self.scroller.set_min_content_height(0)
         self.scroller.set_size_request(-1, 0)
