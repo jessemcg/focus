@@ -5634,7 +5634,6 @@ class Focus(Adw.Application):
         if not question:
             self._transient_toast("Enter a question to run RAG.")
             return
-        self._rag_question_entry.set_text("")
         self._start_rag_question(question, self._active_view_id)
 
     def _find_summary_in_dir(
