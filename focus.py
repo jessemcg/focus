@@ -11,7 +11,6 @@ Features
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
 - Grep matches render in red and can show all matching pages in a single scrollable view.
 - Ctrl+Shift+A opens case tools and focuses the RAG question box.
-- F6 toggles between Primary View and Secondary View.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
 
@@ -161,12 +160,6 @@ AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
 AI_VIEW_FILE = "show-file"
-VIEW_ONE_ID = "view1"
-VIEW_TWO_ID = "view2"
-VIEW_LABELS = {
-    VIEW_ONE_ID: "Primary View",
-    VIEW_TWO_ID: "Secondary View",
-}
 
 
 def _normalize_rag_provider(value: str) -> str:
@@ -631,7 +624,6 @@ class AiOutputView:
 
 @dataclass
 class FocusViewState:
-    name: str
     current_index: int = 0
     show_image: bool = False
     sidebar_visible: bool = True
@@ -1582,13 +1574,7 @@ class Focus(Adw.Application):
         self._rag_loading = False
         self._rag_lock = threading.Lock()
         self._rag_question_entry: Gtk.Entry | None = None
-        self._views: dict[str, FocusViewState] = {
-            VIEW_ONE_ID: FocusViewState(name=VIEW_LABELS[VIEW_ONE_ID]),
-            VIEW_TWO_ID: FocusViewState(name=VIEW_LABELS[VIEW_TWO_ID]),
-        }
-        self._active_view_id = VIEW_ONE_ID
-        self._view_buttons: dict[str, Gtk.ToggleButton] = {}
-        self._view_button_guard = False
+        self._view_state = FocusViewState()
 
     @property
     def text_dir(self) -> Path:
@@ -1762,17 +1748,6 @@ class Focus(Adw.Application):
         menu_model.append("Input Directory", "app.choose_input")
         menu_model.append("Settings", "app.open_ai_settings")
 
-        view_button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        for view_id in (VIEW_ONE_ID, VIEW_TWO_ID):
-            btn = Gtk.ToggleButton(label=VIEW_LABELS.get(view_id, view_id.title()))
-            btn.add_css_class("flat")
-            btn.add_css_class("no-bold")
-            btn.add_css_class("focus-view-toggle")
-            btn.set_valign(Gtk.Align.CENTER)
-            btn.connect("toggled", self._on_view_button_toggled, view_id)
-            self._view_buttons[view_id] = btn
-            view_button_box.append(btn)
-
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu_button.add_css_class("flat")
         menu_button.set_valign(Gtk.Align.CENTER)
@@ -1780,10 +1755,8 @@ class Focus(Adw.Application):
 
         trailing_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trailing_header_box.set_valign(Gtk.Align.CENTER)
-        trailing_header_box.append(view_button_box)
         trailing_header_box.append(menu_button)
         header.pack_end(trailing_header_box)
-        self._update_view_buttons()
 
         # Place headerbar in main window
         toolbar.add_top_bar(header)
@@ -2389,24 +2362,13 @@ class Focus(Adw.Application):
         self._install_navigation_controllers()
         self._install_actions()
 
-    def _get_view_state(self, view_id: str) -> FocusViewState:
-        state = self._views.get(view_id)
-        if state is None:
-            state = FocusViewState(name=VIEW_LABELS.get(view_id, view_id))
-            self._views[view_id] = state
-        return state
-
     def _current_view_state(self) -> FocusViewState:
-        return self._get_view_state(self._active_view_id)
+        return self._view_state
 
     def _reset_view_states(self) -> None:
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
-        self._views = {
-            VIEW_ONE_ID: FocusViewState(name=VIEW_LABELS[VIEW_ONE_ID]),
-            VIEW_TWO_ID: FocusViewState(name=VIEW_LABELS[VIEW_TWO_ID]),
-        }
-        self._active_view_id = VIEW_ONE_ID
+        self._view_state = FocusViewState()
         self._current_view_state().sidebar_visible = self._toc_sidebar_visible
         self._current_view_state().ai_panel_visible = bool(
             (self._ai_panel_toggle and self._ai_panel_toggle.get_active())
@@ -2422,24 +2384,22 @@ class Focus(Adw.Application):
             self._apply_ai_output_links("", ai_state)
         self._sync_continuous_action()
         self._sync_show_image_action()
-        self._update_view_buttons()
 
     def _cancel_all_ai_streams(self) -> None:
-        for state in self._views.values():
-            if state.ai_cancel_event:
-                state.ai_cancel_event.set()
-            if state.ai_stream_thread and state.ai_stream_thread.is_alive():
-                try:
-                    state.ai_stream_thread.join(timeout=0.2)
-                except Exception:
-                    pass
-            state.ai_in_flight = False
-            state.ai_cancel_event = None
-            state.ai_stream_thread = None
-        if self._active_view_id in self._views:
-            self._ai_in_flight = False
-            self._ai_cancel_event = None
-            self._ai_stream_thread = None
+        state = self._current_view_state()
+        if state.ai_cancel_event:
+            state.ai_cancel_event.set()
+        if state.ai_stream_thread and state.ai_stream_thread.is_alive():
+            try:
+                state.ai_stream_thread.join(timeout=0.2)
+            except Exception:
+                pass
+        state.ai_in_flight = False
+        state.ai_cancel_event = None
+        state.ai_stream_thread = None
+        self._ai_in_flight = False
+        self._ai_cancel_event = None
+        self._ai_stream_thread = None
 
     def _persist_active_view_state(self) -> None:
         state = self._current_view_state()
@@ -2488,105 +2448,6 @@ class Focus(Adw.Application):
             state.rag_question_text = self._rag_question_entry.get_text()
         state.summary_loaded_path = self._summary_loaded_path
         state.summary_active_source = self._summary_active_source
-
-    def _apply_ai_outputs_for_state(self, state: FocusViewState) -> None:
-        for name, view in self._ai_outputs.items():
-            raw_text = state.ai_output_raw.get(name, "")
-            view.raw = raw_text
-            self._apply_ai_output_links(raw_text, view)
-
-    def _restore_view_state(self, state: FocusViewState) -> None:
-        self._disconnect_continuous_scroll_watch()
-        self.current_index = state.current_index
-        self._continuous_view = state.continuous_view
-        self._show_image = state.show_image and not self._continuous_view
-        self._continuous_text = state.continuous_text
-        self._continuous_pages_order = list(state.continuous_pages_order)
-        self._continuous_loaded_count = state.continuous_loaded_count
-        self._continuous_loading = False
-        self._grep_phrase_raw = state.grep_phrase_raw
-        self._grep_regex = state.grep_regex
-        self._grep_hits = {k: list(v) for k, v in state.grep_hits.items()}
-        self._matching_pages = list(state.matching_pages)
-        self._matching_lookup = dict(state.matching_lookup)
-        self._grep_combined_text = state.grep_combined_text
-        self._grep_combined_highlights = list(state.grep_combined_highlights)
-        self._showing_grep_results = state.showing_grep_results
-        self._ai_active_view = state.ai_active_view
-        self._ai_request_generation = state.ai_request_generation
-        self._ai_in_flight = state.ai_in_flight
-        self._ai_cancel_event = state.ai_cancel_event
-        self._ai_stream_thread = state.ai_stream_thread
-        self._set_sidebar_visible(state.sidebar_visible)
-        self._set_ai_panel_visible(state.ai_panel_visible)
-        if self._grep_entry:
-            self._grep_entry.set_text(self._grep_phrase_raw or "")
-        if self._ai_range_entry:
-            self._ai_range_entry.set_text(state.ai_range_text)
-        if self._rag_question_entry:
-            self._rag_question_entry.set_text(state.rag_question_text)
-        self._set_ai_view(state.ai_active_view)
-        self._apply_ai_outputs_for_state(state)
-        if self._ai_spinner:
-            self._ai_spinner.set_spinning(state.ai_spinning)
-            self._ai_spinner.set_visible(state.ai_spinning)
-        self._update_continuous_toggle_button()
-        self._update_show_image_toggle_button()
-        self._sync_continuous_action()
-        self._sync_show_image_action()
-        self._update_view_buttons()
-        self._apply_sidebar_expansion_state(state)
-        if self._ai_active_view == AI_VIEW_FILE:
-            self._restore_summary_for_state(state)
-        if self._showing_grep_results and self._grep_combined_text:
-            self._set_show_image(False, silent=True)
-            self._show_grep_results()
-            return
-        if self._continuous_view:
-            self._show_image_update_visible()
-            if self._continuous_text:
-                self._set_text(self._continuous_text, None)
-                self._connect_continuous_scroll_watch()
-                self._update_header()
-            else:
-                self._set_continuous_view(True)
-            return
-        self._set_show_image(self._show_image, silent=True)
-        self._load_current()
-
-    def _switch_view(self, view_id: str) -> None:
-        if view_id == self._active_view_id or view_id not in self._views:
-            self._update_view_buttons()
-            return
-        self._stop_grep_search_if_running()
-        self._persist_active_view_state()
-        self._active_view_id = view_id
-        self._update_view_buttons()
-        self._restore_view_state(self._current_view_state())
-
-    def _toggle_active_view(self) -> None:
-        target_view = VIEW_TWO_ID if self._active_view_id == VIEW_ONE_ID else VIEW_ONE_ID
-        self._switch_view(target_view)
-
-    def _update_view_buttons(self) -> None:
-        if not self._view_buttons:
-            return
-        self._view_button_guard = True
-        try:
-            for view_id, button in self._view_buttons.items():
-                desired = view_id == self._active_view_id
-                if button.get_active() != desired:
-                    button.set_active(desired)
-        finally:
-            self._view_button_guard = False
-
-    def _on_view_button_toggled(self, button: Gtk.ToggleButton, view_id: str) -> None:
-        if self._view_button_guard:
-            return
-        if not button.get_active():
-            self._update_view_buttons()
-            return
-        self._switch_view(view_id)
 
     def _set_window_title(
         self,
@@ -5131,10 +4992,6 @@ class Focus(Adw.Application):
         focus_rag_question.connect("activate", lambda _a, _p: self._focus_rag_question_entry())
         self.add_action(focus_rag_question)
 
-        toggle_view = Gio.SimpleAction.new("toggle_view", None)
-        toggle_view.connect("activate", lambda _a, _p: self._toggle_active_view())
-        self.add_action(toggle_view)
-
         for name, cb in {
             "next": self._go_next,
             "prev": self._go_prev,
@@ -5153,7 +5010,6 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.toggle_continuous_view", ["<Primary><Shift>c"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
-        self.set_accels_for_action("app.toggle_view", ["F6"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
     def _on_choose_input_dir(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
@@ -5551,29 +5407,6 @@ class Focus(Adw.Application):
             return
         self._auto_load_summary_file()
 
-    def _restore_summary_for_state(self, state: FocusViewState) -> None:
-        if (
-            state.summary_loaded_path
-            and self._summary_loaded_path
-            and state.summary_loaded_path == self._summary_loaded_path
-            and self._summary_has_text()
-        ):
-            self._set_summary_active_source(state.summary_active_source)
-            if state.summary_scroll_fraction is not None:
-                self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
-            else:
-                self._restore_summary_scroll_position(self._summary_loaded_path)
-            return
-        if state.summary_loaded_path and state.summary_loaded_path.exists():
-            self._load_summary_from_path(
-                state.summary_loaded_path,
-                allow_auto=True,
-                source=state.summary_active_source,
-                show_toast=False,
-            )
-        else:
-            self._auto_load_summary_file()
-
     def _sync_ai_view_toggles(self, target: str) -> None:
         if not self._ai_view_toggles:
             return
@@ -5613,7 +5446,6 @@ class Focus(Adw.Application):
             label=f"page {page:04d}",
             content=payload,
             prompt_kind="page",
-            view_id=self._active_view_id,
         )
 
     def _on_summarize_range_activate(self, _entry: Gtk.Entry) -> None:
@@ -5645,7 +5477,7 @@ class Focus(Adw.Application):
             parts.append(f"{page:04d}\n\n{content}\n\n")
         combined = "".join(parts)
         label = f"pages {start_page:04d}-{end_page:04d}"
-        self._start_ai_stream(label=label, content=combined, prompt_kind="range", view_id=self._active_view_id)
+        self._start_ai_stream(label=label, content=combined, prompt_kind="range")
         self._ai_range_entry.set_text("")
 
     def _parse_page_range(self, raw: str) -> tuple[int, int] | None:
@@ -5676,7 +5508,7 @@ class Focus(Adw.Application):
         if not question:
             self._transient_toast("Enter a question to run RAG.")
             return
-        self._start_rag_question(question, self._active_view_id, deep=deep)
+        self._start_rag_question(question, deep=deep)
 
     def _find_summary_in_dir(
         self,
@@ -5951,7 +5783,7 @@ class Focus(Adw.Application):
         except OSError as exc:  # noqa: BLE001
             self._transient_toast(f"Could not read {resolved.name}: {exc}")
             return
-        self._stop_ai_stream_if_running(self._active_view_id)
+        self._stop_ai_stream_if_running()
         self._summary_loaded_path = resolved
         if source is None:
             source = self._infer_summary_source(resolved)
@@ -5966,15 +5798,14 @@ class Focus(Adw.Application):
             self._restore_summary_bookmark_or_top(resolved)
         else:
             self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
-        self._update_ai_status("", spinning=False, view_id=self._active_view_id)
+        self._update_ai_status("", spinning=False)
         if show_toast:
             self._transient_toast(f"Loaded {resolved.name}")
         if not allow_auto:
             self._ensure_ai_panel_visible()
 
-    def _start_rag_question(self, question: str, view_id: str | None = None, *, deep: bool = False) -> None:
-        target_view_id = view_id or self._active_view_id
-        state = self._get_view_state(target_view_id)
+    def _start_rag_question(self, question: str, *, deep: bool = False) -> None:
+        state = self._current_view_state()
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
         question_mode = "deep" if deep else "ask"
@@ -6017,21 +5848,19 @@ class Focus(Adw.Application):
             self._ensure_ai_panel_visible()
             return
         target_view = AI_VIEW_QA
-        self._stop_ai_stream_if_running(target_view_id)
+        self._stop_ai_stream_if_running()
         state.ai_cancel_event = threading.Event()
         state.ai_in_flight = True
         state.ai_request_generation += 1
         generation = state.ai_request_generation
-        if target_view_id == self._active_view_id:
-            self._ai_request_generation = generation
+        self._ai_request_generation = generation
         state.ai_active_view = target_view
-        if target_view_id == self._active_view_id:
-            self._ai_cancel_event = state.ai_cancel_event
-            self._ai_in_flight = True
-            self._ensure_ai_panel_visible()
-            self._set_ai_view(target_view)
-        self._reset_ai_output("", target=target_view, view_id=target_view_id)
-        self._update_ai_status("Loading RAG context…", spinning=True, view_id=target_view_id)
+        self._ai_cancel_event = state.ai_cancel_event
+        self._ai_in_flight = True
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(target_view)
+        self._reset_ai_output("", target=target_view)
+        self._update_ai_status("Loading RAG context…", spinning=True)
 
         cancel_event = state.ai_cancel_event
         question_text = question.strip()
@@ -6046,7 +5875,6 @@ class Focus(Adw.Application):
                     error or "RAG data unavailable.",
                     generation,
                     target_view,
-                    target_view_id,
                 )
                 return
             retrieval_started = time.perf_counter()
@@ -6063,7 +5891,6 @@ class Focus(Adw.Application):
                     f"RAG search failed: {exc}",
                     generation,
                     target_view,
-                    target_view_id,
                 )
                 return
 
@@ -6087,7 +5914,7 @@ class Focus(Adw.Application):
             }
             audit_record: dict[str, Any] = {
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                "view_id": target_view_id,
+                "view_id": "single",
                 "mode": question_mode,
                 "question": question_text,
                 "retrieval": {
@@ -6112,11 +5939,10 @@ class Focus(Adw.Application):
                 self._set_ai_output_text_idle,
                 json.dumps(audit_record, indent=2, ensure_ascii=False),
                 AI_VIEW_RAG_AUDIT,
-                target_view_id,
                 False,
             )
             answer_status = "Answering deep question…" if deep else "Answering question…"
-            GLib.idle_add(self._update_ai_status, answer_status, True, target_view_id)
+            GLib.idle_add(self._update_ai_status, answer_status, True)
             self._stream_chat_worker(
                 settings,
                 user_payload,
@@ -6125,7 +5951,6 @@ class Focus(Adw.Application):
                 generation,
                 system_prompt,
                 target_view,
-                target_view_id,
                 model_id=request_model_id,
                 api_url=rag_api_url,
                 api_key=rag_api_key,
@@ -6133,8 +5958,7 @@ class Focus(Adw.Application):
 
         state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
         state.ai_stream_thread.start()
-        if target_view_id == self._active_view_id:
-            self._ai_stream_thread = state.ai_stream_thread
+        self._ai_stream_thread = state.ai_stream_thread
 
     def _kickoff_rag_background_load(self) -> None:
         settings = self._ai_settings
@@ -6370,9 +6194,8 @@ class Focus(Adw.Application):
             f"{normalized_question}"
         )
 
-    def _start_ai_stream(self, *, label: str, content: str, prompt_kind: str, view_id: str | None = None) -> None:
-        target_view_id = view_id or self._active_view_id
-        state = self._get_view_state(target_view_id)
+    def _start_ai_stream(self, *, label: str, content: str, prompt_kind: str) -> None:
+        state = self._current_view_state()
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
         if not settings.is_configured():
@@ -6389,23 +6212,20 @@ class Focus(Adw.Application):
             prompt = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
             api_url, model_id, api_key = settings.page_credentials()
 
-        self._stop_ai_stream_if_running(target_view_id)
+        self._stop_ai_stream_if_running()
         state.ai_cancel_event = threading.Event()
         state.ai_in_flight = True
         state.ai_request_generation += 1
         generation = state.ai_request_generation
-        if target_view_id == self._active_view_id:
-            self._ai_request_generation = generation
+        self._ai_request_generation = generation
         state.ai_active_view = AI_VIEW_SUMMARIZE
-        if target_view_id == self._active_view_id:
-            self._ai_cancel_event = state.ai_cancel_event
-            self._ai_in_flight = True
-            self._ensure_ai_panel_visible()
+        self._ai_cancel_event = state.ai_cancel_event
+        self._ai_in_flight = True
+        self._ensure_ai_panel_visible()
         target_view = AI_VIEW_SUMMARIZE
-        if target_view_id == self._active_view_id:
-            self._set_ai_view(target_view)
-        self._reset_ai_output("", target=target_view, view_id=target_view_id)
-        self._update_ai_status(f"Summarizing {label}…", spinning=True, view_id=target_view_id)
+        self._set_ai_view(target_view)
+        self._reset_ai_output("", target=target_view)
+        self._update_ai_status(f"Summarizing {label}…", spinning=True)
 
         payload_text = content
         worker_settings = settings
@@ -6420,7 +6240,6 @@ class Focus(Adw.Application):
                 generation,
                 prompt,
                 target_view,
-                target_view_id,
                 model_id=model_id,
                 api_url=api_url,
                 api_key=api_key,
@@ -6428,15 +6247,13 @@ class Focus(Adw.Application):
 
         state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
         state.ai_stream_thread.start()
-        if target_view_id == self._active_view_id:
-            self._ai_stream_thread = state.ai_stream_thread
+        self._ai_stream_thread = state.ai_stream_thread
 
-    def _update_ai_status(self, text: str, spinning: bool, view_id: str | None = None) -> None:
-        target_view_id = view_id or self._active_view_id
-        state = self._get_view_state(target_view_id)
+    def _update_ai_status(self, text: str, spinning: bool) -> None:
+        state = self._current_view_state()
         state.ai_status_text = text
         state.ai_spinning = spinning
-        if target_view_id == self._active_view_id and self._ai_spinner:
+        if self._ai_spinner:
             self._ai_spinner.set_spinning(spinning)
             self._ai_spinner.set_visible(spinning)
 
@@ -6445,34 +6262,30 @@ class Focus(Adw.Application):
         text: str | None = None,
         *,
         target: str,
-        view_id: str | None = None,
         switch_view: bool = False,
     ) -> None:
-        target_view_id = view_id or self._active_view_id
-        focus_state = self._get_view_state(target_view_id)
+        focus_state = self._current_view_state()
         focus_state.ai_output_raw[target] = text or ""
-        if target_view_id == self._active_view_id:
-            state = self._get_ai_output_state(target)
-            if switch_view:
-                self._set_ai_view(target)
-            state.raw = text or ""
-            self._apply_ai_output_links(state.raw, state)
+        state = self._get_ai_output_state(target)
+        if switch_view:
+            self._set_ai_view(target)
+        state.raw = text or ""
+        self._apply_ai_output_links(state.raw, state)
 
     def _set_ai_output_text_idle(
         self,
         text: str | None,
         target: str,
-        view_id: str,
         switch_view: bool = False,
     ) -> bool:
-        self._set_ai_output_text(text, target=target, view_id=view_id, switch_view=switch_view)
+        self._set_ai_output_text(text, target=target, switch_view=switch_view)
         return False
 
-    def _reset_ai_output(self, text: str | None = None, *, target: str, view_id: str | None = None) -> None:
-        self._set_ai_output_text(text, target=target, view_id=view_id, switch_view=True)
+    def _reset_ai_output(self, text: str | None = None, *, target: str) -> None:
+        self._set_ai_output_text(text, target=target, switch_view=True)
 
-    def _append_ai_output(self, text: str, generation: int, target: str, view_id: str) -> bool:
-        focus_state = self._get_view_state(view_id)
+    def _append_ai_output(self, text: str, generation: int, target: str) -> bool:
+        focus_state = self._current_view_state()
         if generation != focus_state.ai_request_generation:
             return False
         if not text:
@@ -6480,16 +6293,14 @@ class Focus(Adw.Application):
         current_raw = focus_state.ai_output_raw.get(target, "") or ""
         new_raw = current_raw + text
         focus_state.ai_output_raw[target] = new_raw
-        if view_id == self._active_view_id:
-            state = self._get_ai_output_state(target)
-            state.raw = new_raw
-            self._apply_ai_output_links(state.raw, state)
-        self._update_ai_status("Streaming…", spinning=True, view_id=view_id)
+        state = self._get_ai_output_state(target)
+        state.raw = new_raw
+        self._apply_ai_output_links(state.raw, state)
+        self._update_ai_status("Streaming…", spinning=True)
         return False
 
-    def _stop_ai_stream_if_running(self, view_id: str | None = None) -> None:
-        target_view_id = view_id or self._active_view_id
-        state = self._get_view_state(target_view_id)
+    def _stop_ai_stream_if_running(self) -> None:
+        state = self._current_view_state()
         if state.ai_cancel_event:
             state.ai_cancel_event.set()
         if state.ai_stream_thread and state.ai_stream_thread.is_alive():
@@ -6500,10 +6311,9 @@ class Focus(Adw.Application):
         state.ai_stream_thread = None
         state.ai_cancel_event = None
         state.ai_in_flight = False
-        if target_view_id == self._active_view_id:
-            self._ai_stream_thread = None
-            self._ai_cancel_event = None
-            self._ai_in_flight = False
+        self._ai_stream_thread = None
+        self._ai_cancel_event = None
+        self._ai_in_flight = False
 
     def _stream_chat_worker(
         self,
@@ -6514,7 +6324,6 @@ class Focus(Adw.Application):
         generation: int,
         prompt: str,
         target_view: str,
-        target_view_id: str,
         *,
         model_id: str,
         api_url: str,
@@ -6542,23 +6351,22 @@ class Focus(Adw.Application):
             with urllib.request.urlopen(req, timeout=300) as resp:
                 for chunk in self._iter_sse_chunks(resp, cancel_event):
                     if cancel_event and cancel_event.is_set():
-                        GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view, target_view_id)
+                        GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
                         return
-                    GLib.idle_add(self._append_ai_output, chunk, generation, target_view, target_view_id)
+                    GLib.idle_add(self._append_ai_output, chunk, generation, target_view)
             if cancel_event and cancel_event.is_set():
-                GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view, target_view_id)
+                GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
             else:
-                GLib.idle_add(self._on_ai_stream_finished, label, generation, target_view, target_view_id)
+                GLib.idle_add(self._on_ai_stream_finished, label, generation, target_view)
         except urllib.error.HTTPError as exc:
             GLib.idle_add(
                 self._on_ai_stream_error,
                 f"HTTP error {exc.code}: {exc.reason or 'request failed'}",
                 generation,
                 target_view,
-                target_view_id,
             )
         except Exception as exc:  # noqa: BLE001
-            GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view, target_view_id)
+            GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
 
     def _iter_sse_chunks(
         self,
@@ -6610,47 +6418,44 @@ class Focus(Adw.Application):
                 return fallback
         return ""
 
-    def _on_ai_stream_finished(self, label: str, generation: int, target_view: str, view_id: str) -> bool:
-        state = self._get_view_state(view_id)
+    def _on_ai_stream_finished(self, label: str, generation: int, _target_view: str) -> bool:
+        state = self._current_view_state()
         if generation != state.ai_request_generation:
             return False
         state.ai_in_flight = False
         state.ai_cancel_event = None
         state.ai_stream_thread = None
-        if view_id == self._active_view_id:
-            self._ai_in_flight = False
-            self._ai_cancel_event = None
-            self._ai_stream_thread = None
-        self._update_ai_status(f"Finished AI response for {label}.", spinning=False, view_id=view_id)
+        self._ai_in_flight = False
+        self._ai_cancel_event = None
+        self._ai_stream_thread = None
+        self._update_ai_status(f"Finished AI response for {label}.", spinning=False)
         return False
 
-    def _on_ai_stream_error(self, message: str, generation: int, target_view: str, view_id: str) -> bool:
-        state = self._get_view_state(view_id)
+    def _on_ai_stream_error(self, message: str, generation: int, _target_view: str) -> bool:
+        state = self._current_view_state()
         if generation != state.ai_request_generation:
             return False
         state.ai_in_flight = False
         state.ai_cancel_event = None
         state.ai_stream_thread = None
-        if view_id == self._active_view_id:
-            self._ai_in_flight = False
-            self._ai_cancel_event = None
-            self._ai_stream_thread = None
-        self._update_ai_status("AI request failed.", spinning=False, view_id=view_id)
+        self._ai_in_flight = False
+        self._ai_cancel_event = None
+        self._ai_stream_thread = None
+        self._update_ai_status("AI request failed.", spinning=False)
         self._transient_toast(message or "AI request failed.")
         return False
 
-    def _on_ai_stream_cancelled(self, generation: int, target_view: str, view_id: str) -> bool:
-        state = self._get_view_state(view_id)
+    def _on_ai_stream_cancelled(self, generation: int, _target_view: str) -> bool:
+        state = self._current_view_state()
         if generation != state.ai_request_generation:
             return False
         state.ai_in_flight = False
         state.ai_cancel_event = None
         state.ai_stream_thread = None
-        if view_id == self._active_view_id:
-            self._ai_in_flight = False
-            self._ai_cancel_event = None
-            self._ai_stream_thread = None
-        self._update_ai_status("Cancelled.", spinning=False, view_id=view_id)
+        self._ai_in_flight = False
+        self._ai_cancel_event = None
+        self._ai_stream_thread = None
+        self._update_ai_status("Cancelled.", spinning=False)
         return False
 
     def _edge_flash(self) -> None:
