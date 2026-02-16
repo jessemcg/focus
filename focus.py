@@ -112,6 +112,10 @@ DEFAULT_RAG_PROMPT = (
 DEFAULT_RAG_CHUNK_COUNT = 8
 DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
 DEFAULT_RAG_ISAACUS_MODEL = "kanon-2-embedder"
+RAG_PAYLOAD_CASE_DETAILS_HEADING = "# Case Context"
+RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING = "# Retrieved Record Excerpts"
+RAG_PAYLOAD_QUESTION_HEADING = "# Question"
+RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX = "## Record Excerpt"
 RAG_PROVIDER_VOYAGE = "voyage"
 RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
@@ -3570,6 +3574,13 @@ class Focus(Adw.Application):
             scroller.queue_resize()
 
     def _apply_ai_output_links(self, text: str, state: AiOutputView) -> None:
+        for view_name, output_state in self._ai_outputs.items():
+            if output_state is not state:
+                continue
+            if view_name == AI_VIEW_RAG_AUDIT and state.buffer is not None:
+                state.buffer.set_text(text or "")
+                return
+            break
         self._apply_link_spans(text, state.buffer, state.link_tags, state.link_lookup, state.scroller)
 
     def _apply_summary_links(self, text: str) -> None:
@@ -6336,22 +6347,27 @@ class Focus(Adw.Application):
     def _format_rag_context(self, chunks: list[dict[str, Any]]) -> str:
         rendered: list[str] = []
         for chunk in chunks:
+            rank = int(chunk.get("rank") or 0)
             source = str(chunk.get("source", "") or "").strip()
             text = str(chunk.get("content", "") or "")
+            chunk_heading = f"{RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX} {rank}" if rank > 0 else RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX
             if source:
-                rendered.append(f"[{source}]\n{text}")
+                rendered.append(f"{chunk_heading}\nSource: {source}\n{text}")
             else:
-                rendered.append(text)
+                rendered.append(f"{chunk_heading}\n{text}")
         return "\n\n".join(rendered)
 
     def _compose_rag_payload(self, case_details: str, context: str, question: str) -> str:
+        normalized_case_details = case_details.strip()
+        normalized_context = context.strip() or "_No retrieved excerpts available._"
+        normalized_question = question.strip()
         return (
-            "Case Details:\n"
-            f"{case_details}\n\n"
-            "Transcripts:\n"
-            f"{context}\n\n"
-            "Question:\n"
-            f"{question}"
+            f"{RAG_PAYLOAD_CASE_DETAILS_HEADING}\n"
+            f"{normalized_case_details}\n\n"
+            f"{RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING}\n"
+            f"{normalized_context}\n\n"
+            f"{RAG_PAYLOAD_QUESTION_HEADING}\n"
+            f"{normalized_question}"
         )
 
     def _start_ai_stream(self, *, label: str, content: str, prompt_kind: str, view_id: str | None = None) -> None:
