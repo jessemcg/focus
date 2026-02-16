@@ -84,9 +84,12 @@ CONFIG_KEY_RAG_VOYAGE_MODEL = "rag_voyage_model"
 CONFIG_KEY_RAG_ISAACUS_API_KEY = "rag_isaacus_api_key"
 CONFIG_KEY_RAG_ISAACUS_MODEL = "rag_isaacus_model"
 CONFIG_KEY_RAG_MODEL = "rag_model_id"
+CONFIG_KEY_RAG_DEEP_MODEL = "rag_deep_model_id"
 CONFIG_KEY_RAG_PROMPT = "rag_prompt"
 CONFIG_KEY_RAG_API_URL = "rag_api_url"
 CONFIG_KEY_RAG_API_KEY = "rag_api_key"
+CONFIG_KEY_RAG_DEEP_API_URL = "rag_deep_api_url"
+CONFIG_KEY_RAG_DEEP_API_KEY = "rag_deep_api_key"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
@@ -535,9 +538,12 @@ class AiSettings:
     isaacus_api_key: str
     isaacus_model: str
     rag_llm_model: str
+    rag_deep_llm_model: str
     rag_prompt: str
     rag_api_url: str
     rag_api_key: str
+    rag_deep_api_url: str
+    rag_deep_api_key: str
     rag_chunk_count: int
     highlight_phrases: list[str]
     grep_highlight_color: str
@@ -562,6 +568,13 @@ class AiSettings:
         return (
             self.rag_api_url.strip() or page_api_url,
             self.rag_api_key.strip() or page_api_key,
+        )
+
+    def rag_deep_credentials(self) -> tuple[str, str]:
+        rag_api_url, rag_api_key = self.rag_credentials()
+        return (
+            self.rag_deep_api_url.strip() or rag_api_url,
+            self.rag_deep_api_key.strip() or rag_api_key,
         )
 
     def is_configured(self) -> bool:
@@ -688,6 +701,8 @@ def load_ai_settings() -> AiSettings:
     ).strip()
     rag_api_url = str(config.get(CONFIG_KEY_RAG_API_URL, "") or "").strip()
     rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip()
+    rag_deep_api_url = str(config.get(CONFIG_KEY_RAG_DEEP_API_URL, "") or "").strip()
+    rag_deep_api_key = str(config.get(CONFIG_KEY_RAG_DEEP_API_KEY, "") or "").strip()
     rag_chunk_count = _coerce_rag_chunk_count(
         config.get(CONFIG_KEY_RAG_CHUNK_COUNT),
         DEFAULT_RAG_CHUNK_COUNT,
@@ -719,9 +734,12 @@ def load_ai_settings() -> AiSettings:
         isaacus_api_key=str(config.get(CONFIG_KEY_RAG_ISAACUS_API_KEY, "") or "").strip(),
         isaacus_model=isaacus_model or DEFAULT_RAG_ISAACUS_MODEL,
         rag_llm_model=str(config.get(CONFIG_KEY_RAG_MODEL, "") or "").strip(),
+        rag_deep_llm_model=str(config.get(CONFIG_KEY_RAG_DEEP_MODEL, "") or "").strip(),
         rag_prompt=rag_prompt or DEFAULT_RAG_PROMPT,
         rag_api_url=rag_api_url,
         rag_api_key=rag_api_key,
+        rag_deep_api_url=rag_deep_api_url,
+        rag_deep_api_key=rag_deep_api_key,
         rag_chunk_count=rag_chunk_count,
         highlight_phrases=highlight_phrases,
         grep_highlight_color=grep_highlight_color,
@@ -751,9 +769,12 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_RAG_ISAACUS_API_KEY] = settings.isaacus_api_key
     config[CONFIG_KEY_RAG_ISAACUS_MODEL] = settings.isaacus_model or DEFAULT_RAG_ISAACUS_MODEL
     config[CONFIG_KEY_RAG_MODEL] = settings.rag_llm_model
+    config[CONFIG_KEY_RAG_DEEP_MODEL] = settings.rag_deep_llm_model
     config[CONFIG_KEY_RAG_PROMPT] = settings.rag_prompt or DEFAULT_RAG_PROMPT
     config[CONFIG_KEY_RAG_API_URL] = settings.rag_api_url
     config[CONFIG_KEY_RAG_API_KEY] = settings.rag_api_key
+    config[CONFIG_KEY_RAG_DEEP_API_URL] = settings.rag_deep_api_url
+    config[CONFIG_KEY_RAG_DEEP_API_KEY] = settings.rag_deep_api_key
     config[CONFIG_KEY_RAG_CHUNK_COUNT] = _coerce_rag_chunk_count(
         settings.rag_chunk_count,
         DEFAULT_RAG_CHUNK_COUNT,
@@ -2033,6 +2054,13 @@ class Focus(Adw.Application):
         ask_button.set_valign(Gtk.Align.CENTER)
         ask_button.connect("clicked", self._on_rag_question_button_clicked)
         qa_controls.append(ask_button)
+
+        deep_ask_button = Gtk.Button(label="Deep Ask")
+        deep_ask_button.add_css_class("flat")
+        deep_ask_button.add_css_class("no-bold")
+        deep_ask_button.set_valign(Gtk.Align.CENTER)
+        deep_ask_button.connect("clicked", self._on_rag_deep_question_button_clicked)
+        qa_controls.append(deep_ask_button)
 
         rag_audit_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rag_audit_view.set_hexpand(True)
@@ -5622,19 +5650,22 @@ class Focus(Adw.Application):
         return start, end
 
     def _on_rag_question_activate(self, _entry: Gtk.Entry) -> None:
-        self._submit_rag_question()
+        self._submit_rag_question(deep=False)
 
     def _on_rag_question_button_clicked(self, _button: Gtk.Button) -> None:
-        self._submit_rag_question()
+        self._submit_rag_question(deep=False)
 
-    def _submit_rag_question(self) -> None:
+    def _on_rag_deep_question_button_clicked(self, _button: Gtk.Button) -> None:
+        self._submit_rag_question(deep=True)
+
+    def _submit_rag_question(self, deep: bool = False) -> None:
         if not self._rag_question_entry:
             return
         question = self._rag_question_entry.get_text().strip()
         if not question:
             self._transient_toast("Enter a question to run RAG.")
             return
-        self._start_rag_question(question, self._active_view_id)
+        self._start_rag_question(question, self._active_view_id, deep=deep)
 
     def _find_summary_in_dir(
         self,
@@ -5930,20 +5961,34 @@ class Focus(Adw.Application):
         if not allow_auto:
             self._ensure_ai_panel_visible()
 
-    def _start_rag_question(self, question: str, view_id: str | None = None) -> None:
+    def _start_rag_question(self, question: str, view_id: str | None = None, *, deep: bool = False) -> None:
         target_view_id = view_id or self._active_view_id
         state = self._get_view_state(target_view_id)
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
-        rag_api_url, rag_api_key = settings.rag_credentials()
-        if not rag_api_key:
-            self._transient_toast("Configure the RAG API key in Settings.")
-            self._ensure_ai_panel_visible()
-            return
-        if not settings.rag_llm_model.strip():
-            self._transient_toast("Set the RAG answer model in Settings.")
-            self._ensure_ai_panel_visible()
-            return
+        question_mode = "deep" if deep else "ask"
+        if deep:
+            rag_api_url, rag_api_key = settings.rag_deep_credentials()
+            rag_model = settings.rag_deep_llm_model.strip()
+            if not rag_api_key:
+                self._transient_toast("Configure the Deep Ask API key in Settings.")
+                self._ensure_ai_panel_visible()
+                return
+            if not rag_model:
+                self._transient_toast("Set the Deep Ask model in Settings.")
+                self._ensure_ai_panel_visible()
+                return
+        else:
+            rag_api_url, rag_api_key = settings.rag_credentials()
+            rag_model = settings.rag_llm_model.strip()
+            if not rag_api_key:
+                self._transient_toast("Configure the RAG API key in Settings.")
+                self._ensure_ai_panel_visible()
+                return
+            if not rag_model:
+                self._transient_toast("Set the RAG answer model in Settings.")
+                self._ensure_ai_panel_visible()
+                return
         provider = _normalize_rag_provider(settings.rag_provider)
         if provider == RAG_PROVIDER_ISAACUS:
             if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
@@ -5979,7 +6024,8 @@ class Focus(Adw.Application):
 
         cancel_event = state.ai_cancel_event
         question_text = question.strip()
-        label = f"question: {question_text[:48]}{'…' if len(question_text) > 48 else ''}"
+        question_label = "deep question" if deep else "question"
+        label = f"{question_label}: {question_text[:48]}{'…' if len(question_text) > 48 else ''}"
 
         def worker() -> None:
             vectorstore, case_details, error = self._ensure_rag_resources_ready(settings)
@@ -6013,7 +6059,13 @@ class Focus(Adw.Application):
             retrieval_duration_ms = round((time.perf_counter() - retrieval_started) * 1000.0, 2)
             system_prompt = settings.rag_prompt or DEFAULT_RAG_PROMPT
             user_payload = self._compose_rag_payload(case_details, context_text, question_text)
-            request_model_id = settings.rag_llm_model or settings.page_credentials()[1]
+            request_model_id = rag_model or settings.page_credentials()[1]
+            if deep:
+                system_prompt = (
+                    f"{system_prompt}\n\n"
+                    "For difficult questions, reason carefully and cite specific retrieved passages. "
+                    "If the evidence is incomplete or conflicting, say so explicitly."
+                )
             llm_request = {
                 "model": request_model_id,
                 "stream": True,
@@ -6025,6 +6077,7 @@ class Focus(Adw.Application):
             audit_record: dict[str, Any] = {
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "view_id": target_view_id,
+                "mode": question_mode,
                 "question": question_text,
                 "retrieval": {
                     "method": retrieval_method,
@@ -6051,7 +6104,8 @@ class Focus(Adw.Application):
                 target_view_id,
                 False,
             )
-            GLib.idle_add(self._update_ai_status, "Answering question…", True, target_view_id)
+            answer_status = "Answering deep question…" if deep else "Answering question…"
+            GLib.idle_add(self._update_ai_status, answer_status, True, target_view_id)
             self._stream_chat_worker(
                 settings,
                 user_payload,
@@ -6633,6 +6687,9 @@ class RagPromptWidgets:
     api_url_row: Adw.EntryRow
     model_row: Adw.EntryRow
     api_key_row: Adw.EntryRow
+    deep_api_url_row: Adw.EntryRow
+    deep_model_row: Adw.EntryRow
+    deep_api_key_row: Adw.EntryRow
     provider_row: Adw.ComboRow
     provider_values: list[str]
     voyage_model_row: Adw.EntryRow
@@ -7025,6 +7082,22 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_model_row.set_hexpand(True)
         rag_group.add(rag_model_row)
 
+        deep_rag_group = Adw.PreferencesGroup(title="Deep Ask Credentials")
+        deep_rag_group.add_css_class("list-stack")
+        deep_rag_group.set_hexpand(True)
+        page_box.append(deep_rag_group)
+
+        deep_rag_api_url_row = Adw.EntryRow(title="Deep Ask API URL")
+        deep_rag_api_url_row.set_hexpand(True)
+        deep_rag_group.add(deep_rag_api_url_row)
+
+        deep_rag_api_key_row = self._build_password_row("Deep Ask API Key")
+        deep_rag_group.add(deep_rag_api_key_row)
+
+        deep_rag_model_row = Adw.EntryRow(title="Deep Ask Model")
+        deep_rag_model_row.set_hexpand(True)
+        deep_rag_group.add(deep_rag_model_row)
+
         provider_group = Adw.PreferencesGroup(title="Embedding Provider")
         provider_group.add_css_class("list-stack")
         provider_group.set_hexpand(True)
@@ -7099,6 +7172,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             api_url_row=rag_api_url_row,
             model_row=rag_model_row,
             api_key_row=rag_api_key_row,
+            deep_api_url_row=deep_rag_api_url_row,
+            deep_model_row=deep_rag_model_row,
+            deep_api_key_row=deep_rag_api_key_row,
             provider_row=provider_row,
             provider_values=provider_values,
             voyage_model_row=voyage_model_row,
@@ -7147,6 +7223,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 settings.rag_api_key or settings.page_api_key or settings.api_key
             )
             rag_widgets.model_row.set_text(settings.rag_llm_model)
+            rag_widgets.deep_api_url_row.set_text(
+                settings.rag_deep_api_url or settings.rag_api_url or settings.page_api_url or settings.api_url
+            )
+            rag_widgets.deep_api_key_row.set_text(
+                settings.rag_deep_api_key or settings.rag_api_key or settings.page_api_key or settings.api_key
+            )
+            rag_widgets.deep_model_row.set_text(settings.rag_deep_llm_model)
             provider = _normalize_rag_provider(settings.rag_provider)
             if provider in rag_widgets.provider_values:
                 rag_widgets.provider_row.set_selected(rag_widgets.provider_values.index(provider))
@@ -7205,6 +7288,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_api_url = rag_widgets.api_url_row.get_text().strip()
         rag_api_key = rag_widgets.api_key_row.get_text().strip()
         rag_model = rag_widgets.model_row.get_text().strip()
+        rag_deep_api_url = rag_widgets.deep_api_url_row.get_text().strip()
+        rag_deep_api_key = rag_widgets.deep_api_key_row.get_text().strip()
+        rag_deep_model = rag_widgets.deep_model_row.get_text().strip()
         provider_index = int(rag_widgets.provider_row.get_selected())
         if 0 <= provider_index < len(rag_widgets.provider_values):
             rag_provider = rag_widgets.provider_values[provider_index]
@@ -7264,9 +7350,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             isaacus_api_key=isaacus_key,
             isaacus_model=isaacus_model or DEFAULT_RAG_ISAACUS_MODEL,
             rag_llm_model=rag_model,
+            rag_deep_llm_model=rag_deep_model,
             rag_prompt=rag_prompt or DEFAULT_RAG_PROMPT,
             rag_api_url=rag_api_url or page_api_url,
             rag_api_key=rag_api_key or page_api_key,
+            rag_deep_api_url=rag_deep_api_url or rag_api_url or page_api_url,
+            rag_deep_api_key=rag_deep_api_key or rag_api_key or page_api_key,
             rag_chunk_count=rag_chunk_count,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
