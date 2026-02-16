@@ -1452,7 +1452,7 @@ class Focus(Adw.Application):
         self._split_sidebar_page: Adw.NavigationPage | None = None
         self._toc_placeholder: Gtk.Widget | None = None
         self._toc_sidebar_has_items = False
-        self._toc_sidebar_visible = True
+        self._toc_sidebar_visible = False
         self._sidebar_button_guard = False
         self._continuous_view = False
         self._continuous_text: str | None = None
@@ -1730,7 +1730,7 @@ class Focus(Adw.Application):
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
         self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
-        self._set_ai_panel_visible(False)
+        self._set_ai_panel_visible(True)
         left_box.append(self._ai_panel_toggle)
 
         header.pack_start(left_box)
@@ -1914,7 +1914,7 @@ class Focus(Adw.Application):
 
         self._ai_panel_revealer = Gtk.Revealer()
         self._ai_panel_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        self._ai_panel_revealer.set_reveal_child(False)
+        self._ai_panel_revealer.set_reveal_child(True)
 
         ai_panel_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         ai_panel_root.set_hexpand(True)
