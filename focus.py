@@ -132,6 +132,8 @@ SUMMARY_BOOKMARKS_FILENAME = "summary_bookmarks.json"
 # UI Defaults
 # =====================
 MAX_BREAKS = 2
+MAX_INTERWORD_NUMERIC_INSERTS = 1
+MAX_INTERWORD_NUMERIC_DIGITS = 8
 DEFAULT_TEXT_COLOR = "alpha(@window_fg_color, 0.68)"
 PAGE_TEXT_BG_COLOR = "#ffffff"
 PAGE_TEXT_FG_COLOR = "#000000"
@@ -1215,7 +1217,12 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
         newline_alts.append(r"(?:[ \t]*\n)" * count + r"[ \t]*")
 
     alts = [r"(?:[ \t]+)"] + newline_alts
-    sep = r"(?:%s)(?:\d+[ \t]*)*" % ("|".join(alts) if alts else r"(?:[ \t]+)")
+    sep_base = "(?:" + ("|".join(alts) if alts else r"(?:[ \t]+)") + ")"
+    numeric_bridge = (
+        rf"(?:\d{{1,{MAX_INTERWORD_NUMERIC_DIGITS}}}[ \t]*)"
+        rf"{{0,{MAX_INTERWORD_NUMERIC_INSERTS}}}"
+    )
+    sep = sep_base + numeric_bridge
     return r"(?x)" + sep.join(words)
 
 
