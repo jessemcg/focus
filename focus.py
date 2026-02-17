@@ -1570,6 +1570,7 @@ class Focus(Adw.Application):
         self._summary_active_source: str | None = None
         self._summary_toggle_guard = False
         self._summary_toggles: dict[str, Gtk.ToggleButton] = {}
+        self._summary_progress_label: Gtk.Label | None = None
         self._summary_bookmark_button: Gtk.Button | None = None
         self._summary_print_button: Gtk.Button | None = None
         self._summary_print_text = ""
@@ -2154,6 +2155,14 @@ class Focus(Adw.Application):
         self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
         self._summary_search_entry.connect("activate", self._on_summary_search_activate)
 
+        self._summary_progress_label = Gtk.Label(label="0%")
+        self._summary_progress_label.add_css_class("dim-label")
+        self._summary_progress_label.set_valign(Gtk.Align.CENTER)
+        self._summary_progress_label.set_xalign(1.0)
+        self._summary_progress_label.set_width_chars(6)
+        self._summary_progress_label.set_single_line_mode(True)
+        self._summary_progress_label.set_ellipsize(Pango.EllipsizeMode.END)
+
         self._summary_bookmark_button = Gtk.Button()
         self._summary_bookmark_button.add_css_class("flat")
         self._summary_bookmark_button.set_valign(Gtk.Align.CENTER)
@@ -2172,6 +2181,7 @@ class Focus(Adw.Application):
         self._summary_print_button.connect("clicked", self._on_summary_print_clicked)
         summary_row.append(summary_button_group)
         summary_row.append(self._summary_search_entry)
+        summary_row.append(self._summary_progress_label)
         summary_row.append(self._summary_bookmark_button)
         summary_row.append(self._summary_print_button)
 
@@ -4007,6 +4017,7 @@ class Focus(Adw.Application):
             except (TypeError, RuntimeError):
                 pass
         self._summary_scroll_handler_id = vadj.connect("value-changed", self._on_summary_scroll)
+        self._update_summary_progress_label(vadj)
 
     def _summary_scroll_fraction(self, adjustment: Gtk.Adjustment) -> float:
         lower = adjustment.get_lower()
@@ -4018,14 +4029,27 @@ class Focus(Adw.Application):
         value = adjustment.get_value()
         return (value - lower) / total
 
+    def _update_summary_progress_label(self, adjustment: Gtk.Adjustment | None = None) -> None:
+        if not self._summary_progress_label:
+            return
+        if not self._summary_buffer or self._summary_buffer.get_char_count() <= 0:
+            self._summary_progress_label.set_text("0%")
+            return
+        if adjustment is None and self._summary_scroller:
+            adjustment = self._summary_scroller.get_vadjustment()
+        fraction = 0.0
+        if adjustment:
+            fraction = self._summary_scroll_fraction(adjustment)
+            fraction = min(1.0, max(0.0, fraction))
+        percent = int(round(fraction * 100))
+        self._summary_progress_label.set_text(f"{percent}%")
+
     def _on_summary_scroll(self, adjustment: Gtk.Adjustment) -> None:
-        if self._ai_active_view != AI_VIEW_FILE:
-            return
-        if self._summary_scroll_restore_guard:
-            return
         fraction = self._summary_scroll_fraction(adjustment)
         fraction = min(1.0, max(0.0, fraction))
-        self._current_view_state().summary_scroll_fraction = fraction
+        if self._ai_active_view == AI_VIEW_FILE and not self._summary_scroll_restore_guard:
+            self._current_view_state().summary_scroll_fraction = fraction
+        self._update_summary_progress_label(adjustment)
 
     def _restore_summary_scroll_position(self, path: Path | None) -> None:
         if not path or not self._summary_scroller:
@@ -4097,6 +4121,7 @@ class Focus(Adw.Application):
             else:
                 iter_ = iter_result
             self._summary_view.scroll_to_iter(iter_, 0.08, True, 0.0, 0.0)
+            self._update_summary_progress_label()
             return False
 
         GLib.idle_add(_apply, 8)
@@ -4177,6 +4202,7 @@ class Focus(Adw.Application):
             self._summary_scroll_restore_guard = True
             vadj.set_value(target)
             self._summary_scroll_restore_guard = False
+            self._update_summary_progress_label(vadj)
             return False
 
         GLib.idle_add(_apply_remaining, retries)
@@ -4490,6 +4516,7 @@ class Focus(Adw.Application):
             self._summary_view.set_cursor_visible(False)
         if self._summary_loaded_path:
             self._restore_summary_scroll_position(self._summary_loaded_path)
+        self._update_summary_progress_label()
 
     def _set_show_image(self, enabled: bool, *, silent: bool = False) -> bool:
         if enabled:
@@ -5437,6 +5464,7 @@ class Focus(Adw.Application):
         self._sync_ai_view_toggles(target)
         if target == AI_VIEW_FILE:
             self._restore_summary_scroll_position(self._summary_loaded_path)
+            self._update_summary_progress_label()
 
     def _ensure_summary_for_active_view(self) -> None:
         state = self._current_view_state()
