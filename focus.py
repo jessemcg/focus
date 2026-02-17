@@ -90,6 +90,8 @@ CONFIG_KEY_RAG_API_KEY = "rag_api_key"
 CONFIG_KEY_RAG_DEEP_API_URL = "rag_deep_api_url"
 CONFIG_KEY_RAG_DEEP_API_KEY = "rag_deep_api_key"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
+CONFIG_KEY_DEEP_ASK_TIMEOUT_SECONDS = "deep_ask_timeout_seconds"
+CONFIG_KEY_DEEP_ASK_SHOW_REASONING = "deep_ask_show_reasoning"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
@@ -111,6 +113,8 @@ DEFAULT_RAG_PROMPT = (
 DEFAULT_RAG_CHUNK_COUNT = 8
 DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
 DEFAULT_RAG_ISAACUS_MODEL = "kanon-2-embedder"
+DEFAULT_DEEP_ASK_TIMEOUT_SECONDS = 900
+DEFAULT_SHOW_DEEP_ASK_REASONING = False
 RAG_PAYLOAD_CASE_DETAILS_HEADING = "# Case Context"
 RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING = "# Retrieved Record Excerpts"
 RAG_PAYLOAD_QUESTION_HEADING = "# Question"
@@ -162,6 +166,7 @@ AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
 AI_VIEW_FILE = "show-file"
+DEFAULT_STREAM_TIMEOUT_SECONDS = 300
 
 
 def _normalize_rag_provider(value: str) -> str:
@@ -503,6 +508,28 @@ def _coerce_rag_chunk_count(value: Any, default: int) -> int:
     return min(50, max(1, count))
 
 
+def _coerce_timeout_seconds(value: Any, default: int) -> int:
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(3600, max(60, seconds))
+
+
+def _coerce_bool_config(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
 def load_font_preferences() -> tuple[int, int]:
     config = _read_config()
     base = _coerce_font_size(config.get(CONFIG_KEY_FONT_SIZE_PT), DEFAULT_FONT_SIZE_PT)
@@ -544,6 +571,8 @@ class AiSettings:
     rag_deep_api_url: str
     rag_deep_api_key: str
     rag_chunk_count: int
+    deep_ask_timeout_seconds: int
+    deep_ask_show_reasoning: bool
     highlight_phrases: list[str]
     grep_highlight_color: str
     phrase_highlight_color: str
@@ -705,6 +734,14 @@ def load_ai_settings() -> AiSettings:
         config.get(CONFIG_KEY_RAG_CHUNK_COUNT),
         DEFAULT_RAG_CHUNK_COUNT,
     )
+    deep_ask_timeout_seconds = _coerce_timeout_seconds(
+        config.get(CONFIG_KEY_DEEP_ASK_TIMEOUT_SECONDS),
+        DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
+    )
+    deep_ask_show_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_DEEP_ASK_SHOW_REASONING),
+        DEFAULT_SHOW_DEEP_ASK_REASONING,
+    )
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
     grep_highlight_color = _coerce_color_value(
         config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
@@ -739,6 +776,8 @@ def load_ai_settings() -> AiSettings:
         rag_deep_api_url=rag_deep_api_url,
         rag_deep_api_key=rag_deep_api_key,
         rag_chunk_count=rag_chunk_count,
+        deep_ask_timeout_seconds=deep_ask_timeout_seconds,
+        deep_ask_show_reasoning=deep_ask_show_reasoning,
         highlight_phrases=highlight_phrases,
         grep_highlight_color=grep_highlight_color,
         phrase_highlight_color=phrase_highlight_color,
@@ -777,6 +816,11 @@ def save_ai_settings(settings: AiSettings) -> None:
         settings.rag_chunk_count,
         DEFAULT_RAG_CHUNK_COUNT,
     )
+    config[CONFIG_KEY_DEEP_ASK_TIMEOUT_SECONDS] = _coerce_timeout_seconds(
+        settings.deep_ask_timeout_seconds,
+        DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
+    )
+    config[CONFIG_KEY_DEEP_ASK_SHOW_REASONING] = bool(settings.deep_ask_show_reasoning)
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
         settings.grep_highlight_color,
@@ -5936,6 +5980,11 @@ class Focus(Adw.Application):
                     "body": llm_request,
                 },
             }
+            if deep:
+                audit_record["deep_ask"] = {
+                    "timeout_seconds": settings.deep_ask_timeout_seconds,
+                    "show_reasoning_trace": settings.deep_ask_show_reasoning,
+                }
             audit_path, audit_error = self._save_rag_audit_record(audit_record)
             if audit_path is not None:
                 audit_record["audit_file"] = str(audit_path)
@@ -5961,6 +6010,10 @@ class Focus(Adw.Application):
                 model_id=request_model_id,
                 api_url=rag_api_url,
                 api_key=rag_api_key,
+                request_timeout_seconds=(
+                    settings.deep_ask_timeout_seconds if deep else DEFAULT_STREAM_TIMEOUT_SECONDS
+                ),
+                include_reasoning=deep and settings.deep_ask_show_reasoning,
             )
 
         state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
@@ -6303,8 +6356,23 @@ class Focus(Adw.Application):
         state = self._get_ai_output_state(target)
         state.raw = new_raw
         self._apply_ai_output_links(state.raw, state)
+        if target == AI_VIEW_QA:
+            self._scroll_ai_output_to_bottom(target)
         self._update_ai_status("Streaming…", spinning=True)
         return False
+
+    def _scroll_ai_output_to_bottom(self, target: str) -> None:
+        state = self._get_ai_output_state(target)
+        scroller = state.scroller
+        if scroller is None:
+            return
+        vadj = scroller.get_vadjustment()
+        if vadj is None:
+            return
+        lower = vadj.get_lower()
+        upper = vadj.get_upper()
+        page_size = vadj.get_page_size()
+        vadj.set_value(max(lower, upper - page_size))
 
     def _stop_ai_stream_if_running(self) -> None:
         state = self._current_view_state()
@@ -6335,6 +6403,8 @@ class Focus(Adw.Application):
         model_id: str,
         api_url: str,
         api_key: str | None = None,
+        request_timeout_seconds: int = DEFAULT_STREAM_TIMEOUT_SECONDS,
+        include_reasoning: bool = False,
     ) -> None:
         headers = {
             "Content-Type": "application/json",
@@ -6354,9 +6424,17 @@ class Focus(Adw.Application):
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
 
+        timeout_seconds = _coerce_timeout_seconds(
+            request_timeout_seconds,
+            DEFAULT_STREAM_TIMEOUT_SECONDS,
+        )
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                for chunk in self._iter_sse_chunks(resp, cancel_event):
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                for chunk in self._iter_sse_chunks(
+                    resp,
+                    cancel_event,
+                    include_reasoning=include_reasoning,
+                ):
                     if cancel_event and cancel_event.is_set():
                         GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
                         return
@@ -6373,13 +6451,22 @@ class Focus(Adw.Application):
                 target_view,
             )
         except Exception as exc:  # noqa: BLE001
-            GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
+            message = str(exc)
+            if "timed out" in message.lower():
+                message = (
+                    f"Request timed out after {timeout_seconds}s. "
+                    "Increase Deep Ask timeout in Settings for reasoning models."
+                )
+            GLib.idle_add(self._on_ai_stream_error, message, generation, target_view)
 
     def _iter_sse_chunks(
         self,
         resp: urllib.response.addinfourl,  # type: ignore[type-arg]
         cancel_event: threading.Event | None,
+        *,
+        include_reasoning: bool = False,
     ) -> Iterable[str]:
+        in_reasoning_trace = False
         while True:
             if cancel_event and cancel_event.is_set():
                 break
@@ -6398,32 +6485,56 @@ class Focus(Adw.Application):
                 payload = json.loads(data)
             except json.JSONDecodeError:
                 continue
-            delta_text = self._extract_delta_text(payload)
-            if delta_text:
-                yield delta_text
+            answer_text, reasoning_text = self._extract_stream_text_parts(payload)
+            if include_reasoning and reasoning_text:
+                if not in_reasoning_trace:
+                    in_reasoning_trace = True
+                    yield "\n[Reasoning Trace]\n"
+                yield reasoning_text
+            if answer_text:
+                if include_reasoning and in_reasoning_trace:
+                    in_reasoning_trace = False
+                    yield "\n[Answer]\n"
+                yield answer_text
 
-    def _extract_delta_text(self, payload: Any) -> str:
+    def _extract_stream_text_parts(self, payload: Any) -> tuple[str, str]:
+        answer_text = ""
+        reasoning_text = ""
         choices = payload.get("choices") if isinstance(payload, dict) else None
         if isinstance(choices, list) and choices:
             first = choices[0] or {}
             delta = first.get("delta") or first.get("message") or first
             if isinstance(delta, dict):
-                text = delta.get("content") or delta.get("text")
-                if isinstance(text, list):
-                    merged = []
-                    for item in text:
-                        if isinstance(item, dict):
-                            merged.append(str(item.get("text", "")))
-                        elif isinstance(item, str):
-                            merged.append(item)
-                    return "".join(merged)
-                if isinstance(text, str):
-                    return text
+                answer_text = self._coerce_stream_text(
+                    delta.get("content") if "content" in delta else delta.get("text")
+                )
+                reasoning_text = self._coerce_stream_text(
+                    delta.get("reasoning_content")
+                    if "reasoning_content" in delta
+                    else delta.get("reasoning")
+                    if "reasoning" in delta
+                    else delta.get("thinking")
+                )
         if isinstance(payload, dict):
             fallback = payload.get("data") or payload.get("text")
             if isinstance(fallback, str):
-                return fallback
-        return ""
+                answer_text = answer_text or fallback
+        return answer_text, reasoning_text
+
+    def _coerce_stream_text(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if not isinstance(value, list):
+            return ""
+        merged: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                candidate = item.get("text")
+                if isinstance(candidate, str):
+                    merged.append(candidate)
+            elif isinstance(item, str):
+                merged.append(item)
+        return "".join(merged)
 
     def _on_ai_stream_finished(self, label: str, generation: int, _target_view: str) -> bool:
         state = self._current_view_state()
@@ -6525,6 +6636,8 @@ class RagPromptWidgets:
     isaacus_model_row: Adw.EntryRow
     isaacus_key_row: Adw.EntryRow
     rag_chunk_row: Adw.SpinRow
+    deep_timeout_row: Adw.SpinRow
+    deep_reasoning_row: Adw.SwitchRow
     prompt_buffer: Gtk.TextBuffer
 
 
@@ -6956,6 +7069,31 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_chunk_row.set_digits(0)
         rag_context_group.add(rag_chunk_row)
 
+        deep_behavior_group = Adw.PreferencesGroup(title="Deep Ask Behavior")
+        deep_behavior_group.add_css_class("list-stack")
+        deep_behavior_group.set_hexpand(True)
+        page_box.append(deep_behavior_group)
+
+        deep_timeout_adjustment = Gtk.Adjustment(
+            value=DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
+            lower=60,
+            upper=3600,
+            step_increment=30,
+            page_increment=60,
+        )
+        deep_timeout_row = Adw.SpinRow(
+            title="Deep Ask Timeout (seconds)",
+            adjustment=deep_timeout_adjustment,
+        )
+        deep_timeout_row.set_digits(0)
+        deep_behavior_group.add(deep_timeout_row)
+
+        deep_reasoning_row = Adw.SwitchRow(
+            title="Show Reasoning Trace",
+            subtitle="Display streamed reasoning tokens when the provider emits them.",
+        )
+        deep_behavior_group.add(deep_reasoning_row)
+
         voyage_group = Adw.PreferencesGroup(title="Voyage Embeddings")
         voyage_group.add_css_class("list-stack")
         voyage_group.set_hexpand(True)
@@ -7010,6 +7148,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             isaacus_model_row=isaacus_model_row,
             isaacus_key_row=isaacus_key_row,
             rag_chunk_row=rag_chunk_row,
+            deep_timeout_row=deep_timeout_row,
+            deep_reasoning_row=deep_reasoning_row,
             prompt_buffer=buffer,
         )
         return page
@@ -7068,6 +7208,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.isaacus_model_row.set_text(settings.isaacus_model)
             rag_widgets.isaacus_key_row.set_text(settings.isaacus_api_key)
             rag_widgets.rag_chunk_row.set_value(float(settings.rag_chunk_count))
+            rag_widgets.deep_timeout_row.set_value(float(settings.deep_ask_timeout_seconds))
+            rag_widgets.deep_reasoning_row.set_active(bool(settings.deep_ask_show_reasoning))
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
         if self._ai_font_size_row:
@@ -7132,6 +7274,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             int(round(rag_widgets.rag_chunk_row.get_value())),
             DEFAULT_RAG_CHUNK_COUNT,
         )
+        deep_ask_timeout_seconds = _coerce_timeout_seconds(
+            int(round(rag_widgets.deep_timeout_row.get_value())),
+            DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
+        )
+        deep_ask_show_reasoning = bool(rag_widgets.deep_reasoning_row.get_active())
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
@@ -7185,6 +7332,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_deep_api_url=rag_deep_api_url or rag_api_url or page_api_url,
             rag_deep_api_key=rag_deep_api_key or rag_api_key or page_api_key,
             rag_chunk_count=rag_chunk_count,
+            deep_ask_timeout_seconds=deep_ask_timeout_seconds,
+            deep_ask_show_reasoning=deep_ask_show_reasoning,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
