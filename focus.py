@@ -89,9 +89,11 @@ CONFIG_KEY_RAG_API_URL = "rag_api_url"
 CONFIG_KEY_RAG_API_KEY = "rag_api_key"
 CONFIG_KEY_RAG_DEEP_API_URL = "rag_deep_api_url"
 CONFIG_KEY_RAG_DEEP_API_KEY = "rag_deep_api_key"
+CONFIG_KEY_RAG_KIMI_REASONING = "rag_kimi_reasoning"
+CONFIG_KEY_RAG_DEEPSEEK_REASONING = "rag_deepseek_reasoning"
+CONFIG_KEY_RAG_DEEP_KIMI_REASONING = "rag_deep_kimi_reasoning"
+CONFIG_KEY_RAG_DEEP_DEEPSEEK_REASONING = "rag_deep_deepseek_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
-CONFIG_KEY_DEEP_ASK_TIMEOUT_SECONDS = "deep_ask_timeout_seconds"
-CONFIG_KEY_DEEP_ASK_SHOW_REASONING = "deep_ask_show_reasoning"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
@@ -113,8 +115,8 @@ DEFAULT_RAG_PROMPT = (
 DEFAULT_RAG_CHUNK_COUNT = 8
 DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
 DEFAULT_RAG_ISAACUS_MODEL = "kanon-2-embedder"
-DEFAULT_DEEP_ASK_TIMEOUT_SECONDS = 900
-DEFAULT_SHOW_DEEP_ASK_REASONING = False
+DEFAULT_KIMI_REASONING_ENABLED = False
+DEFAULT_DEEPSEEK_REASONING_ENABLED = True
 RAG_PAYLOAD_CASE_DETAILS_HEADING = "# Case Context"
 RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING = "# Retrieved Record Excerpts"
 RAG_PAYLOAD_QUESTION_HEADING = "# Question"
@@ -166,14 +168,21 @@ AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
 AI_VIEW_FILE = "show-file"
-DEFAULT_STREAM_TIMEOUT_SECONDS = 300
-
-
 def _normalize_rag_provider(value: str) -> str:
     provider = (value or "").strip().lower()
     if provider not in {RAG_PROVIDER_VOYAGE, RAG_PROVIDER_ISAACUS}:
         return DEFAULT_RAG_PROVIDER
     return provider
+
+
+def _model_looks_kimi(model_id: str) -> bool:
+    normalized = (model_id or "").strip().lower()
+    return "kimi" in normalized or "moonshot" in normalized
+
+
+def _model_looks_deepseek(model_id: str) -> bool:
+    normalized = (model_id or "").strip().lower()
+    return "deepseek" in normalized
 
 
 def _extract_embedding_vectors(response: Any) -> list[list[float]]:
@@ -508,14 +517,6 @@ def _coerce_rag_chunk_count(value: Any, default: int) -> int:
     return min(50, max(1, count))
 
 
-def _coerce_timeout_seconds(value: Any, default: int) -> int:
-    try:
-        seconds = int(value)
-    except (TypeError, ValueError):
-        return default
-    return min(3600, max(60, seconds))
-
-
 def _coerce_bool_config(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -570,9 +571,11 @@ class AiSettings:
     rag_api_key: str
     rag_deep_api_url: str
     rag_deep_api_key: str
+    rag_kimi_reasoning: bool
+    rag_deepseek_reasoning: bool
+    rag_deep_kimi_reasoning: bool
+    rag_deep_deepseek_reasoning: bool
     rag_chunk_count: int
-    deep_ask_timeout_seconds: int
-    deep_ask_show_reasoning: bool
     highlight_phrases: list[str]
     grep_highlight_color: str
     phrase_highlight_color: str
@@ -604,6 +607,11 @@ class AiSettings:
             self.rag_deep_api_url.strip() or rag_api_url,
             self.rag_deep_api_key.strip() or rag_api_key,
         )
+
+    def rag_reasoning_settings(self, *, deep: bool) -> tuple[bool, bool]:
+        if deep:
+            return (self.rag_deep_kimi_reasoning, self.rag_deep_deepseek_reasoning)
+        return (self.rag_kimi_reasoning, self.rag_deepseek_reasoning)
 
     def is_configured(self) -> bool:
         page_api_url, page_model_id, page_api_key = self.page_credentials()
@@ -734,13 +742,21 @@ def load_ai_settings() -> AiSettings:
         config.get(CONFIG_KEY_RAG_CHUNK_COUNT),
         DEFAULT_RAG_CHUNK_COUNT,
     )
-    deep_ask_timeout_seconds = _coerce_timeout_seconds(
-        config.get(CONFIG_KEY_DEEP_ASK_TIMEOUT_SECONDS),
-        DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
+    rag_kimi_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_RAG_KIMI_REASONING),
+        DEFAULT_KIMI_REASONING_ENABLED,
     )
-    deep_ask_show_reasoning = _coerce_bool_config(
-        config.get(CONFIG_KEY_DEEP_ASK_SHOW_REASONING),
-        DEFAULT_SHOW_DEEP_ASK_REASONING,
+    rag_deepseek_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_RAG_DEEPSEEK_REASONING),
+        DEFAULT_DEEPSEEK_REASONING_ENABLED,
+    )
+    rag_deep_kimi_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_RAG_DEEP_KIMI_REASONING),
+        DEFAULT_KIMI_REASONING_ENABLED,
+    )
+    rag_deep_deepseek_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_RAG_DEEP_DEEPSEEK_REASONING),
+        DEFAULT_DEEPSEEK_REASONING_ENABLED,
     )
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
     grep_highlight_color = _coerce_color_value(
@@ -775,9 +791,11 @@ def load_ai_settings() -> AiSettings:
         rag_api_key=rag_api_key,
         rag_deep_api_url=rag_deep_api_url,
         rag_deep_api_key=rag_deep_api_key,
+        rag_kimi_reasoning=rag_kimi_reasoning,
+        rag_deepseek_reasoning=rag_deepseek_reasoning,
+        rag_deep_kimi_reasoning=rag_deep_kimi_reasoning,
+        rag_deep_deepseek_reasoning=rag_deep_deepseek_reasoning,
         rag_chunk_count=rag_chunk_count,
-        deep_ask_timeout_seconds=deep_ask_timeout_seconds,
-        deep_ask_show_reasoning=deep_ask_show_reasoning,
         highlight_phrases=highlight_phrases,
         grep_highlight_color=grep_highlight_color,
         phrase_highlight_color=phrase_highlight_color,
@@ -812,15 +830,14 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_RAG_API_KEY] = settings.rag_api_key
     config[CONFIG_KEY_RAG_DEEP_API_URL] = settings.rag_deep_api_url
     config[CONFIG_KEY_RAG_DEEP_API_KEY] = settings.rag_deep_api_key
+    config[CONFIG_KEY_RAG_KIMI_REASONING] = bool(settings.rag_kimi_reasoning)
+    config[CONFIG_KEY_RAG_DEEPSEEK_REASONING] = bool(settings.rag_deepseek_reasoning)
+    config[CONFIG_KEY_RAG_DEEP_KIMI_REASONING] = bool(settings.rag_deep_kimi_reasoning)
+    config[CONFIG_KEY_RAG_DEEP_DEEPSEEK_REASONING] = bool(settings.rag_deep_deepseek_reasoning)
     config[CONFIG_KEY_RAG_CHUNK_COUNT] = _coerce_rag_chunk_count(
         settings.rag_chunk_count,
         DEFAULT_RAG_CHUNK_COUNT,
     )
-    config[CONFIG_KEY_DEEP_ASK_TIMEOUT_SECONDS] = _coerce_timeout_seconds(
-        settings.deep_ask_timeout_seconds,
-        DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
-    )
-    config[CONFIG_KEY_DEEP_ASK_SHOW_REASONING] = bool(settings.deep_ask_show_reasoning)
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
         settings.grep_highlight_color,
@@ -5910,6 +5927,7 @@ class Focus(Adw.Application):
                 self._transient_toast("Set the RAG answer model in Settings.")
                 self._ensure_ai_panel_visible()
                 return
+        kimi_reasoning, deepseek_reasoning = settings.rag_reasoning_settings(deep=deep)
         provider = _normalize_rag_provider(settings.rag_provider)
         if provider == RAG_PROVIDER_ISAACUS:
             if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
@@ -6010,8 +6028,13 @@ class Focus(Adw.Application):
             }
             if deep:
                 audit_record["deep_ask"] = {
-                    "timeout_seconds": settings.deep_ask_timeout_seconds,
-                    "show_reasoning_trace": settings.deep_ask_show_reasoning,
+                    "kimi_reasoning": kimi_reasoning,
+                    "deepseek_reasoning": deepseek_reasoning,
+                }
+            else:
+                audit_record["ask"] = {
+                    "kimi_reasoning": kimi_reasoning,
+                    "deepseek_reasoning": deepseek_reasoning,
                 }
             audit_path, audit_error = self._save_rag_audit_record(audit_record)
             if audit_path is not None:
@@ -6038,10 +6061,9 @@ class Focus(Adw.Application):
                 model_id=request_model_id,
                 api_url=rag_api_url,
                 api_key=rag_api_key,
-                request_timeout_seconds=(
-                    settings.deep_ask_timeout_seconds if deep else DEFAULT_STREAM_TIMEOUT_SECONDS
-                ),
-                include_reasoning=deep and settings.deep_ask_show_reasoning,
+                kimi_reasoning=kimi_reasoning,
+                deepseek_reasoning=deepseek_reasoning,
+                include_reasoning=False,
             )
 
         state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
@@ -6431,7 +6453,8 @@ class Focus(Adw.Application):
         model_id: str,
         api_url: str,
         api_key: str | None = None,
-        request_timeout_seconds: int = DEFAULT_STREAM_TIMEOUT_SECONDS,
+        kimi_reasoning: bool = False,
+        deepseek_reasoning: bool = False,
         include_reasoning: bool = False,
     ) -> None:
         headers = {
@@ -6448,16 +6471,16 @@ class Focus(Adw.Application):
                 {"role": "user", "content": content},
             ],
         }
+        if _model_looks_deepseek(model_id):
+            body["thinking"] = {"type": "enabled" if deepseek_reasoning else "disabled"}
+        elif _model_looks_kimi(model_id):
+            if not kimi_reasoning:
+                body["thinking"] = {"type": "disabled"}
 
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
-
-        timeout_seconds = _coerce_timeout_seconds(
-            request_timeout_seconds,
-            DEFAULT_STREAM_TIMEOUT_SECONDS,
-        )
         try:
-            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            with urllib.request.urlopen(req) as resp:
                 for chunk in self._iter_sse_chunks(
                     resp,
                     cancel_event,
@@ -6479,13 +6502,7 @@ class Focus(Adw.Application):
                 target_view,
             )
         except Exception as exc:  # noqa: BLE001
-            message = str(exc)
-            if "timed out" in message.lower():
-                message = (
-                    f"Request timed out after {timeout_seconds}s. "
-                    "Increase Deep Ask timeout in Settings for reasoning models."
-                )
-            GLib.idle_add(self._on_ai_stream_error, message, generation, target_view)
+            GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
 
     def _iter_sse_chunks(
         self,
@@ -6657,6 +6674,10 @@ class RagPromptWidgets:
     deep_api_url_row: Adw.EntryRow
     deep_model_row: Adw.EntryRow
     deep_api_key_row: Adw.EntryRow
+    rag_kimi_reasoning_row: Adw.SwitchRow
+    rag_deepseek_reasoning_row: Adw.SwitchRow
+    deep_kimi_reasoning_row: Adw.SwitchRow
+    deep_deepseek_reasoning_row: Adw.SwitchRow
     provider_row: Adw.ComboRow
     provider_values: list[str]
     voyage_model_row: Adw.EntryRow
@@ -6664,8 +6685,6 @@ class RagPromptWidgets:
     isaacus_model_row: Adw.EntryRow
     isaacus_key_row: Adw.EntryRow
     rag_chunk_row: Adw.SpinRow
-    deep_timeout_row: Adw.SpinRow
-    deep_reasoning_row: Adw.SwitchRow
     prompt_buffer: Gtk.TextBuffer
 
 
@@ -7051,6 +7070,18 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_model_row.set_hexpand(True)
         rag_group.add(rag_model_row)
 
+        rag_kimi_reasoning_row = Adw.SwitchRow(
+            title="Kimi Reasoning",
+            subtitle="Enable reasoning mode for Kimi models.",
+        )
+        rag_group.add(rag_kimi_reasoning_row)
+
+        rag_deepseek_reasoning_row = Adw.SwitchRow(
+            title="Deepseek Reasoning",
+            subtitle="Enable thinking mode for Deepseek models.",
+        )
+        rag_group.add(rag_deepseek_reasoning_row)
+
         deep_rag_group = Adw.PreferencesGroup(title="Deep Ask Credentials")
         deep_rag_group.add_css_class("list-stack")
         deep_rag_group.set_hexpand(True)
@@ -7066,6 +7097,18 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         deep_rag_model_row = Adw.EntryRow(title="Deep Ask Model")
         deep_rag_model_row.set_hexpand(True)
         deep_rag_group.add(deep_rag_model_row)
+
+        deep_kimi_reasoning_row = Adw.SwitchRow(
+            title="Kimi Reasoning",
+            subtitle="Enable reasoning mode for Kimi models.",
+        )
+        deep_rag_group.add(deep_kimi_reasoning_row)
+
+        deep_deepseek_reasoning_row = Adw.SwitchRow(
+            title="Deepseek Reasoning",
+            subtitle="Enable thinking mode for Deepseek models.",
+        )
+        deep_rag_group.add(deep_deepseek_reasoning_row)
 
         provider_group = Adw.PreferencesGroup(title="Embedding Provider")
         provider_group.add_css_class("list-stack")
@@ -7096,31 +7139,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         rag_chunk_row.set_digits(0)
         rag_context_group.add(rag_chunk_row)
-
-        deep_behavior_group = Adw.PreferencesGroup(title="Deep Ask Behavior")
-        deep_behavior_group.add_css_class("list-stack")
-        deep_behavior_group.set_hexpand(True)
-        page_box.append(deep_behavior_group)
-
-        deep_timeout_adjustment = Gtk.Adjustment(
-            value=DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
-            lower=60,
-            upper=3600,
-            step_increment=30,
-            page_increment=60,
-        )
-        deep_timeout_row = Adw.SpinRow(
-            title="Deep Ask Timeout (seconds)",
-            adjustment=deep_timeout_adjustment,
-        )
-        deep_timeout_row.set_digits(0)
-        deep_behavior_group.add(deep_timeout_row)
-
-        deep_reasoning_row = Adw.SwitchRow(
-            title="Show Reasoning Trace",
-            subtitle="Display streamed reasoning tokens when the provider emits them.",
-        )
-        deep_behavior_group.add(deep_reasoning_row)
 
         voyage_group = Adw.PreferencesGroup(title="Voyage Embeddings")
         voyage_group.add_css_class("list-stack")
@@ -7169,6 +7187,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             deep_api_url_row=deep_rag_api_url_row,
             deep_model_row=deep_rag_model_row,
             deep_api_key_row=deep_rag_api_key_row,
+            rag_kimi_reasoning_row=rag_kimi_reasoning_row,
+            rag_deepseek_reasoning_row=rag_deepseek_reasoning_row,
+            deep_kimi_reasoning_row=deep_kimi_reasoning_row,
+            deep_deepseek_reasoning_row=deep_deepseek_reasoning_row,
             provider_row=provider_row,
             provider_values=provider_values,
             voyage_model_row=voyage_model_row,
@@ -7176,8 +7198,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             isaacus_model_row=isaacus_model_row,
             isaacus_key_row=isaacus_key_row,
             rag_chunk_row=rag_chunk_row,
-            deep_timeout_row=deep_timeout_row,
-            deep_reasoning_row=deep_reasoning_row,
             prompt_buffer=buffer,
         )
         return page
@@ -7236,8 +7256,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.isaacus_model_row.set_text(settings.isaacus_model)
             rag_widgets.isaacus_key_row.set_text(settings.isaacus_api_key)
             rag_widgets.rag_chunk_row.set_value(float(settings.rag_chunk_count))
-            rag_widgets.deep_timeout_row.set_value(float(settings.deep_ask_timeout_seconds))
-            rag_widgets.deep_reasoning_row.set_active(bool(settings.deep_ask_show_reasoning))
+            rag_widgets.rag_kimi_reasoning_row.set_active(bool(settings.rag_kimi_reasoning))
+            rag_widgets.rag_deepseek_reasoning_row.set_active(bool(settings.rag_deepseek_reasoning))
+            rag_widgets.deep_kimi_reasoning_row.set_active(bool(settings.rag_deep_kimi_reasoning))
+            rag_widgets.deep_deepseek_reasoning_row.set_active(bool(settings.rag_deep_deepseek_reasoning))
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
         if self._ai_font_size_row:
@@ -7302,11 +7324,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             int(round(rag_widgets.rag_chunk_row.get_value())),
             DEFAULT_RAG_CHUNK_COUNT,
         )
-        deep_ask_timeout_seconds = _coerce_timeout_seconds(
-            int(round(rag_widgets.deep_timeout_row.get_value())),
-            DEFAULT_DEEP_ASK_TIMEOUT_SECONDS,
-        )
-        deep_ask_show_reasoning = bool(rag_widgets.deep_reasoning_row.get_active())
+        rag_kimi_reasoning = bool(rag_widgets.rag_kimi_reasoning_row.get_active())
+        rag_deepseek_reasoning = bool(rag_widgets.rag_deepseek_reasoning_row.get_active())
+        rag_deep_kimi_reasoning = bool(rag_widgets.deep_kimi_reasoning_row.get_active())
+        rag_deep_deepseek_reasoning = bool(rag_widgets.deep_deepseek_reasoning_row.get_active())
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
@@ -7359,9 +7380,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_api_key=rag_api_key or page_api_key,
             rag_deep_api_url=rag_deep_api_url or rag_api_url or page_api_url,
             rag_deep_api_key=rag_deep_api_key or rag_api_key or page_api_key,
+            rag_kimi_reasoning=rag_kimi_reasoning,
+            rag_deepseek_reasoning=rag_deepseek_reasoning,
+            rag_deep_kimi_reasoning=rag_deep_kimi_reasoning,
+            rag_deep_deepseek_reasoning=rag_deep_deepseek_reasoning,
             rag_chunk_count=rag_chunk_count,
-            deep_ask_timeout_seconds=deep_ask_timeout_seconds,
-            deep_ask_show_reasoning=deep_ask_show_reasoning,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
