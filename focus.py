@@ -96,6 +96,7 @@ CONFIG_KEY_RAG_DEEP_DEEPSEEK_REASONING = "rag_deep_deepseek_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
+CONFIG_KEY_TABLE_FONT_SIZE_PT = "table_font_size_pt"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
 CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR = "phrase_highlight_color"
@@ -143,6 +144,9 @@ MAX_INTERWORD_NUMERIC_DIGITS = 8
 DEFAULT_TEXT_COLOR = "alpha(@window_fg_color, 0.68)"
 PAGE_TEXT_BG_COLOR = "#ffffff"
 PAGE_TEXT_FG_COLOR = "#000000"
+DEFAULT_PAGE_FONT_FAMILY_CSS = (
+    '"Noto Serif", "Liberation Serif", "DejaVu Serif", serif'
+)
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
@@ -531,18 +535,20 @@ def _coerce_bool_config(value: Any, default: bool) -> bool:
     return default
 
 
-def load_font_preferences() -> tuple[int, int]:
+def load_font_preferences() -> tuple[int, int, int]:
     config = _read_config()
     base = _coerce_font_size(config.get(CONFIG_KEY_FONT_SIZE_PT), DEFAULT_FONT_SIZE_PT)
     ai_default = max(base, DEFAULT_AI_FONT_SIZE_PT)
     ai = _coerce_font_size(config.get(CONFIG_KEY_AI_FONT_SIZE_PT), ai_default)
-    return base, ai
+    table = _coerce_font_size(config.get(CONFIG_KEY_TABLE_FONT_SIZE_PT), base)
+    return base, ai, table
 
 
-def save_font_preferences(font_size_pt: int, ai_font_size_pt: int) -> None:
+def save_font_preferences(font_size_pt: int, ai_font_size_pt: int, table_font_size_pt: int) -> None:
     config = _read_config()
     config[CONFIG_KEY_FONT_SIZE_PT] = int(font_size_pt)
     config[CONFIG_KEY_AI_FONT_SIZE_PT] = int(ai_font_size_pt)
+    config[CONFIG_KEY_TABLE_FONT_SIZE_PT] = int(table_font_size_pt)
     _write_config(config)
 
 
@@ -1485,7 +1491,7 @@ class Focus(Adw.Application):
             self.input_dir = load_input_dir_from_config()
         self._record_layout = _resolve_record_layout(self.input_dir)
         self._case_name = _read_case_name(self._record_layout.root)
-        self._font_size_pt, self._ai_font_size_pt = load_font_preferences()
+        self._font_size_pt, self._ai_font_size_pt, self._table_font_size_pt = load_font_preferences()
 
         self.pages: list[int] = []
         self.page_to_path: dict[int, Path] = {}
@@ -1830,7 +1836,7 @@ class Focus(Adw.Application):
         # Place headerbar in main window
         toolbar.add_top_bar(header)
 
-        self.textview = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD)
+        self.textview = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.WORD)
         self.textview.set_hexpand(True)
         self.textview.set_vexpand(True)
         self.textview.set_name("page-text")
@@ -2588,17 +2594,42 @@ class Focus(Adw.Application):
         self._append_continuous_divider_style(buf, text, 0)
 
     def _apply_rounded_grid_table_no_wrap(self, buf: Gtk.TextBuffer, text: str) -> None:
+        self._append_rounded_grid_table_style(buf, text, 0)
+
+    def _apply_table_font_size_to_current_buffer(self) -> None:
+        if not self.textview:
+            return
+        buf = self.textview.get_buffer()
         table = buf.get_tag_table()
         if table is None:
             return
         tag = table.lookup("rounded-grid-nowrap")
         if tag is None:
-            tag = buf.create_tag("rounded-grid-nowrap", wrap_mode=Gtk.WrapMode.NONE)
+            return
+        tag.set_property("size-points", float(self._table_font_size_pt))
+
+    def _append_rounded_grid_table_style(
+        self,
+        buf: Gtk.TextBuffer,
+        text: str,
+        start_offset: int,
+    ) -> None:
+        table = buf.get_tag_table()
+        if table is None:
+            return
+        tag = table.lookup("rounded-grid-nowrap")
+        if tag is None:
+            tag = buf.create_tag(
+                "rounded-grid-nowrap",
+                wrap_mode=Gtk.WrapMode.NONE,
+                family="monospace",
+            )
+        tag.set_property("size-points", float(self._table_font_size_pt))
         for start, end in _iter_rounded_grid_table_blocks(text):
             if end <= start:
                 continue
-            start_iter = buf.get_iter_at_offset(start)
-            end_iter = buf.get_iter_at_offset(end)
+            start_iter = buf.get_iter_at_offset(start_offset + start)
+            end_iter = buf.get_iter_at_offset(start_offset + end)
             buf.apply_tag(tag, start_iter, end_iter)
 
     def _append_continuous_divider_style(
@@ -3051,6 +3082,7 @@ class Focus(Adw.Application):
             self._apply_markdown_spans(buf, markdown_spans, chunk_offset)
             self._append_page_links(buf, rendered_chunk, chunk_offset)
             self._append_continuous_divider_style(buf, rendered_chunk, chunk_offset)
+            self._append_rounded_grid_table_style(buf, rendered_chunk, chunk_offset)
         finally:
             self._continuous_loading = False
 
@@ -3220,6 +3252,7 @@ class Focus(Adw.Application):
         css = (
             "#page-text { "
             f"color: {PAGE_TEXT_FG_COLOR}; font-size: {self._font_size_pt}pt; "
+            f"font-family: {DEFAULT_PAGE_FONT_FAMILY_CSS}; "
             "}"
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
@@ -4500,23 +4533,44 @@ class Focus(Adw.Application):
                 return SUMMARY_SOURCE_MINUTES
         return SUMMARY_SOURCE_HEARING
 
-    def _set_font_preferences(self, *, font_size_pt: int | None = None, ai_font_size_pt: int | None = None) -> None:
+    def _set_font_preferences(
+        self,
+        *,
+        font_size_pt: int | None = None,
+        ai_font_size_pt: int | None = None,
+        table_font_size_pt: int | None = None,
+    ) -> None:
         base = self._font_size_pt
         ai = self._ai_font_size_pt
+        table = self._table_font_size_pt
         if font_size_pt is not None:
             base = _coerce_font_size(font_size_pt, DEFAULT_FONT_SIZE_PT)
         if ai_font_size_pt is not None:
             ai = _coerce_font_size(ai_font_size_pt, max(base, DEFAULT_AI_FONT_SIZE_PT))
+        if table_font_size_pt is not None:
+            table = _coerce_font_size(table_font_size_pt, base)
         self._font_size_pt = base
         self._ai_font_size_pt = ai
-        save_font_preferences(base, ai)
+        self._table_font_size_pt = table
+        save_font_preferences(base, ai, table)
         self._apply_text_color(self._current_text_color)
+        self._apply_table_font_size_to_current_buffer()
 
-    def get_font_preferences(self) -> tuple[int, int]:
-        return self._font_size_pt, self._ai_font_size_pt
+    def get_font_preferences(self) -> tuple[int, int, int]:
+        return self._font_size_pt, self._ai_font_size_pt, self._table_font_size_pt
 
-    def update_font_sizes(self, *, font_size_pt: int | None = None, ai_font_size_pt: int | None = None) -> None:
-        self._set_font_preferences(font_size_pt=font_size_pt, ai_font_size_pt=ai_font_size_pt)
+    def update_font_sizes(
+        self,
+        *,
+        font_size_pt: int | None = None,
+        ai_font_size_pt: int | None = None,
+        table_font_size_pt: int | None = None,
+    ) -> None:
+        self._set_font_preferences(
+            font_size_pt=font_size_pt,
+            ai_font_size_pt=ai_font_size_pt,
+            table_font_size_pt=table_font_size_pt,
+        )
 
     def update_ai_font_size(self, ai_font_size_pt: int) -> None:
         self.update_font_sizes(ai_font_size_pt=ai_font_size_pt)
@@ -6695,6 +6749,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
         self._status_label: Gtk.Label | None = None
         self._record_font_size_row: Adw.SpinRow | None = None
+        self._table_font_size_row: Adw.SpinRow | None = None
         self._ai_font_size_row: Adw.SpinRow | None = None
         self._grep_highlight_color_control: Gtk.Widget | None = None
         self._phrase_highlight_color_control: Gtk.Widget | None = None
@@ -6755,6 +6810,20 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         self._record_font_size_row.set_digits(0)
         display_group.add(self._record_font_size_row)
+
+        table_font_adjustment = Gtk.Adjustment(
+            value=self.app.get_font_preferences()[2],
+            lower=8,
+            upper=48,
+            step_increment=1,
+            page_increment=2,
+        )
+        self._table_font_size_row = Adw.SpinRow(
+            title="Table Font Size (pt)",
+            adjustment=table_font_adjustment,
+        )
+        self._table_font_size_row.set_digits(0)
+        display_group.add(self._table_font_size_row)
 
         highlight_group = Adw.PreferencesGroup(title="Highlights")
         highlight_group.add_css_class("list-stack")
@@ -7263,11 +7332,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
         if self._ai_font_size_row:
-            _, ai_font = self.app.get_font_preferences()
+            _, ai_font, _ = self.app.get_font_preferences()
             self._ai_font_size_row.set_value(float(ai_font))
         if self._record_font_size_row:
-            base_font, _ = self.app.get_font_preferences()
+            base_font, _, _ = self.app.get_font_preferences()
             self._record_font_size_row.set_value(float(base_font))
+        if self._table_font_size_row:
+            _, _, table_font = self.app.get_font_preferences()
+            self._table_font_size_row.set_value(float(table_font))
         if self._highlight_phrases_buffer is not None:
             self._highlight_phrases_buffer.set_text(
                 _format_highlight_phrases(settings.highlight_phrases)
@@ -7356,6 +7428,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             if self._ai_font_size_row
             else self.app.get_font_preferences()[1]
         )
+        table_font_size = (
+            int(round(self._table_font_size_row.get_value()))
+            if self._table_font_size_row
+            else self.app.get_font_preferences()[2]
+        )
         settings = AiSettings(
             api_url=page_api_url,
             model_id=page_model_id,
@@ -7390,7 +7467,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             phrase_highlight_color=phrase_highlight_color,
         )
         save_ai_settings(settings)
-        self.app.update_font_sizes(font_size_pt=record_font_size, ai_font_size_pt=ai_font_size)
+        self.app.update_font_sizes(
+            font_size_pt=record_font_size,
+            ai_font_size_pt=ai_font_size,
+            table_font_size_pt=table_font_size,
+        )
         self.app.on_ai_settings_saved(settings)
         if settings.is_configured() and settings.is_rag_ready():
             self._set_status("Saved. Summaries and RAG questions are enabled.")
