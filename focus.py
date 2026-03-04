@@ -97,6 +97,7 @@ CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_TABLE_FONT_SIZE_PT = "table_font_size_pt"
+CONFIG_KEY_RECORD_FONT_FAMILY = "record_font_family"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
 CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR = "phrase_highlight_color"
@@ -144,9 +145,14 @@ MAX_INTERWORD_NUMERIC_DIGITS = 8
 DEFAULT_TEXT_COLOR = "alpha(@window_fg_color, 0.68)"
 PAGE_TEXT_BG_COLOR = "#ffffff"
 PAGE_TEXT_FG_COLOR = "#000000"
-DEFAULT_PAGE_FONT_FAMILY_CSS = (
-    '"Noto Serif", "Liberation Serif", "DejaVu Serif", serif'
+DEFAULT_PAGE_FONT_FAMILY_CSS = '"Noto Serif", "Liberation Serif", "DejaVu Serif", serif'
+RECORD_FONT_FAMILY_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Noto Serif", '"Noto Serif", "Liberation Serif", "DejaVu Serif", serif'),
+    ("Georgia", 'Georgia, "Times New Roman", "Liberation Serif", serif'),
+    ("Merriweather", '"Merriweather", "Noto Serif", "Liberation Serif", serif'),
+    ("Source Sans 3", '"Source Sans 3", "Noto Sans", "Liberation Sans", sans-serif'),
 )
+DEFAULT_RECORD_FONT_FAMILY_NAME = RECORD_FONT_FAMILY_OPTIONS[0][0]
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
@@ -535,6 +541,27 @@ def _coerce_bool_config(value: Any, default: bool) -> bool:
     return default
 
 
+def _normalize_record_font_family_name(value: Any) -> str:
+    normalized = str(value or "").strip()
+    for name, _css in RECORD_FONT_FAMILY_OPTIONS:
+        if normalized == name:
+            return name
+    return DEFAULT_RECORD_FONT_FAMILY_NAME
+
+
+def _record_font_css_for_name(font_family_name: str) -> str:
+    normalized = _normalize_record_font_family_name(font_family_name)
+    for name, css in RECORD_FONT_FAMILY_OPTIONS:
+        if normalized == name:
+            return css
+    return DEFAULT_PAGE_FONT_FAMILY_CSS
+
+
+def load_record_font_family_name() -> str:
+    config = _read_config()
+    return _normalize_record_font_family_name(config.get(CONFIG_KEY_RECORD_FONT_FAMILY))
+
+
 def load_font_preferences() -> tuple[int, int, int]:
     config = _read_config()
     base = _coerce_font_size(config.get(CONFIG_KEY_FONT_SIZE_PT), DEFAULT_FONT_SIZE_PT)
@@ -544,11 +571,20 @@ def load_font_preferences() -> tuple[int, int, int]:
     return base, ai, table
 
 
-def save_font_preferences(font_size_pt: int, ai_font_size_pt: int, table_font_size_pt: int) -> None:
+def save_font_preferences(
+    font_size_pt: int,
+    ai_font_size_pt: int,
+    table_font_size_pt: int,
+    record_font_family_name: str | None = None,
+) -> None:
     config = _read_config()
     config[CONFIG_KEY_FONT_SIZE_PT] = int(font_size_pt)
     config[CONFIG_KEY_AI_FONT_SIZE_PT] = int(ai_font_size_pt)
     config[CONFIG_KEY_TABLE_FONT_SIZE_PT] = int(table_font_size_pt)
+    if record_font_family_name is not None:
+        config[CONFIG_KEY_RECORD_FONT_FAMILY] = _normalize_record_font_family_name(
+            record_font_family_name
+        )
     _write_config(config)
 
 
@@ -1492,6 +1528,8 @@ class Focus(Adw.Application):
         self._record_layout = _resolve_record_layout(self.input_dir)
         self._case_name = _read_case_name(self._record_layout.root)
         self._font_size_pt, self._ai_font_size_pt, self._table_font_size_pt = load_font_preferences()
+        self._record_font_family_name = load_record_font_family_name()
+        self._record_font_family_css = _record_font_css_for_name(self._record_font_family_name)
 
         self.pages: list[int] = []
         self.page_to_path: dict[int, Path] = {}
@@ -3252,7 +3290,7 @@ class Focus(Adw.Application):
         css = (
             "#page-text { "
             f"color: {PAGE_TEXT_FG_COLOR}; font-size: {self._font_size_pt}pt; "
-            f"font-family: {DEFAULT_PAGE_FONT_FAMILY_CSS}; "
+            f"font-family: {self._record_font_family_css}; "
             "}"
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
@@ -4539,25 +4577,39 @@ class Focus(Adw.Application):
         font_size_pt: int | None = None,
         ai_font_size_pt: int | None = None,
         table_font_size_pt: int | None = None,
+        record_font_family_name: str | None = None,
     ) -> None:
         base = self._font_size_pt
         ai = self._ai_font_size_pt
         table = self._table_font_size_pt
+        record_font_family = self._record_font_family_name
         if font_size_pt is not None:
             base = _coerce_font_size(font_size_pt, DEFAULT_FONT_SIZE_PT)
         if ai_font_size_pt is not None:
             ai = _coerce_font_size(ai_font_size_pt, max(base, DEFAULT_AI_FONT_SIZE_PT))
         if table_font_size_pt is not None:
             table = _coerce_font_size(table_font_size_pt, base)
+        if record_font_family_name is not None:
+            record_font_family = _normalize_record_font_family_name(record_font_family_name)
         self._font_size_pt = base
         self._ai_font_size_pt = ai
         self._table_font_size_pt = table
-        save_font_preferences(base, ai, table)
+        self._record_font_family_name = record_font_family
+        self._record_font_family_css = _record_font_css_for_name(record_font_family)
+        save_font_preferences(
+            base,
+            ai,
+            table,
+            record_font_family_name=record_font_family,
+        )
         self._apply_text_color(self._current_text_color)
         self._apply_table_font_size_to_current_buffer()
 
     def get_font_preferences(self) -> tuple[int, int, int]:
         return self._font_size_pt, self._ai_font_size_pt, self._table_font_size_pt
+
+    def get_record_font_family_name(self) -> str:
+        return self._record_font_family_name
 
     def update_font_sizes(
         self,
@@ -4565,11 +4617,13 @@ class Focus(Adw.Application):
         font_size_pt: int | None = None,
         ai_font_size_pt: int | None = None,
         table_font_size_pt: int | None = None,
+        record_font_family_name: str | None = None,
     ) -> None:
         self._set_font_preferences(
             font_size_pt=font_size_pt,
             ai_font_size_pt=ai_font_size_pt,
             table_font_size_pt=table_font_size_pt,
+            record_font_family_name=record_font_family_name,
         )
 
     def update_ai_font_size(self, ai_font_size_pt: int) -> None:
@@ -6751,6 +6805,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._record_font_size_row: Adw.SpinRow | None = None
         self._table_font_size_row: Adw.SpinRow | None = None
         self._ai_font_size_row: Adw.SpinRow | None = None
+        self._record_font_family_row: Adw.ComboRow | None = None
+        self._record_font_family_values: list[str] = []
         self._grep_highlight_color_control: Gtk.Widget | None = None
         self._phrase_highlight_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
@@ -6810,6 +6866,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         self._record_font_size_row.set_digits(0)
         display_group.add(self._record_font_size_row)
+
+        self._record_font_family_values = [name for name, _css in RECORD_FONT_FAMILY_OPTIONS]
+        self._record_font_family_row = Adw.ComboRow(title="Record Font (Non-Table)")
+        self._record_font_family_row.set_model(
+            Gtk.StringList.new(self._record_font_family_values)
+        )
+        display_group.add(self._record_font_family_row)
 
         table_font_adjustment = Gtk.Adjustment(
             value=self.app.get_font_preferences()[2],
@@ -7340,6 +7403,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if self._table_font_size_row:
             _, _, table_font = self.app.get_font_preferences()
             self._table_font_size_row.set_value(float(table_font))
+        if self._record_font_family_row:
+            family = self.app.get_record_font_family_name()
+            if family in self._record_font_family_values:
+                self._record_font_family_row.set_selected(
+                    self._record_font_family_values.index(family)
+                )
+            else:
+                self._record_font_family_row.set_selected(0)
         if self._highlight_phrases_buffer is not None:
             self._highlight_phrases_buffer.set_text(
                 _format_highlight_phrases(settings.highlight_phrases)
@@ -7433,6 +7504,15 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             if self._table_font_size_row
             else self.app.get_font_preferences()[2]
         )
+        selected_font_family_index = (
+            int(self._record_font_family_row.get_selected())
+            if self._record_font_family_row
+            else -1
+        )
+        if 0 <= selected_font_family_index < len(self._record_font_family_values):
+            record_font_family_name = self._record_font_family_values[selected_font_family_index]
+        else:
+            record_font_family_name = self.app.get_record_font_family_name()
         settings = AiSettings(
             api_url=page_api_url,
             model_id=page_model_id,
@@ -7471,6 +7551,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             font_size_pt=record_font_size,
             ai_font_size_pt=ai_font_size,
             table_font_size_pt=table_font_size,
+            record_font_family_name=record_font_family_name,
         )
         self.app.on_ai_settings_saved(settings)
         if settings.is_configured() and settings.is_rag_ready():
