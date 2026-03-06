@@ -162,6 +162,10 @@ AI_OUTPUT_MIN_HEIGHT = 140
 AI_OUTPUT_MAX_HEIGHT = 480
 AI_OUTPUT_LINE_HEIGHT = 1.25
 PAGE_LINK_COLOR = "#1a5fb4"
+AI_BLOCKQUOTE_LEFT_MARGIN = 24
+AI_BLOCKQUOTE_RIGHT_MARGIN = 12
+AI_BLOCKQUOTE_INDENT = 0
+AI_BLOCKQUOTE_SPACING_PX = 4
 CONTINUOUS_PAGE_BATCH = 25
 CONTINUOUS_DIVIDER_GLYPH = "─"
 CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
@@ -1376,7 +1380,11 @@ def _render_markdown_text(text: str) -> tuple[str, list[tuple[int, int, str]], l
 
         prefix_len = 0
         heading_level = 0
-        if content.startswith("# "):
+        is_blockquote = False
+        if content.startswith("> "):
+            prefix_len = 2
+            is_blockquote = True
+        elif content.startswith("# "):
             prefix_len = 2
             heading_level = 1
         elif content.startswith("## "):
@@ -1398,6 +1406,8 @@ def _render_markdown_text(text: str) -> tuple[str, list[tuple[int, int, str]], l
             orig_to_clean[content_start + idx] = line_map[idx] + clean_index
         if heading_level and line_out:
             spans.append((clean_index, clean_index + len(line_out), f"heading{heading_level}"))
+        if is_blockquote and line_out:
+            spans.append((clean_index, clean_index + len(line_out), "blockquote"))
         spans.extend(line_spans)
         clean_index += len(line_out)
 
@@ -2693,6 +2703,15 @@ class Focus(Adw.Application):
 
         bold_tag = ensure_tag("md-bold", weight=Pango.Weight.BOLD)
         italic_tag = ensure_tag("md-italic", style=Pango.Style.ITALIC)
+        blockquote_tag = ensure_tag(
+            "md-blockquote",
+            style=Pango.Style.ITALIC,
+            left_margin=AI_BLOCKQUOTE_LEFT_MARGIN,
+            right_margin=AI_BLOCKQUOTE_RIGHT_MARGIN,
+            indent=AI_BLOCKQUOTE_INDENT,
+            pixels_above_lines=AI_BLOCKQUOTE_SPACING_PX,
+            pixels_below_lines=AI_BLOCKQUOTE_SPACING_PX,
+        )
         heading_tags: dict[str, Gtk.TextTag] = {}
         for level, scale in MARKDOWN_HEADING_SCALES.items():
             heading_tags[f"heading{level}"] = ensure_tag(
@@ -2710,6 +2729,8 @@ class Focus(Adw.Application):
                 buf.apply_tag(bold_tag, start_iter, end_iter)
             elif kind == "italic":
                 buf.apply_tag(italic_tag, start_iter, end_iter)
+            elif kind == "blockquote":
+                buf.apply_tag(blockquote_tag, start_iter, end_iter)
             elif kind.startswith("heading"):
                 tag = heading_tags.get(kind)
                 if tag is not None:
