@@ -1879,9 +1879,9 @@ class Focus(Adw.Application):
         self._right_scroll_zone = Gtk.Button()
         self._right_scroll_zone.add_css_class("flat")
         self._right_scroll_zone.add_css_class("focus-right-scroll-zone")
-        self._right_scroll_zone.set_halign(Gtk.Align.FILL)
+        self._right_scroll_zone.set_halign(Gtk.Align.END)
         self._right_scroll_zone.set_valign(Gtk.Align.FILL)
-        self._right_scroll_zone.set_hexpand(True)
+        self._right_scroll_zone.set_hexpand(False)
         self._right_scroll_zone.set_vexpand(True)
         self._right_scroll_zone.set_margin_start(0)
         self._right_scroll_zone.set_margin_top(0)
@@ -1949,9 +1949,9 @@ class Focus(Adw.Application):
         self._image_right_scroll_zone = Gtk.Button()
         self._image_right_scroll_zone.add_css_class("flat")
         self._image_right_scroll_zone.add_css_class("focus-right-scroll-zone")
-        self._image_right_scroll_zone.set_halign(Gtk.Align.FILL)
+        self._image_right_scroll_zone.set_halign(Gtk.Align.END)
         self._image_right_scroll_zone.set_valign(Gtk.Align.FILL)
-        self._image_right_scroll_zone.set_hexpand(True)
+        self._image_right_scroll_zone.set_hexpand(False)
         self._image_right_scroll_zone.set_vexpand(True)
         self._image_right_scroll_zone.set_margin_start(0)
         self._image_right_scroll_zone.set_margin_top(0)
@@ -3723,20 +3723,6 @@ class Focus(Adw.Application):
             self.textview.set_cursor_from_name("pointer")
         else:
             self.textview.set_cursor_from_name(None)
-        width = self.textview.get_width()
-        height = self.textview.get_height()
-        left, right, top, bottom = self._sync_right_scroll_zone_geometry(width, height)
-        within_x = (
-            width > 0
-            and x >= left
-            and x <= right
-        )
-        within_y = (
-            height > 0
-            and y >= top
-            and y <= bottom
-        )
-        self._set_right_scroll_active(within_x and within_y)
 
     def _sync_right_scroll_zone_geometry(
         self, width: int, height: int
@@ -3748,7 +3734,9 @@ class Focus(Adw.Application):
         bottom = max(0.0, float(height))
 
         if self._right_scroll_zone:
-            self._right_scroll_zone.set_margin_start(int(left))
+            zone_width = max(1, int(round(right - left)))
+            self._right_scroll_zone.set_size_request(zone_width, -1)
+            self._right_scroll_zone.set_margin_start(0)
             self._right_scroll_zone.set_margin_top(0)
             self._right_scroll_zone.set_margin_bottom(0)
             self._right_scroll_zone.set_margin_end(0)
@@ -3773,20 +3761,6 @@ class Focus(Adw.Application):
     ) -> None:
         if not self._image_scroller:
             return
-        width = self._image_scroller.get_width()
-        height = self._image_scroller.get_height()
-        left, right, top, bottom = self._sync_image_right_scroll_zone_geometry(width, height)
-        within_x = (
-            width > 0
-            and x >= left
-            and x <= right
-        )
-        within_y = (
-            height > 0
-            and y >= top
-            and y <= bottom
-        )
-        self._set_image_right_scroll_active(within_x and within_y)
 
     def _sync_image_right_scroll_zone_geometry(
         self, width: int, height: int
@@ -3798,7 +3772,9 @@ class Focus(Adw.Application):
         bottom = max(0.0, float(height))
 
         if self._image_right_scroll_zone:
-            self._image_right_scroll_zone.set_margin_start(int(left))
+            zone_width = max(1, int(round(right - left)))
+            self._image_right_scroll_zone.set_size_request(zone_width, -1)
+            self._image_right_scroll_zone.set_margin_start(0)
             self._image_right_scroll_zone.set_margin_top(0)
             self._image_right_scroll_zone.set_margin_bottom(0)
             self._image_right_scroll_zone.set_margin_end(0)
@@ -5306,14 +5282,6 @@ class Focus(Adw.Application):
             self._set_text("No .txt pages found in:\n" + str(self.text_dir))
 
     def _on_scroll(self, ctrl: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
-        if self.scroller and ctrl.get_widget() is self.scroller and self._right_scroll_active:
-            if dy > 0:
-                self._go_next()
-                return True
-            if dy < 0:
-                self._go_prev()
-                return True
-            return False
         state = ctrl.get_current_event_state()
         if state & Gdk.ModifierType.CONTROL_MASK:
             if dy > 0:
