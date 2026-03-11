@@ -14,8 +14,6 @@ Focus is a Libadwaita GTK4 app for browsing court transcript text files with fas
 - AI panel with page/range summaries, RAG Q&A, and a summary-file viewer
 - Markdown-style formatting for `*italic*`, `**bold**`, and `#`/`##`/`###` headings in transcript and summary text
 
-<img src="focus_screenshot.png" alt="Focus screenshot" width="720">
-
 ## Requirements
 - Python 3.13 (see `pyproject.toml`)
 - PyGObject, GTK 4, Libadwaita 1
