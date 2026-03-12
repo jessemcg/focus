@@ -105,10 +105,16 @@ DEFAULT_SUMMARIZATION_PROMPT = (
     "If the text is incomplete or appears truncated, mention that plainly."
 )
 DEFAULT_RAG_PROMPT = (
-    'I will ask you a question about a child welfare case. Below are the case details and transcripts of hearings '
-    'and reports. Based on this material, please answer the question while integrating direct quotes taken directly '
-    'from hearings or reports. The direct quotes must be bold. Begin your answer with a heading named "Answer:" Always '
-    'respond in English. Here is the material:'
+    'I will ask you a question about a child welfare case. Below are case details and retrieved record excerpts from '
+    'hearings and reports. Some excerpts may include explicit metadata labels such as "Hearing Date" for hearing '
+    'transcript chunks and "Report Name" for report chunks. Use those labels to identify the source of the excerpt, '
+    'and when helpful, refer to that hearing date or report name in your answer. Do not invent a hearing date or '
+    'report name if the label is not provided. Base your answer only on the supplied material, and make clear when '
+    'the record is ambiguous or incomplete. In your answer, include short direct quotes taken from the record to '
+    'highlight legally significant statements. Each quote must be enclosed in quotation marks, must consist of an '
+    'uninterrupted five-to-ten-word sequence taken verbatim from the source text, must not use ellipses, and must not '
+    'alter the quoted text in any way. The direct quotes must be bold. Begin your answer with a heading named '
+    '"Answer:" Always respond in English. Here is the material:'
 )
 DEFAULT_RAG_CHUNK_COUNT = 8
 DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
@@ -171,16 +177,157 @@ CONTINUOUS_DIVIDER_GLYPH = "─"
 CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
 CONTINUOUS_PAGE_DIVIDER_BG = "#e8e8e8"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
+MONTH_NAME_TO_NUMBER = {
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sep": 9,
+    "sept": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
+}
+RAG_HEARING_QUERY_KEYWORDS = (
+    "hearing",
+    "transcript",
+    "proceeding",
+    "proceedings",
+    "court appearance",
+)
+RAG_REPORT_QUERY_KEYWORDS = (
+    "report",
+    "reports",
+    "addendum",
+    "assessment",
+    "evaluation",
+    "review",
+    "status review",
+)
+RAG_REPORT_NAME_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "assessment",
+    "child",
+    "children",
+    "county",
+    "court",
+    "department",
+    "for",
+    "of",
+    "report",
+    "reports",
+    "review",
+    "services",
+    "social",
+    "status",
+    "the",
+    "to",
+    "worker",
+    "workers",
+}
+RAG_REPORT_NAME_STRONG_TOKENS = {
+    "addendum",
+    "detention",
+    "disposition",
+    "evaluation",
+    "jurisdiction",
+    "permanency",
+    "psychological",
+    "section36626",
+    "36626",
+}
+RAG_REPORT_NUMBER_WORDS = {
+    "six": "6",
+    "twelve": "12",
+    "eighteen": "18",
+    "twentyfour": "24",
+    "twenty": "20",
+}
+RAG_LONG_DATE_PATTERN = re.compile(
+    r"\b("
+    r"january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|"
+    r"august|aug|september|sep|sept|october|oct|november|nov|december|dec"
+    r")\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
 AI_VIEW_FILE = "show-file"
+
+
 def _normalize_rag_provider(value: str) -> str:
     provider = (value or "").strip().lower()
     if provider not in {RAG_PROVIDER_VOYAGE, RAG_PROVIDER_ISAACUS}:
         return DEFAULT_RAG_PROVIDER
     return provider
+
+
+def _normalize_rag_metadata_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
+
+
+def _canonicalize_report_phrase(value: str) -> str:
+    normalized = _normalize_rag_metadata_text(value)
+    tokens = [RAG_REPORT_NUMBER_WORDS.get(token, token) for token in normalized.split()]
+    return " ".join(tokens)
+
+
+def _format_rag_long_us_date(month: int, day: int, year: int) -> str | None:
+    try:
+        parsed = datetime(year, month, day)
+    except ValueError:
+        return None
+    return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
+
+
+def _extract_hearing_date_filter(question: str) -> str | None:
+    lowered = question.lower()
+    if not any(keyword in lowered for keyword in RAG_HEARING_QUERY_KEYWORDS):
+        return None
+
+    long_match = RAG_LONG_DATE_PATTERN.search(question)
+    if long_match:
+        month_name = long_match.group(1).rstrip(".").lower()
+        month = MONTH_NAME_TO_NUMBER.get(month_name)
+        if month is not None:
+            formatted = _format_rag_long_us_date(
+                month,
+                int(long_match.group(2)),
+                int(long_match.group(3)),
+            )
+            if formatted:
+                return formatted
+
+    numeric_match = RAG_NUMERIC_DATE_PATTERN.search(question)
+    if not numeric_match:
+        return None
+    month = int(numeric_match.group(1))
+    day = int(numeric_match.group(2))
+    year = int(numeric_match.group(3))
+    if year < 100:
+        year += 2000 if year <= 69 else 1900
+    return _format_rag_long_us_date(month, day, year)
+
 
 def _extract_embedding_vectors(response: Any) -> list[list[float]]:
     embeddings = getattr(response, "embeddings", None)
@@ -1655,6 +1802,7 @@ class Focus(Adw.Application):
         self._ai_request_generation = 0
         self._rag_vectorstore: Any | None = None
         self._rag_case_details: str | None = None
+        self._rag_report_name_catalog: tuple[str, ...] = ()
         self._rag_load_thread: threading.Thread | None = None
         self._rag_load_generation = 0
         self._rag_load_error: str | None = None
@@ -6036,7 +6184,7 @@ class Focus(Adw.Application):
                 return
             retrieval_started = time.perf_counter()
             try:
-                chunks, retrieval_method = self._retrieve_rag_chunks(
+                chunks, retrieval_method, retrieval_filter = self._retrieve_rag_chunks(
                     vectorstore,
                     question_text,
                     settings.rag_chunk_count,
@@ -6076,6 +6224,7 @@ class Focus(Adw.Application):
                 "question": question_text,
                 "retrieval": {
                     "method": retrieval_method,
+                    "metadata_filter": retrieval_filter,
                     "requested_chunk_count": settings.rag_chunk_count,
                     "actual_chunk_count": len(chunks),
                     "duration_ms": retrieval_duration_ms,
@@ -6131,6 +6280,7 @@ class Focus(Adw.Application):
             with self._rag_lock:
                 self._rag_vectorstore = None
                 self._rag_case_details = None
+                self._rag_report_name_catalog = ()
                 self._rag_load_error = missing_message
                 self._rag_loading = False
                 self._rag_load_thread = None
@@ -6140,6 +6290,7 @@ class Focus(Adw.Application):
         with self._rag_lock:
             self._rag_vectorstore = None
             self._rag_case_details = None
+            self._rag_report_name_catalog = ()
             self._rag_load_error = None
             self._rag_loading = True
         input_dir = self.input_dir
@@ -6165,10 +6316,14 @@ class Focus(Adw.Application):
             if error:
                 self._rag_vectorstore = None
                 self._rag_case_details = None
+                self._rag_report_name_catalog = ()
                 self._rag_load_error = error
             else:
                 self._rag_vectorstore = vectorstore
                 self._rag_case_details = case_details
+                self._rag_report_name_catalog = (
+                    self._load_rag_report_name_catalog(vectorstore) if vectorstore is not None else ()
+                )
                 self._rag_load_error = None
             self._rag_loading = False
             self._rag_load_thread = None
@@ -6185,10 +6340,12 @@ class Focus(Adw.Application):
         if error:
             with self._rag_lock:
                 self._rag_load_error = error
+                self._rag_report_name_catalog = ()
             return None, None, error
         with self._rag_lock:
             self._rag_vectorstore = store
             self._rag_case_details = details
+            self._rag_report_name_catalog = self._load_rag_report_name_catalog(store) if store is not None else ()
             self._rag_load_error = None
             self._rag_loading = False
         return store, details, None
@@ -6275,16 +6432,174 @@ class Focus(Adw.Application):
         }
         return chunk
 
+    def _load_rag_report_name_catalog(self, vectorstore: Any) -> tuple[str, ...]:
+        try:
+            payload = vectorstore.get(include=["metadatas"])
+        except Exception:
+            return ()
+        metadatas = payload.get("metadatas") if isinstance(payload, dict) else None
+        if not isinstance(metadatas, list):
+            return ()
+        names: set[str] = set()
+        for metadata in metadatas:
+            if not isinstance(metadata, dict):
+                continue
+            report_name = str(metadata.get("report_name") or "").strip()
+            if report_name:
+                names.add(report_name)
+        return tuple(sorted(names))
+
+    def _match_report_name_filter(self, question: str) -> str | None:
+        lowered = question.lower()
+        if not any(keyword in lowered for keyword in RAG_REPORT_QUERY_KEYWORDS):
+            return None
+        normalized_question = _canonicalize_report_phrase(question)
+        if not normalized_question:
+            return None
+        question_tokens = set(normalized_question.split())
+
+        matches: list[tuple[float, int, str]] = []
+        for report_name in self._rag_report_name_catalog:
+            normalized_report_name = _canonicalize_report_phrase(report_name)
+            if not normalized_report_name:
+                continue
+            if normalized_report_name in normalized_question:
+                matches.append((10.0, len(normalized_report_name), report_name))
+                continue
+            alias_variants = {normalized_report_name}
+            if normalized_report_name.endswith(" report"):
+                alias_variants.add(normalized_report_name.removesuffix(" report").strip())
+            if normalized_report_name.endswith(" reports"):
+                alias_variants.add(normalized_report_name.removesuffix(" reports").strip())
+            if " status review " in f" {normalized_report_name} ":
+                alias_variants.add(normalized_report_name.replace("status review", "review").strip())
+            if "jurisdiction disposition" in normalized_report_name:
+                alias_variants.add("jurisdiction disposition report")
+            if any(alias and alias in normalized_question for alias in alias_variants):
+                matches.append((9.0, len(normalized_report_name), report_name))
+                continue
+
+            meaningful_tokens = [
+                token
+                for token in normalized_report_name.split()
+                if token not in RAG_REPORT_NAME_STOPWORDS
+            ]
+            if not meaningful_tokens:
+                continue
+            overlap = sum(1 for token in meaningful_tokens if token in question_tokens)
+            if overlap == 0:
+                continue
+            if len(meaningful_tokens) == 1:
+                token = meaningful_tokens[0]
+                if token in RAG_REPORT_NAME_STRONG_TOKENS and "report" in question_tokens:
+                    matches.append((0.8, 1, report_name))
+                continue
+            ratio = overlap / len(meaningful_tokens)
+            if overlap >= 2 and ratio >= 0.6:
+                matches.append((ratio, overlap, report_name))
+            elif overlap >= 3 and ratio >= 0.5:
+                matches.append((ratio, overlap, report_name))
+        if not matches:
+            return None
+        matches.sort(reverse=True)
+        best_score, best_overlap, _best_name = matches[0]
+        best_names = sorted(
+            {
+                name
+                for score, overlap, name in matches
+                if abs(score - best_score) < 1e-9 and overlap == best_overlap
+            }
+        )
+        if len(best_names) != 1:
+            return None
+        return best_names[0]
+
+    def _infer_rag_metadata_filter(
+        self,
+        vectorstore: Any,
+        question: str,
+    ) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+        if not self._rag_report_name_catalog and vectorstore is not None:
+            self._rag_report_name_catalog = self._load_rag_report_name_catalog(vectorstore)
+        report_name = self._match_report_name_filter(question)
+        if report_name:
+            return (
+                {"type": "report", "report_name": report_name},
+                {"type": "report", "report_name": report_name},
+            )
+
+        hearing_date = _extract_hearing_date_filter(question)
+        if hearing_date:
+            return (
+                {"type": "hearing", "hearing_date": hearing_date},
+                {"type": "hearing", "hearing_date": hearing_date},
+            )
+        return None, None
+
+    def _build_chroma_metadata_filter(self, metadata_filter: dict[str, str]) -> dict[str, Any]:
+        normalized_items = [
+            {str(key): value}
+            for key, value in metadata_filter.items()
+            if str(key).strip() and value is not None and str(value).strip()
+        ]
+        if not normalized_items:
+            return {}
+        if len(normalized_items) == 1:
+            return normalized_items[0]
+        return {"$and": normalized_items}
+
     def _retrieve_rag_chunks(
         self,
         vectorstore: Any,
         question: str,
         chunk_count: int,
-    ) -> tuple[list[dict[str, Any]], str]:
+    ) -> tuple[list[dict[str, Any]], str, dict[str, str] | None]:
         chunks: list[dict[str, Any]] = []
         method = "similarity_search"
+        metadata_filter, filter_details = self._infer_rag_metadata_filter(vectorstore, question)
+        filter_query = (
+            self._build_chroma_metadata_filter(metadata_filter)
+            if metadata_filter
+            else None
+        )
+
+        if filter_query:
+            try:
+                chunks = []
+                results = vectorstore.similarity_search_with_relevance_scores(
+                    question,
+                    k=chunk_count,
+                    filter=filter_query,
+                )
+                if isinstance(results, list):
+                    for index, item in enumerate(results, start=1):
+                        if not isinstance(item, (tuple, list)) or not item:
+                            continue
+                        doc = item[0]
+                        raw_score = item[1] if len(item) > 1 else None
+                        score = None
+                        if raw_score is not None:
+                            try:
+                                score = float(raw_score)
+                            except (TypeError, ValueError):
+                                score = None
+                        chunks.append(self._rag_chunk_from_doc(doc, rank=index, score=score))
+                if chunks:
+                    return (
+                        chunks,
+                        "similarity_search_with_relevance_scores(filter-succeeded)",
+                        filter_details,
+                    )
+                method = "similarity_search_with_relevance_scores(filter-empty)->fallback"
+            except Exception as exc:
+                chunks = []
+                method = (
+                    "similarity_search_with_relevance_scores"
+                    f"(filter-error:{type(exc).__name__})->fallback"
+                )
 
         try:
+            chunks = []
             results = vectorstore.similarity_search_with_relevance_scores(question, k=chunk_count)
             if isinstance(results, list):
                 for index, item in enumerate(results, start=1):
@@ -6300,16 +6615,18 @@ class Focus(Adw.Application):
                             score = None
                     chunks.append(self._rag_chunk_from_doc(doc, rank=index, score=score))
             if chunks:
-                return chunks, "similarity_search_with_relevance_scores"
+                return chunks, "similarity_search_with_relevance_scores", filter_details
             method = "similarity_search_with_relevance_scores(empty)-fallback"
         except Exception:
+            chunks = []
             method = "similarity_search(fallback-no-scores)"
 
+        chunks = []
         docs = vectorstore.similarity_search(question, k=chunk_count)
         if isinstance(docs, list):
             for index, doc in enumerate(docs, start=1):
                 chunks.append(self._rag_chunk_from_doc(doc, rank=index))
-        return chunks, method
+        return chunks, method, filter_details
 
     def _rag_audit_directory(self) -> Path:
         return self._record_layout.root / "artifacts" / "rag_audit"
@@ -6332,11 +6649,20 @@ class Focus(Adw.Application):
             rank = int(chunk.get("rank") or 0)
             source = str(chunk.get("source", "") or "").strip()
             text = str(chunk.get("content", "") or "")
+            metadata = chunk.get("metadata")
+            metadata_dict = metadata if isinstance(metadata, dict) else {}
             chunk_heading = f"{RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX} {rank}" if rank > 0 else RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX
+            context_lines = [chunk_heading]
             if source:
-                rendered.append(f"{chunk_heading}\nSource: {source}\n{text}")
-            else:
-                rendered.append(f"{chunk_heading}\n{text}")
+                context_lines.append(f"Source: {source}")
+            hearing_date = str(metadata_dict.get("hearing_date") or "").strip()
+            if hearing_date:
+                context_lines.append(f"Hearing Date: {hearing_date}")
+            report_name = str(metadata_dict.get("report_name") or "").strip()
+            if report_name:
+                context_lines.append(f"Report Name: {report_name}")
+            context_lines.append(text)
+            rendered.append("\n".join(context_lines))
         return "\n\n".join(rendered)
 
     def _compose_rag_payload(self, case_details: str, context: str, question: str) -> str:
