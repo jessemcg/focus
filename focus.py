@@ -877,6 +877,7 @@ class FocusViewState:
     ai_stream_thread: threading.Thread | None = None
     ai_range_text: str = ""
     rag_question_text: str = ""
+    rag_filter_chip_text: str = ""
     sidebar_expanded: list[str] = field(default_factory=list)
     summary_loaded_path: Path | None = None
     summary_active_source: str | None = None
@@ -1296,6 +1297,17 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
 .focus-view-toggle:not(:checked),
 .focus-view-toggle:not(:checked) label {
   color: alpha(@window_fg_color, 0.62);
+}
+
+button.focus-filter-chip,
+button.focus-filter-chip:hover,
+button.focus-filter-chip:active {
+  border-radius: 10px;
+  padding: 4px 10px;
+  background-color: alpha(@window_fg_color, 0.08);
+  color: alpha(@window_fg_color, 0.82);
+  background-image: none;
+  box-shadow: none;
 }
 
 #page-text {
@@ -1839,6 +1851,7 @@ class Focus(Adw.Application):
         self._rag_loading = False
         self._rag_lock = threading.Lock()
         self._rag_question_entry: Gtk.Entry | None = None
+        self._rag_filter_chip: Gtk.Button | None = None
         self._view_state = FocusViewState()
 
     @property
@@ -2304,6 +2317,17 @@ class Focus(Adw.Application):
         deep_ask_button.connect("clicked", self._on_rag_deep_question_button_clicked)
         qa_controls.append(deep_ask_button)
 
+        self._rag_filter_chip = Gtk.Button()
+        self._rag_filter_chip.add_css_class("flat")
+        self._rag_filter_chip.add_css_class("no-bold")
+        self._rag_filter_chip.add_css_class("focus-filter-chip")
+        self._rag_filter_chip.set_halign(Gtk.Align.START)
+        self._rag_filter_chip.set_valign(Gtk.Align.START)
+        self._rag_filter_chip.set_can_focus(False)
+        self._rag_filter_chip.set_focus_on_click(False)
+        self._rag_filter_chip.set_visible(False)
+        self._rag_filter_chip.set_tooltip_text("Auto-detected retrieval filter applied successfully.")
+
         rag_audit_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rag_audit_view.set_hexpand(True)
         rag_audit_view.set_vexpand(True)
@@ -2435,6 +2459,8 @@ class Focus(Adw.Application):
         rag_audit_scroller = self._build_ai_output_view(AI_VIEW_RAG_AUDIT)
 
         summarize_view.append(summarize_scroller)
+        if self._rag_filter_chip:
+            qa_view.append(self._rag_filter_chip)
         qa_view.append(qa_scroller)
         rag_audit_view.append(rag_audit_scroller)
 
@@ -2656,6 +2682,7 @@ class Focus(Adw.Application):
         for ai_state in self._ai_outputs.values():
             ai_state.raw = ""
             self._apply_ai_output_links("", ai_state)
+        self._set_rag_filter_chip(None)
         self._sync_continuous_action()
         self._sync_show_image_action()
 
@@ -2720,6 +2747,10 @@ class Focus(Adw.Application):
             state.ai_range_text = self._ai_range_entry.get_text()
         if self._rag_question_entry:
             state.rag_question_text = self._rag_question_entry.get_text()
+        if self._rag_filter_chip and self._rag_filter_chip.get_visible():
+            state.rag_filter_chip_text = self._rag_filter_chip.get_label() or ""
+        else:
+            state.rag_filter_chip_text = ""
         state.summary_loaded_path = self._summary_loaded_path
         state.summary_active_source = self._summary_active_source
 
@@ -5845,6 +5876,34 @@ class Focus(Adw.Application):
             return
         self._start_rag_question(question, deep=deep)
 
+    def _format_rag_filter_chip_text(self, filter_details: dict[str, str] | None) -> str | None:
+        if not filter_details:
+            return None
+        filter_type = str(filter_details.get("type") or "").strip()
+        if filter_type == "hearing":
+            hearing_date = str(filter_details.get("hearing_date") or "").strip()
+            if hearing_date:
+                return f"Hearing: {hearing_date}"
+            return None
+        if filter_type == "report":
+            report_name = str(filter_details.get("report_name") or "").strip()
+            if report_name:
+                return f"Report: {report_name}"
+        return None
+
+    def _set_rag_filter_chip(self, text: str | None) -> None:
+        normalized = (text or "").strip()
+        state = self._current_view_state()
+        state.rag_filter_chip_text = normalized
+        if not self._rag_filter_chip:
+            return
+        self._rag_filter_chip.set_label(normalized)
+        self._rag_filter_chip.set_visible(bool(normalized))
+
+    def _set_rag_filter_chip_idle(self, text: str | None) -> bool:
+        self._set_rag_filter_chip(text)
+        return False
+
     def _find_summary_in_dir(
         self,
         label: str,
@@ -6195,6 +6254,7 @@ class Focus(Adw.Application):
         self._ensure_ai_panel_visible()
         self._set_ai_view(target_view)
         self._reset_ai_output("", target=target_view)
+        self._set_rag_filter_chip(None)
         self._update_ai_status("Loading RAG context…", spinning=True)
 
         cancel_event = state.ai_cancel_event
@@ -6230,6 +6290,10 @@ class Focus(Adw.Application):
                 return
 
             retrieval_duration_ms = round((time.perf_counter() - retrieval_started) * 1000.0, 2)
+            chip_text = None
+            if retrieval_method == "similarity_search_with_relevance_scores(filter-succeeded)":
+                chip_text = self._format_rag_filter_chip_text(retrieval_filter)
+            GLib.idle_add(self._set_rag_filter_chip_idle, chip_text)
             system_prompt = settings.rag_prompt or DEFAULT_RAG_PROMPT
             user_payload = self._compose_rag_payload(case_details, context_text, question_text)
             request_model_id = rag_model or settings.page_credentials()[1]
