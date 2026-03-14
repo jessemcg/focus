@@ -89,6 +89,8 @@ CONFIG_KEY_RAG_API_URL = "rag_api_url"
 CONFIG_KEY_RAG_API_KEY = "rag_api_key"
 CONFIG_KEY_RAG_DEEP_API_URL = "rag_deep_api_url"
 CONFIG_KEY_RAG_DEEP_API_KEY = "rag_deep_api_key"
+CONFIG_KEY_RAG_DISABLE_REASONING = "rag_disable_reasoning"
+CONFIG_KEY_RAG_DEEP_DISABLE_REASONING = "rag_deep_disable_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
@@ -119,6 +121,7 @@ DEFAULT_RAG_PROMPT = (
 DEFAULT_RAG_CHUNK_COUNT = 8
 DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
 DEFAULT_RAG_ISAACUS_MODEL = "kanon-2-embedder"
+DEFAULT_DISABLE_REASONING = False
 RAG_PAYLOAD_CASE_DETAILS_HEADING = "# Case Context"
 RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING = "# Retrieved Record Excerpts"
 RAG_PAYLOAD_QUESTION_HEADING = "# Question"
@@ -272,6 +275,30 @@ RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
+
+
+def _model_looks_kimi(model_id: str) -> bool:
+    normalized = (model_id or "").strip().lower()
+    return "kimi" in normalized or "moonshot" in normalized
+
+
+def _model_looks_deepseek(model_id: str) -> bool:
+    normalized = (model_id or "").strip().lower()
+    return "deepseek" in normalized
+
+
+def _apply_disable_reasoning_to_body(
+    body: dict[str, Any],
+    *,
+    model_id: str,
+    disable_reasoning: bool,
+) -> None:
+    if not disable_reasoning:
+        return
+    if _model_looks_deepseek(model_id) or _model_looks_kimi(model_id):
+        body["thinking"] = {"type": "disabled"}
+    else:
+        body["reasoning_effort"] = "none"
 AI_VIEW_FILE = "show-file"
 
 
@@ -761,6 +788,8 @@ class AiSettings:
     rag_api_key: str
     rag_deep_api_url: str
     rag_deep_api_key: str
+    rag_disable_reasoning: bool
+    rag_deep_disable_reasoning: bool
     rag_chunk_count: int
     highlight_phrases: list[str]
     grep_highlight_color: str
@@ -860,6 +889,7 @@ class FocusViewState:
     matching_lookup: dict[int, int] = field(default_factory=dict)
     grep_combined_text: str | None = None
     grep_combined_highlights: list[tuple[int, int]] = field(default_factory=list)
+    grep_current_match_index: int = -1
     showing_grep_results: bool = False
     ai_active_view: str = AI_VIEW_QA
     ai_output_raw: dict[str, str] = field(
@@ -920,6 +950,12 @@ def load_ai_settings() -> AiSettings:
     rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip()
     rag_deep_api_url = str(config.get(CONFIG_KEY_RAG_DEEP_API_URL, "") or "").strip()
     rag_deep_api_key = str(config.get(CONFIG_KEY_RAG_DEEP_API_KEY, "") or "").strip()
+    rag_disable_reasoning = bool(
+        config.get(CONFIG_KEY_RAG_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    )
+    rag_deep_disable_reasoning = bool(
+        config.get(CONFIG_KEY_RAG_DEEP_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    )
     rag_chunk_count = _coerce_rag_chunk_count(
         config.get(CONFIG_KEY_RAG_CHUNK_COUNT),
         DEFAULT_RAG_CHUNK_COUNT,
@@ -957,6 +993,8 @@ def load_ai_settings() -> AiSettings:
         rag_api_key=rag_api_key,
         rag_deep_api_url=rag_deep_api_url,
         rag_deep_api_key=rag_deep_api_key,
+        rag_disable_reasoning=rag_disable_reasoning,
+        rag_deep_disable_reasoning=rag_deep_disable_reasoning,
         rag_chunk_count=rag_chunk_count,
         highlight_phrases=highlight_phrases,
         grep_highlight_color=grep_highlight_color,
@@ -992,6 +1030,8 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_RAG_API_KEY] = settings.rag_api_key
     config[CONFIG_KEY_RAG_DEEP_API_URL] = settings.rag_deep_api_url
     config[CONFIG_KEY_RAG_DEEP_API_KEY] = settings.rag_deep_api_key
+    config[CONFIG_KEY_RAG_DISABLE_REASONING] = bool(settings.rag_disable_reasoning)
+    config[CONFIG_KEY_RAG_DEEP_DISABLE_REASONING] = bool(settings.rag_deep_disable_reasoning)
     config[CONFIG_KEY_RAG_CHUNK_COUNT] = _coerce_rag_chunk_count(
         settings.rag_chunk_count,
         DEFAULT_RAG_CHUNK_COUNT,
@@ -1001,6 +1041,7 @@ def save_ai_settings(settings: AiSettings) -> None:
         settings.grep_highlight_color,
         DEFAULT_MATCH_COLOR,
     )
+    config.pop("grep_current_highlight_color", None)
     config[CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR] = _coerce_color_value(
         settings.phrase_highlight_color,
         DEFAULT_HIGHLIGHT_COLOR,
@@ -1745,6 +1786,9 @@ class Focus(Adw.Application):
         self._page_forward_one_button: Gtk.Button | None = None
         self._page_number_entry: Gtk.Entry | None = None
         self._page_total_label: Gtk.Label | None = None
+        self._grep_prev_hit_button: Gtk.Button | None = None
+        self._grep_next_hit_button: Gtk.Button | None = None
+        self._grep_hit_label: Gtk.Label | None = None
 
         self._grep_phrase_raw: str | None = None
         self._grep_regex: re.Pattern[str] | None = None
@@ -1753,6 +1797,7 @@ class Focus(Adw.Application):
         self._matching_lookup: dict[int, int] = {}
         self._grep_combined_text: str | None = None
         self._grep_combined_highlights: list[tuple[int, int]] = []
+        self._grep_current_match_index = -1
         self._showing_grep_results = False
         self._grep_search_thread: threading.Thread | None = None
         self._grep_search_cancel_event: threading.Event | None = None
@@ -2556,6 +2601,28 @@ class Focus(Adw.Application):
         self._grep_entry.connect("activate", self._on_grep_entry_activate)
         trailing_controls.append(self._grep_entry)
 
+        self._grep_hit_label = Gtk.Label(label="")
+        self._grep_hit_label.add_css_class("dim-label")
+        self._grep_hit_label.set_valign(Gtk.Align.CENTER)
+        self._grep_hit_label.set_xalign(0.0)
+        trailing_controls.append(self._grep_hit_label)
+
+        self._grep_prev_hit_button = Gtk.Button()
+        self._grep_prev_hit_button.add_css_class("flat")
+        self._grep_prev_hit_button.set_valign(Gtk.Align.CENTER)
+        self._grep_prev_hit_button.set_tooltip_text("Previous grep hit (Ctrl+Shift+G)")
+        self._grep_prev_hit_button.set_child(Gtk.Image.new_from_icon_name(prev_icon_name))
+        self._grep_prev_hit_button.connect("clicked", self._on_grep_prev_hit_clicked)
+        trailing_controls.append(self._grep_prev_hit_button)
+
+        self._grep_next_hit_button = Gtk.Button()
+        self._grep_next_hit_button.add_css_class("flat")
+        self._grep_next_hit_button.set_valign(Gtk.Align.CENTER)
+        self._grep_next_hit_button.set_tooltip_text("Next grep hit (Ctrl+G)")
+        self._grep_next_hit_button.set_child(Gtk.Image.new_from_icon_name(next_icon_name))
+        self._grep_next_hit_button.connect("clicked", self._on_grep_next_hit_clicked)
+        trailing_controls.append(self._grep_next_hit_button)
+
         grep_search_button = Gtk.Button(label="Search")
         grep_search_button.add_css_class("flat")
         grep_search_button.add_css_class("no-bold")
@@ -2733,6 +2800,7 @@ class Focus(Adw.Application):
         state.matching_lookup = dict(self._matching_lookup)
         state.grep_combined_text = self._grep_combined_text
         state.grep_combined_highlights = list(self._grep_combined_highlights)
+        state.grep_current_match_index = self._grep_current_match_index
         state.showing_grep_results = self._showing_grep_results
         state.ai_active_view = self._ai_active_view
         state.ai_output_raw = {name: view.raw or "" for name, view in self._ai_outputs.items()}
@@ -2810,6 +2878,46 @@ class Focus(Adw.Application):
             hadj = self.scroller.get_hadjustment()
             if hadj:
                 GLib.idle_add(hadj.set_value, hadj.get_lower())
+
+    def _scroll_textview_to_offset(self, offset: int) -> None:
+        if not self.textview:
+            return
+        buffer = self.textview.get_buffer()
+        char_count = buffer.get_char_count()
+        if char_count <= 0:
+            return
+        clamped = max(0, min(int(offset), char_count - 1))
+        iter_ = buffer.get_iter_at_offset(clamped)
+        self.textview.scroll_to_iter(iter_, 0.15, False, 0.0, 0.1)
+        if self.scroller:
+            hadj = self.scroller.get_hadjustment()
+            if hadj:
+                hadj.set_value(hadj.get_lower())
+
+    def _current_grep_highlights(self) -> list[tuple[int, int]]:
+        if self._showing_grep_results and self._grep_combined_text:
+            return list(self._grep_combined_highlights)
+        if not self.pages or not self._grep_hits:
+            return []
+        if self.current_index < 0 or self.current_index >= len(self.pages):
+            return []
+        page = self.pages[self.current_index]
+        hits = self._grep_hits.get(page, [])
+        if not hits:
+            return []
+        header_offset = len(f"{page:04d}\n\n")
+        return [(start + header_offset, end + header_offset) for start, end in hits if end > start]
+
+    def _scroll_to_current_grep_match(self) -> None:
+        highlights = self._current_grep_highlights()
+        if not highlights:
+            return
+        index = self._grep_current_match_index
+        if index < 0 or index >= len(highlights):
+            index = 0
+            self._grep_current_match_index = index
+        start, _end = highlights[index]
+        GLib.idle_add(self._scroll_textview_to_offset, start)
 
     def _apply_continuous_divider_style(self, buf: Gtk.TextBuffer, text: str) -> None:
         self._append_continuous_divider_style(buf, text, 0)
@@ -4895,11 +5003,27 @@ class Focus(Adw.Application):
                     self._page_number_entry.set_text("")
                 self._page_total_label.set_text("/ --")
 
+    def _update_grep_hit_navigation(self) -> None:
+        total_hits = len(self._current_grep_highlights())
+        if total_hits > 0:
+            current_index = min(max(self._grep_current_match_index, 0), total_hits - 1)
+            current_display = current_index + 1
+        else:
+            current_display = 0
+        if self._grep_hit_label:
+            self._grep_hit_label.set_text(f"{current_display}/{total_hits}" if total_hits > 0 else "")
+        prev_enabled = total_hits > 0 and current_display > 1
+        next_enabled = total_hits > 0 and current_display < total_hits
+        if self._grep_prev_hit_button:
+            self._grep_prev_hit_button.set_sensitive(prev_enabled)
+        if self._grep_next_hit_button:
+            self._grep_next_hit_button.set_sensitive(next_enabled)
+
     def _update_header(self) -> None:
         self._update_page_nav_buttons()
+        self._update_grep_hit_navigation()
         if self._showing_grep_results:
-            summary = f"Grep results ({len(self._matching_pages)} pages)"
-            self._set_window_title(summary, summary)
+            self._set_window_title(None, "Grep results")
             return
         if self._continuous_view:
             if not self.pages:
@@ -4992,6 +5116,8 @@ class Focus(Adw.Application):
             self._show_image_update_visible()
         self._update_header()
         self._sync_sidebar_active_page()
+        if self._grep_hits.get(page):
+            self._scroll_to_current_grep_match()
 
     def _clear_grep_state(self) -> None:
         self._stop_grep_search_if_running()
@@ -5001,6 +5127,7 @@ class Focus(Adw.Application):
         self._matching_lookup.clear()
         self._grep_combined_text = None
         self._grep_combined_highlights = []
+        self._grep_current_match_index = -1
         self._showing_grep_results = False
 
     def _stop_grep_search_if_running(self) -> None:
@@ -5040,6 +5167,7 @@ class Focus(Adw.Application):
         self._matching_lookup.clear()
         self._grep_combined_text = None
         self._grep_combined_highlights = []
+        self._grep_current_match_index = -1
         self._showing_grep_results = False
         self._grep_search_generation += 1
         generation = self._grep_search_generation
@@ -5270,6 +5398,7 @@ class Focus(Adw.Application):
             self._showing_grep_results = False
             self._grep_combined_text = None
             self._grep_combined_highlights = []
+            self._grep_current_match_index = -1
             self._transient_toast("No pages matched the grep phrase")
             self._load_current()
             return False
@@ -5277,6 +5406,7 @@ class Focus(Adw.Application):
         first_page = self._matching_pages[0]
         if first_page in self.pages:
             self.current_index = self.pages.index(first_page)
+        self._grep_current_match_index = 0
 
         if len(self._matching_pages) == 1:
             self._showing_grep_results = False
@@ -5302,6 +5432,56 @@ class Focus(Adw.Application):
         self._set_text(self._grep_combined_text, self._grep_combined_highlights)
         self._update_header()
         self._sync_sidebar_active_page()
+        self._scroll_to_current_grep_match()
+
+    def _on_grep_prev_hit_clicked(self, _button: Gtk.Button) -> None:
+        self._navigate_grep_match(-1)
+
+    def _on_grep_next_hit_clicked(self, _button: Gtk.Button) -> None:
+        self._navigate_grep_match(1)
+
+    def _navigate_grep_match(self, direction: int) -> bool:
+        if direction == 0 or not self._grep_hits:
+            return False
+        if self._showing_grep_results and self._grep_combined_text:
+            highlights = self._grep_combined_highlights
+            if not highlights:
+                return False
+            count = len(highlights)
+            current = self._grep_current_match_index
+            if current < 0 or current >= count:
+                current = 0 if direction > 0 else count - 1
+            else:
+                next_index = current + direction
+                if next_index < 0 or next_index >= count:
+                    self._edge_flash()
+                    return True
+                current = next_index
+            self._grep_current_match_index = current
+            self._update_grep_hit_navigation()
+            self._scroll_to_current_grep_match()
+            return True
+
+        if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
+            return False
+        page = self.pages[self.current_index]
+        page_hits = self._grep_hits.get(page, [])
+        if not page_hits:
+            return False
+        count = len(page_hits)
+        current = self._grep_current_match_index
+        if current < 0 or current >= count:
+            current = 0 if direction > 0 else count - 1
+        else:
+            next_index = current + direction
+            if next_index < 0 or next_index >= count:
+                self._edge_flash()
+                return True
+            current = next_index
+        self._grep_current_match_index = current
+        self._update_grep_hit_navigation()
+        self._scroll_to_current_grep_match()
+        return True
 
     def _install_navigation_controllers(self) -> None:
         if not self.win:
@@ -5479,6 +5659,7 @@ class Focus(Adw.Application):
         self._matching_lookup.clear()
         self._grep_combined_text = None
         self._grep_combined_highlights = []
+        self._grep_current_match_index = -1
         self._scan_pages()
         self._load_toc_from_disk_async()
         self._kickoff_rag_background_load()
@@ -5502,6 +5683,10 @@ class Focus(Adw.Application):
 
     def _on_key(self, _ctrl: Gtk.EventControllerKey, keyval: int, keycode: int, state: int) -> bool:  # noqa: ARG002
         key = Gdk.keyval_name(keyval)
+        if key in ("g", "G") and (state & Gdk.ModifierType.CONTROL_MASK):
+            direction = -1 if (state & Gdk.ModifierType.SHIFT_MASK) else 1
+            if self._navigate_grep_match(direction):
+                return True
         if key == "Up":
             self._go_prev(); return True
         if key == "Down":
@@ -6297,6 +6482,9 @@ class Focus(Adw.Application):
             system_prompt = settings.rag_prompt or DEFAULT_RAG_PROMPT
             user_payload = self._compose_rag_payload(case_details, context_text, question_text)
             request_model_id = rag_model or settings.page_credentials()[1]
+            disable_reasoning = (
+                settings.rag_deep_disable_reasoning if deep else settings.rag_disable_reasoning
+            )
             llm_request = {
                 "model": request_model_id,
                 "stream": True,
@@ -6305,6 +6493,11 @@ class Focus(Adw.Application):
                     {"role": "user", "content": user_payload},
                 ],
             }
+            _apply_disable_reasoning_to_body(
+                llm_request,
+                model_id=request_model_id,
+                disable_reasoning=disable_reasoning,
+            )
             audit_record: dict[str, Any] = {
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 "view_id": "single",
@@ -6342,6 +6535,7 @@ class Focus(Adw.Application):
                 model_id=request_model_id,
                 api_url=rag_api_url,
                 api_key=rag_api_key,
+                disable_reasoning=disable_reasoning,
                 include_reasoning=False,
             )
 
@@ -6917,6 +7111,7 @@ class Focus(Adw.Application):
         model_id: str,
         api_url: str,
         api_key: str | None = None,
+        disable_reasoning: bool = False,
         include_reasoning: bool = False,
     ) -> None:
         headers = {
@@ -6933,33 +7128,68 @@ class Focus(Adw.Application):
                 {"role": "user", "content": content},
             ],
         }
+        _apply_disable_reasoning_to_body(
+            body,
+            model_id=model_id,
+            disable_reasoning=disable_reasoning,
+        )
+        attempted_without_thinking = False
+        attempted_without_reasoning_effort = False
 
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(req) as resp:
-                for chunk in self._iter_sse_chunks(
-                    resp,
-                    cancel_event,
-                    include_reasoning=include_reasoning,
+        while True:
+            data = json.dumps(body).encode("utf-8")
+            req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    for chunk in self._iter_sse_chunks(
+                        resp,
+                        cancel_event,
+                        include_reasoning=include_reasoning,
+                    ):
+                        if cancel_event and cancel_event.is_set():
+                            GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
+                            return
+                        GLib.idle_add(self._append_ai_output, chunk, generation, target_view)
+                if cancel_event and cancel_event.is_set():
+                    GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
+                else:
+                    GLib.idle_add(self._on_ai_stream_finished, label, generation, target_view)
+                return
+            except urllib.error.HTTPError as exc:
+                try:
+                    error_body = exc.read().decode("utf-8", errors="ignore")
+                except Exception:  # noqa: BLE001
+                    error_body = ""
+                message = (error_body.strip() or exc.reason or "request failed").lower()
+                if (
+                    not attempted_without_thinking
+                    and "thinking" in body
+                    and "thinking" in message
+                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
                 ):
-                    if cancel_event and cancel_event.is_set():
-                        GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
-                        return
-                    GLib.idle_add(self._append_ai_output, chunk, generation, target_view)
-            if cancel_event and cancel_event.is_set():
-                GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
-            else:
-                GLib.idle_add(self._on_ai_stream_finished, label, generation, target_view)
-        except urllib.error.HTTPError as exc:
-            GLib.idle_add(
-                self._on_ai_stream_error,
-                f"HTTP error {exc.code}: {exc.reason or 'request failed'}",
-                generation,
-                target_view,
-            )
-        except Exception as exc:  # noqa: BLE001
-            GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
+                    attempted_without_thinking = True
+                    body.pop("thinking", None)
+                    continue
+                if (
+                    not attempted_without_reasoning_effort
+                    and "reasoning_effort" in body
+                    and "reasoning_effort" in message
+                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
+                ):
+                    attempted_without_reasoning_effort = True
+                    body.pop("reasoning_effort", None)
+                    continue
+                detail = error_body.strip() or exc.reason or "request failed"
+                GLib.idle_add(
+                    self._on_ai_stream_error,
+                    f"HTTP error {exc.code}: {detail}",
+                    generation,
+                    target_view,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
+                return
 
     def _iter_sse_chunks(
         self,
@@ -7128,9 +7358,11 @@ class RagPromptWidgets:
     api_url_row: Adw.EntryRow
     model_row: Adw.EntryRow
     api_key_row: Adw.EntryRow
+    disable_reasoning_row: Adw.SwitchRow
     deep_api_url_row: Adw.EntryRow
     deep_model_row: Adw.EntryRow
     deep_api_key_row: Adw.EntryRow
+    deep_disable_reasoning_row: Adw.SwitchRow
     provider_row: Adw.ComboRow
     provider_values: list[str]
     voyage_model_row: Adw.EntryRow
@@ -7547,6 +7779,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_model_row.set_hexpand(True)
         rag_group.add(rag_model_row)
 
+        rag_disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
+        rag_disable_reasoning_row.set_active(DEFAULT_DISABLE_REASONING)
+        rag_group.add(rag_disable_reasoning_row)
+
         deep_rag_group = Adw.PreferencesGroup(title="Deep Ask Credentials")
         deep_rag_group.add_css_class("list-stack")
         deep_rag_group.set_hexpand(True)
@@ -7562,6 +7798,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         deep_rag_model_row = Adw.EntryRow(title="Deep Ask Model")
         deep_rag_model_row.set_hexpand(True)
         deep_rag_group.add(deep_rag_model_row)
+
+        deep_rag_disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
+        deep_rag_disable_reasoning_row.set_active(DEFAULT_DISABLE_REASONING)
+        deep_rag_group.add(deep_rag_disable_reasoning_row)
 
         provider_group = Adw.PreferencesGroup(title="Embedding Provider")
         provider_group.add_css_class("list-stack")
@@ -7637,9 +7877,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             api_url_row=rag_api_url_row,
             model_row=rag_model_row,
             api_key_row=rag_api_key_row,
+            disable_reasoning_row=rag_disable_reasoning_row,
             deep_api_url_row=deep_rag_api_url_row,
             deep_model_row=deep_rag_model_row,
             deep_api_key_row=deep_rag_api_key_row,
+            deep_disable_reasoning_row=deep_rag_disable_reasoning_row,
             provider_row=provider_row,
             provider_values=provider_values,
             voyage_model_row=voyage_model_row,
@@ -7688,6 +7930,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 settings.rag_api_key or settings.page_api_key or settings.api_key
             )
             rag_widgets.model_row.set_text(settings.rag_llm_model)
+            rag_widgets.disable_reasoning_row.set_active(
+                bool(settings.rag_disable_reasoning)
+            )
             rag_widgets.deep_api_url_row.set_text(
                 settings.rag_deep_api_url or settings.rag_api_url or settings.page_api_url or settings.api_url
             )
@@ -7695,6 +7940,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 settings.rag_deep_api_key or settings.rag_api_key or settings.page_api_key or settings.api_key
             )
             rag_widgets.deep_model_row.set_text(settings.rag_deep_llm_model)
+            rag_widgets.deep_disable_reasoning_row.set_active(
+                bool(settings.rag_deep_disable_reasoning)
+            )
             provider = _normalize_rag_provider(settings.rag_provider)
             if provider in rag_widgets.provider_values:
                 rag_widgets.provider_row.set_selected(rag_widgets.provider_values.index(provider))
@@ -7764,9 +8012,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_api_url = rag_widgets.api_url_row.get_text().strip()
         rag_api_key = rag_widgets.api_key_row.get_text().strip()
         rag_model = rag_widgets.model_row.get_text().strip()
+        rag_disable_reasoning = bool(rag_widgets.disable_reasoning_row.get_active())
         rag_deep_api_url = rag_widgets.deep_api_url_row.get_text().strip()
         rag_deep_api_key = rag_widgets.deep_api_key_row.get_text().strip()
         rag_deep_model = rag_widgets.deep_model_row.get_text().strip()
+        rag_deep_disable_reasoning = bool(
+            rag_widgets.deep_disable_reasoning_row.get_active()
+        )
         provider_index = int(rag_widgets.provider_row.get_selected())
         if 0 <= provider_index < len(rag_widgets.provider_values):
             rag_provider = rag_widgets.provider_values[provider_index]
@@ -7846,6 +8098,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_api_key=rag_api_key or page_api_key,
             rag_deep_api_url=rag_deep_api_url or rag_api_url or page_api_url,
             rag_deep_api_key=rag_deep_api_key or rag_api_key or page_api_key,
+            rag_disable_reasoning=rag_disable_reasoning,
+            rag_deep_disable_reasoning=rag_deep_disable_reasoning,
             rag_chunk_count=rag_chunk_count,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
