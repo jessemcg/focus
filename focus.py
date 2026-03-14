@@ -1457,6 +1457,7 @@ ROUNDED_GRID_MIDDLE_BORDER_RE = re.compile(r"^\s*├[─┼]+┤\s*$")
 ROUNDED_GRID_BOTTOM_BORDER_RE = re.compile(r"^\s*╰[─┴]+╯\s*$")
 ROUNDED_GRID_ROW_RE = re.compile(r"^\s*│.*│\s*$")
 LINK_TRAILING_PUNCTUATION = ",.;:!?)]"
+LINK_EDGE_QUOTES = "\"'“”‘’"
 MARKDOWN_HEADING_SCALES = {
     1: 1.55,
     2: 1.3,
@@ -1617,13 +1618,42 @@ def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:
             index += 1
 
 
+def _strip_outer_markdown_emphasis(text: str) -> str:
+    cleaned = text.strip()
+    while cleaned:
+        updated = cleaned
+        for marker in ("**", "__", "*", "_"):
+            if (
+                cleaned.startswith(marker)
+                and cleaned.endswith(marker)
+                and len(cleaned) > len(marker) * 2
+            ):
+                candidate = cleaned[len(marker):-len(marker)].strip()
+                if candidate:
+                    updated = candidate
+                    break
+        if updated == cleaned:
+            break
+        cleaned = updated
+    return cleaned
+
+
 def split_link_phrase(phrase: str) -> tuple[str, str]:
-    """Split a phrase into linkable text and trailing punctuation."""
-    end = len(phrase)
-    while end > 0 and phrase[end - 1] in LINK_TRAILING_PUNCTUATION:
+    """Split a phrase into linkable text and surrounding punctuation."""
+    trimmed = phrase.strip()
+    if not trimmed:
+        return "", ""
+
+    leading = 0
+    while leading < len(trimmed) and trimmed[leading] in LINK_EDGE_QUOTES:
+        leading += 1
+
+    end = len(trimmed)
+    while end > leading and trimmed[end - 1] in (LINK_TRAILING_PUNCTUATION + LINK_EDGE_QUOTES):
         end -= 1
-    core = phrase[:end].rstrip()
-    trailing = phrase[end:]
+
+    core = _strip_outer_markdown_emphasis(trimmed[leading:end].strip())
+    trailing = "".join(ch for ch in trimmed[end:] if ch not in LINK_EDGE_QUOTES)
     return core, trailing
 
 
@@ -4468,7 +4498,7 @@ class Focus(Adw.Application):
         if kind == "page":
             self._show_page_from_link(value)
             return
-        cleaned = value.strip()
+        cleaned, _trailing = split_link_phrase(value)
         if not cleaned:
             return
         if self._grep_entry:
