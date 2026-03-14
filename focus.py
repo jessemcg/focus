@@ -6297,12 +6297,6 @@ class Focus(Adw.Application):
             system_prompt = settings.rag_prompt or DEFAULT_RAG_PROMPT
             user_payload = self._compose_rag_payload(case_details, context_text, question_text)
             request_model_id = rag_model or settings.page_credentials()[1]
-            if deep:
-                system_prompt = (
-                    f"{system_prompt}\n\n"
-                    "For difficult questions, reason carefully and cite specific retrieved passages. "
-                    "If the evidence is incomplete or conflicting, say so explicitly."
-                )
             llm_request = {
                 "model": request_model_id,
                 "stream": True,
@@ -6329,15 +6323,9 @@ class Focus(Adw.Application):
                     "body": llm_request,
                 },
             }
-            audit_path, audit_error = self._save_rag_audit_record(audit_record)
-            if audit_path is not None:
-                audit_record["audit_file"] = str(audit_path)
-            if audit_error:
-                audit_record["audit_write_error"] = audit_error
-                GLib.idle_add(self._transient_toast, audit_error)
             GLib.idle_add(
                 self._set_ai_output_text_idle,
-                json.dumps(audit_record, indent=2, ensure_ascii=False),
+                self._format_rag_audit_text(audit_record),
                 AI_VIEW_RAG_AUDIT,
                 False,
             )
@@ -6722,20 +6710,28 @@ class Focus(Adw.Application):
                 chunks.append(self._rag_chunk_from_doc(doc, rank=index))
         return chunks, method, filter_details
 
-    def _rag_audit_directory(self) -> Path:
-        return self._record_layout.root / "artifacts" / "rag_audit"
-
-    def _save_rag_audit_record(self, record: dict[str, Any]) -> tuple[Path | None, str | None]:
-        try:
-            output_dir = self._rag_audit_directory()
-            output_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            output_path = output_dir / f"rag_audit_{timestamp}.json"
-            payload = json.dumps(self._json_safe_value(record), indent=2, ensure_ascii=False)
-            output_path.write_text(payload, encoding="utf-8")
-            return output_path, None
-        except OSError as exc:
-            return None, f"Could not save RAG audit file: {exc}"
+    def _format_rag_audit_text(self, record: dict[str, Any]) -> str:
+        llm_request = record.get("llm_request")
+        request_dict = llm_request if isinstance(llm_request, dict) else {}
+        body = request_dict.get("body")
+        body_dict = body if isinstance(body, dict) else {}
+        messages = body_dict.get("messages")
+        message_list = messages if isinstance(messages, list) else []
+        rendered_sections = ["LLM Request Sequence"]
+        for index, message in enumerate(message_list, start=1):
+            message_dict = message if isinstance(message, dict) else {}
+            role = str(message_dict.get("role") or "unknown").strip() or "unknown"
+            content = str(message_dict.get("content") or "")
+            rendered_sections.append(f"[{index}] {role}")
+            rendered_sections.append(content)
+        rendered_sections.extend(
+            [
+                "",
+                "Audit Metadata",
+                json.dumps(self._json_safe_value(record), indent=2, ensure_ascii=False),
+            ]
+        )
+        return "\n\n".join(rendered_sections)
 
     def _format_rag_context(self, chunks: list[dict[str, Any]]) -> str:
         rendered: list[str] = []
@@ -6764,12 +6760,12 @@ class Focus(Adw.Application):
         normalized_context = context.strip() or "_No retrieved excerpts available._"
         normalized_question = question.strip()
         return (
+            f"{RAG_PAYLOAD_QUESTION_HEADING}\n"
+            f"{normalized_question}\n\n"
             f"{RAG_PAYLOAD_CASE_DETAILS_HEADING}\n"
             f"{normalized_case_details}\n\n"
             f"{RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING}\n"
-            f"{normalized_context}\n\n"
-            f"{RAG_PAYLOAD_QUESTION_HEADING}\n"
-            f"{normalized_question}"
+            f"{normalized_context}"
         )
 
     def _start_ai_stream(self, *, label: str, content: str, prompt_kind: str) -> None:
