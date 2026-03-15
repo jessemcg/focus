@@ -2888,7 +2888,7 @@ class Focus(Adw.Application):
             return
         clamped = max(0, min(int(offset), char_count - 1))
         iter_ = buffer.get_iter_at_offset(clamped)
-        self.textview.scroll_to_iter(iter_, 0.15, False, 0.0, 0.1)
+        self.textview.scroll_to_iter(iter_, 0.0, True, 0.0, 0.5)
         if self.scroller:
             hadj = self.scroller.get_hadjustment()
             if hadj:
