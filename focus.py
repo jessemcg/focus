@@ -5569,7 +5569,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.toggle_continuous_view", ["<Primary><Shift>c"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
-        self.set_accels_for_action("app.show_shortcuts", ["F1", "<Primary>question"])
+        self.set_accels_for_action("app.show_shortcuts", ["F1"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
     def _build_shortcuts_window(self) -> Gtk.ShortcutsWindow:
@@ -5627,9 +5627,6 @@ class Focus(Adw.Application):
 
         help_group = Gtk.ShortcutsGroup(title="Reference")
         help_group.append(Gtk.ShortcutsShortcut(title="Show keyboard shortcuts", accelerator="F1"))
-        help_group.append(
-            Gtk.ShortcutsShortcut(title="Show keyboard shortcuts", accelerator="<Primary>question")
-        )
         navigation_section.append(help_group)
         window.add_section(navigation_section)
 
