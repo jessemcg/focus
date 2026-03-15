@@ -1340,6 +1340,28 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
   color: alpha(@window_fg_color, 0.62);
 }
 
+box.focus-pill-group > button.focus-pill-segment {
+  border-radius: 0;
+  border: 1px solid alpha(@window_fg_color, 0.16);
+  padding-left: 12px;
+  padding-right: 12px;
+  margin: 0;
+}
+
+box.focus-pill-group > button.focus-pill-segment:not(:first-child) {
+  border-left-width: 0;
+}
+
+box.focus-pill-group > button.focus-pill-segment:first-child {
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+
+box.focus-pill-group > button.focus-pill-segment:last-child {
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
 button.focus-filter-chip,
 button.focus-filter-chip:hover,
 button.focus-filter-chip:active {
@@ -2277,12 +2299,14 @@ class Focus(Adw.Application):
         ai_view_toggle_group.set_valign(Gtk.Align.CENTER)
         ai_view_toggle_group.add_css_class("linked")
         ai_view_toggle_group.add_css_class("round")
+        ai_view_toggle_group.add_css_class("focus-pill-group")
 
         def add_ai_view_toggle(label: str, view_name: str) -> None:
             button = Gtk.ToggleButton(label=label)
             button.add_css_class("flat")
             button.add_css_class("no-bold")
             button.add_css_class("round")
+            button.add_css_class("focus-pill-segment")
             button.set_valign(Gtk.Align.CENTER)
             button.connect("toggled", self._on_ai_view_toggle, view_name)
             self._ai_view_toggles[view_name] = button
@@ -2399,11 +2423,13 @@ class Focus(Adw.Application):
         summary_button_group.set_valign(Gtk.Align.CENTER)
         summary_button_group.add_css_class("linked")
         summary_button_group.add_css_class("round")
+        summary_button_group.add_css_class("focus-pill-group")
 
         self._minutes_summary_button = Gtk.ToggleButton(label="Minutes Sum")
         self._minutes_summary_button.add_css_class("flat")
         self._minutes_summary_button.add_css_class("no-bold")
         self._minutes_summary_button.add_css_class("round")
+        self._minutes_summary_button.add_css_class("focus-pill-segment")
         self._minutes_summary_button.set_valign(Gtk.Align.CENTER)
         self._minutes_summary_button.set_tooltip_text("Load minutes summary from manifest")
         self._minutes_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_MINUTES)
@@ -2414,6 +2440,7 @@ class Focus(Adw.Application):
         self._hearing_summary_button.add_css_class("flat")
         self._hearing_summary_button.add_css_class("no-bold")
         self._hearing_summary_button.add_css_class("round")
+        self._hearing_summary_button.add_css_class("focus-pill-segment")
         self._hearing_summary_button.set_valign(Gtk.Align.CENTER)
         self._hearing_summary_button.set_tooltip_text("Load hearing summary from summaries/")
         self._hearing_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_HEARING)
@@ -2424,6 +2451,7 @@ class Focus(Adw.Application):
         self._reports_summary_button.add_css_class("flat")
         self._reports_summary_button.add_css_class("no-bold")
         self._reports_summary_button.add_css_class("round")
+        self._reports_summary_button.add_css_class("focus-pill-segment")
         self._reports_summary_button.set_valign(Gtk.Align.CENTER)
         self._reports_summary_button.set_tooltip_text("Load reports summary from summaries/")
         self._reports_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_REPORTS)
