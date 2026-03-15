@@ -1740,6 +1740,7 @@ class Focus(Adw.Application):
         self.current_index: int = 0
 
         self.win: Adw.ApplicationWindow | None = None
+        self._shortcuts_window: Gtk.ShortcutsWindow | None = None
         self._input_dir_dialog: Gtk.FileDialog | None = None
         self.textview: Gtk.TextView | None = None
         self.scroller: Gtk.ScrolledWindow | None = None
@@ -2070,6 +2071,7 @@ class Focus(Adw.Application):
         menu_model = Gio.Menu()
         menu_model.append("Input Directory", "app.choose_input")
         menu_model.append("Settings", "app.open_ai_settings")
+        menu_model.append("Keyboard Shortcuts", "app.show_shortcuts")
 
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu_button.add_css_class("flat")
@@ -5514,6 +5516,10 @@ class Focus(Adw.Application):
         open_ai_settings.connect("activate", self._on_open_ai_settings)
         self.add_action(open_ai_settings)
 
+        show_shortcuts = Gio.SimpleAction.new("show_shortcuts", None)
+        show_shortcuts.connect("activate", self._on_show_shortcuts)
+        self.add_action(show_shortcuts)
+
         toggle_sidebar = Gio.SimpleAction.new_stateful(
             "toggle_toc_sidebar",
             None,
@@ -5563,7 +5569,78 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.toggle_continuous_view", ["<Primary><Shift>c"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
+        self.set_accels_for_action("app.show_shortcuts", ["F1", "<Primary>question"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
+
+    def _build_shortcuts_window(self) -> Gtk.ShortcutsWindow:
+        if self._shortcuts_window:
+            return self._shortcuts_window
+
+        window = Gtk.ShortcutsWindow(
+            transient_for=self.win,
+            modal=False,
+            hide_on_close=True,
+            title=f"{APPLICATION_NAME} Keyboard Shortcuts",
+        )
+        window.set_default_size(760, 540)
+
+        navigation_section = Gtk.ShortcutsSection(title="Keyboard Shortcuts")
+        navigation_group = Gtk.ShortcutsGroup(title="Transcript")
+        navigation_group.append(Gtk.ShortcutsShortcut(title="Previous page", accelerator="Up"))
+        navigation_group.append(Gtk.ShortcutsShortcut(title="Next page", accelerator="Down"))
+        navigation_group.append(Gtk.ShortcutsShortcut(title="First page", accelerator="Home"))
+        navigation_group.append(Gtk.ShortcutsShortcut(title="Last page", accelerator="End"))
+        navigation_group.append(
+            Gtk.ShortcutsShortcut(title="Toggle TOC sidebar", accelerator="<Primary><Shift>Z")
+        )
+        navigation_group.append(
+            Gtk.ShortcutsShortcut(title="Toggle continuous view", accelerator="<Primary><Shift>C")
+        )
+        navigation_group.append(
+            Gtk.ShortcutsShortcut(title="Toggle image view", accelerator="<Primary>I")
+        )
+        navigation_section.append(navigation_group)
+
+        search_group = Gtk.ShortcutsGroup(title="Grep")
+        search_group.append(
+            Gtk.ShortcutsShortcut(title="Focus grep search field", accelerator="<Primary>F")
+        )
+        search_group.append(
+            Gtk.ShortcutsShortcut(title="Next grep result", accelerator="<Primary>G")
+        )
+        search_group.append(
+            Gtk.ShortcutsShortcut(title="Previous grep result", accelerator="<Primary><Shift>G")
+        )
+        navigation_section.append(search_group)
+
+        tools_group = Gtk.ShortcutsGroup(title="AI Panel")
+        tools_group.append(
+            Gtk.ShortcutsShortcut(
+                title="Toggle case tools and focus question box",
+                accelerator="<Primary><Shift>A",
+            )
+        )
+        tools_group.append(
+            Gtk.ShortcutsShortcut(title="Focus RAG question box", accelerator="<Primary>Q")
+        )
+        navigation_section.append(tools_group)
+
+        help_group = Gtk.ShortcutsGroup(title="Reference")
+        help_group.append(Gtk.ShortcutsShortcut(title="Show keyboard shortcuts", accelerator="F1"))
+        help_group.append(
+            Gtk.ShortcutsShortcut(title="Show keyboard shortcuts", accelerator="<Primary>question")
+        )
+        navigation_section.append(help_group)
+        window.add_section(navigation_section)
+
+        self._shortcuts_window = window
+        return window
+
+    def _on_show_shortcuts(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
+        window = self._build_shortcuts_window()
+        if self.win:
+            window.set_transient_for(self.win)
+        window.present()
 
     def _on_choose_input_dir(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         if not self.win:
