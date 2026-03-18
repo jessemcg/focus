@@ -72,6 +72,8 @@ CONFIG_KEY_PAGE_API_KEY = "page_api_key"
 CONFIG_KEY_RANGE_API_URL = "range_api_url"
 CONFIG_KEY_RANGE_MODEL_ID = "range_model_id"
 CONFIG_KEY_RANGE_API_KEY = "range_api_key"
+CONFIG_KEY_PAGE_DISABLE_REASONING = "page_disable_reasoning"
+CONFIG_KEY_RANGE_DISABLE_REASONING = "range_disable_reasoning"
 CONFIG_KEY_SUMMARIZATION_PROMPT = "summarization_prompt"
 CONFIG_KEY_PAGE_PROMPT = "page_summarization_prompt"
 CONFIG_KEY_RANGE_PROMPT = "range_summarization_prompt"
@@ -785,6 +787,8 @@ class AiSettings:
     range_api_url: str
     range_model_id: str
     range_api_key: str
+    page_disable_reasoning: bool
+    range_disable_reasoning: bool
     page_prompt: str
     range_prompt: str
     rag_provider: str
@@ -935,6 +939,12 @@ def load_ai_settings() -> AiSettings:
     range_api_url = str(config.get(CONFIG_KEY_RANGE_API_URL, "") or "").strip()
     range_model_id = str(config.get(CONFIG_KEY_RANGE_MODEL_ID, "") or "").strip()
     range_api_key = str(config.get(CONFIG_KEY_RANGE_API_KEY, "") or "").strip()
+    page_disable_reasoning = bool(
+        config.get(CONFIG_KEY_PAGE_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    )
+    range_disable_reasoning = bool(
+        config.get(CONFIG_KEY_RANGE_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    )
     fallback_prompt = str(config.get(CONFIG_KEY_SUMMARIZATION_PROMPT, DEFAULT_SUMMARIZATION_PROMPT) or "").strip()
     page_prompt = str(config.get(CONFIG_KEY_PAGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
     range_prompt = str(config.get(CONFIG_KEY_RANGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
@@ -990,6 +1000,8 @@ def load_ai_settings() -> AiSettings:
         range_api_url=range_api_url,
         range_model_id=range_model_id,
         range_api_key=range_api_key,
+        page_disable_reasoning=page_disable_reasoning,
+        range_disable_reasoning=range_disable_reasoning,
         page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
         range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
         rag_provider=rag_provider,
@@ -1024,6 +1036,8 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_RANGE_API_URL] = settings.range_api_url
     config[CONFIG_KEY_RANGE_MODEL_ID] = settings.range_model_id
     config[CONFIG_KEY_RANGE_API_KEY] = settings.range_api_key
+    config[CONFIG_KEY_PAGE_DISABLE_REASONING] = bool(settings.page_disable_reasoning)
+    config[CONFIG_KEY_RANGE_DISABLE_REASONING] = bool(settings.range_disable_reasoning)
     config[CONFIG_KEY_SUMMARIZATION_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_PAGE_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_RANGE_PROMPT] = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
@@ -2117,7 +2131,6 @@ class Focus(Adw.Application):
         menu_model = Gio.Menu()
         menu_model.append("Input Directory", "app.choose_input")
         menu_model.append("Settings", "app.open_ai_settings")
-        menu_model.append("Detach or Attach Case Tools", "app.toggle_ai_panel_detached")
         menu_model.append("Keyboard Shortcuts", "app.show_shortcuts")
 
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
@@ -7219,9 +7232,11 @@ class Focus(Adw.Application):
         if prompt_kind == "range":
             prompt = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
             api_url, model_id, api_key = settings.range_credentials()
+            disable_reasoning = settings.range_disable_reasoning
         else:
             prompt = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
             api_url, model_id, api_key = settings.page_credentials()
+            disable_reasoning = settings.page_disable_reasoning
 
         self._stop_ai_stream_if_running()
         state.ai_cancel_event = threading.Event()
@@ -7254,6 +7269,7 @@ class Focus(Adw.Application):
                 model_id=model_id,
                 api_url=api_url,
                 api_key=api_key,
+                disable_reasoning=disable_reasoning,
             )
 
         state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
@@ -7601,6 +7617,7 @@ class SummarizationPromptWidgets:
     api_url_row: Adw.EntryRow
     model_row: Adw.EntryRow
     api_key_row: Adw.EntryRow
+    disable_reasoning_row: Adw.SwitchRow
     prompt_buffer: Gtk.TextBuffer
 
 
@@ -7978,6 +7995,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         api_key_row = self._build_password_row("API Key")
         credentials_group.add(api_key_row)
 
+        disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
+        disable_reasoning_row.set_active(DEFAULT_DISABLE_REASONING)
+        credentials_group.add(disable_reasoning_row)
+
         prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         prompt_section.set_hexpand(True)
         prompt_section.set_vexpand(True)
@@ -7998,6 +8019,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             api_url_row=api_url_row,
             model_row=model_row,
             api_key_row=api_key_row,
+            disable_reasoning_row=disable_reasoning_row,
             prompt_buffer=buffer,
         )
         return page
@@ -8165,12 +8187,18 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             page_widgets.api_url_row.set_text(settings.page_api_url or settings.api_url)
             page_widgets.model_row.set_text(settings.page_model_id or settings.model_id)
             page_widgets.api_key_row.set_text(settings.page_api_key or settings.api_key)
+            page_widgets.disable_reasoning_row.set_active(
+                bool(settings.page_disable_reasoning)
+            )
             page_widgets.prompt_buffer.set_text(settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT)
 
         if isinstance(range_widgets, SummarizationPromptWidgets):
             range_widgets.api_url_row.set_text(settings.range_api_url or settings.api_url)
             range_widgets.model_row.set_text(settings.range_model_id or settings.model_id)
             range_widgets.api_key_row.set_text(settings.range_api_key or settings.api_key)
+            range_widgets.disable_reasoning_row.set_active(
+                bool(settings.range_disable_reasoning)
+            )
             range_widgets.prompt_buffer.set_text(settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT)
 
         if isinstance(rag_widgets, RagPromptWidgets):
@@ -8257,9 +8285,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page_api_url = page_widgets.api_url_row.get_text().strip()
         page_model_id = page_widgets.model_row.get_text().strip()
         page_api_key = page_widgets.api_key_row.get_text().strip()
+        page_disable_reasoning = bool(page_widgets.disable_reasoning_row.get_active())
         range_api_url = range_widgets.api_url_row.get_text().strip()
         range_model_id = range_widgets.model_row.get_text().strip()
         range_api_key = range_widgets.api_key_row.get_text().strip()
+        range_disable_reasoning = bool(range_widgets.disable_reasoning_row.get_active())
         rag_api_url = rag_widgets.api_url_row.get_text().strip()
         rag_api_key = rag_widgets.api_key_row.get_text().strip()
         rag_model = rag_widgets.model_row.get_text().strip()
@@ -8335,6 +8365,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             range_api_url=range_api_url,
             range_model_id=range_model_id,
             range_api_key=range_api_key,
+            page_disable_reasoning=page_disable_reasoning,
+            range_disable_reasoning=range_disable_reasoning,
             page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             rag_provider=rag_provider,
