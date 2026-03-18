@@ -300,6 +300,17 @@ def _apply_disable_reasoning_to_body(
     else:
         body["reasoning_effort"] = "none"
 AI_VIEW_FILE = "show-file"
+AI_VIEW_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Summarize", AI_VIEW_SUMMARIZE),
+    ("Q & A", AI_VIEW_QA),
+    ("RAG Audit", AI_VIEW_RAG_AUDIT),
+    ("Show File", AI_VIEW_FILE),
+)
+SUMMARY_SOURCE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Minutes", SUMMARY_SOURCE_MINUTES),
+    ("Hearing Sum", SUMMARY_SOURCE_HEARING),
+    ("Reports Sum", SUMMARY_SOURCE_REPORTS),
+)
 
 
 def _normalize_rag_provider(value: str) -> str:
@@ -1762,6 +1773,7 @@ class Focus(Adw.Application):
         self.current_index: int = 0
 
         self.win: Adw.ApplicationWindow | None = None
+        self._ai_panel_window: Adw.ApplicationWindow | None = None
         self._shortcuts_window: Gtk.ShortcutsWindow | None = None
         self._input_dir_dialog: Gtk.FileDialog | None = None
         self.textview: Gtk.TextView | None = None
@@ -1861,7 +1873,7 @@ class Focus(Adw.Application):
         self._summary_scroll_restore_guard = False
         self._summary_active_source: str | None = None
         self._summary_toggle_guard = False
-        self._summary_toggles: dict[str, Gtk.ToggleButton] = {}
+        self._summary_source_dropdown: Gtk.DropDown | None = None
         self._summary_progress_label: Gtk.Label | None = None
         self._summary_bookmark_button: Gtk.Button | None = None
         self._summary_print_button: Gtk.Button | None = None
@@ -1893,14 +1905,17 @@ class Focus(Adw.Application):
         self._toc_categories: list[TocCategory] = []
         self._toc_load_generation = 0
         self._ai_panel_revealer: Gtk.Revealer | None = None
+        self._ai_panel_root: Gtk.Widget | None = None
         self._ai_view_stack: Adw.ViewStack | None = None
-        self._ai_view_toggles: dict[str, Gtk.ToggleButton] = {}
+        self._ai_view_dropdown: Gtk.DropDown | None = None
         self._ai_view_toggle_guard = False
         self._ai_controls_stack: Gtk.Stack | None = None
         self._ai_status_label: Gtk.Label | None = None
         self._ai_spinner: Gtk.Spinner | None = None
         self._ai_range_entry: Gtk.Entry | None = None
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
+        self._ai_detach_button: Gtk.ToggleButton | None = None
+        self._ai_detach_button_guard = False
         self._minutes_summary_button: Gtk.Button | None = None
         self._hearing_summary_button: Gtk.Button | None = None
         self._reports_summary_button: Gtk.Button | None = None
@@ -2076,8 +2091,17 @@ class Focus(Adw.Application):
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
         self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
-        self._set_ai_panel_visible(True)
+        self._set_ai_panel_visible(False)
         left_box.append(self._ai_panel_toggle)
+
+        self._ai_detach_button = Gtk.ToggleButton(label="Detach Case Tools")
+        self._ai_detach_button.add_css_class("flat")
+        self._ai_detach_button.add_css_class("no-bold")
+        self._ai_detach_button.add_css_class("focus-view-toggle")
+        self._ai_detach_button.set_valign(Gtk.Align.CENTER)
+        self._ai_detach_button.set_tooltip_text("Detach case tools into a separate window")
+        self._ai_detach_button.connect("toggled", self._on_ai_detach_button_toggled)
+        left_box.append(self._ai_detach_button)
 
         header.pack_start(left_box)
 
@@ -2093,6 +2117,7 @@ class Focus(Adw.Application):
         menu_model = Gio.Menu()
         menu_model.append("Input Directory", "app.choose_input")
         menu_model.append("Settings", "app.open_ai_settings")
+        menu_model.append("Detach or Attach Case Tools", "app.toggle_ai_panel_detached")
         menu_model.append("Keyboard Shortcuts", "app.show_shortcuts")
 
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
@@ -2261,7 +2286,7 @@ class Focus(Adw.Application):
 
         self._ai_panel_revealer = Gtk.Revealer()
         self._ai_panel_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        self._ai_panel_revealer.set_reveal_child(True)
+        self._ai_panel_revealer.set_reveal_child(False)
 
         ai_panel_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         ai_panel_root.set_hexpand(True)
@@ -2271,8 +2296,9 @@ class Focus(Adw.Application):
         ai_panel_root.set_margin_start(12)
         ai_panel_root.set_margin_end(12)
         ai_panel_root.add_css_class("ai-output-frame")
+        self._ai_panel_root = ai_panel_root
 
-        ai_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        ai_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         ai_header.set_hexpand(True)
         ai_header.set_valign(Gtk.Align.CENTER)
 
@@ -2294,38 +2320,18 @@ class Focus(Adw.Application):
         self._ai_view_stack.set_vexpand(True)
         self._ai_view_stack.connect("notify::visible-child-name", self._on_ai_view_changed)
 
-        ai_view_toggle_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        ai_view_toggle_group.set_hexpand(False)
-        ai_view_toggle_group.set_valign(Gtk.Align.CENTER)
-        ai_view_toggle_group.add_css_class("linked")
-        ai_view_toggle_group.add_css_class("round")
-        ai_view_toggle_group.add_css_class("focus-pill-group")
-
-        def add_ai_view_toggle(label: str, view_name: str) -> None:
-            button = Gtk.ToggleButton(label=label)
-            button.add_css_class("flat")
-            button.add_css_class("no-bold")
-            button.add_css_class("round")
-            button.add_css_class("focus-pill-segment")
-            button.set_valign(Gtk.Align.CENTER)
-            button.connect("toggled", self._on_ai_view_toggle, view_name)
-            self._ai_view_toggles[view_name] = button
-            ai_view_toggle_group.append(button)
-
-        add_ai_view_toggle("Summarize", AI_VIEW_SUMMARIZE)
-        add_ai_view_toggle("Q & A", AI_VIEW_QA)
-        add_ai_view_toggle("RAG Audit", AI_VIEW_RAG_AUDIT)
-        add_ai_view_toggle("Show File", AI_VIEW_FILE)
-
-        ai_header.append(ai_view_toggle_group)
-
-        ai_header.append(Gtk.Separator.new(Gtk.Orientation.VERTICAL))
+        ai_view_model = Gtk.StringList.new([label for label, _name in AI_VIEW_CHOICES])
+        self._ai_view_dropdown = Gtk.DropDown.new(ai_view_model, None)
+        self._ai_view_dropdown.set_valign(Gtk.Align.CENTER)
+        self._ai_view_dropdown.connect("notify::selected", self._on_ai_view_dropdown_selected)
+        ai_header.append(self._ai_view_dropdown)
 
         self._ai_controls_stack = Gtk.Stack()
         self._ai_controls_stack.set_hexpand(True)
         self._ai_controls_stack.set_hhomogeneous(False)
         self._ai_controls_stack.set_vhomogeneous(False)
         self._ai_controls_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self._ai_controls_stack.set_hexpand(True)
         ai_header.append(self._ai_controls_stack)
 
         ai_panel_root.append(ai_header)
@@ -2337,19 +2343,19 @@ class Focus(Adw.Application):
         summarize_controls.set_hexpand(True)
         summarize_controls.set_valign(Gtk.Align.CENTER)
 
-        summarize_btn = Gtk.Button(label="Sum Current Page")
+        summarize_btn = Gtk.Button(label="Current Page")
         summarize_btn.add_css_class("flat")
         summarize_btn.add_css_class("no-bold")
         summarize_btn.set_valign(Gtk.Align.CENTER)
+        summarize_btn.set_hexpand(False)
+        summarize_btn.set_halign(Gtk.Align.START)
         summarize_btn.connect("clicked", self._on_summarize_page_clicked)
         summarize_controls.append(summarize_btn)
 
         self._ai_range_entry = Gtk.Entry()
-        self._ai_range_entry.set_placeholder_text("Sum Page Range")
-        self._ai_range_entry.set_width_chars(16)
-        self._ai_range_entry.set_max_width_chars(18)
+        self._ai_range_entry.set_placeholder_text("Page Range")
         self._ai_range_entry.set_max_length(9)
-        self._ai_range_entry.set_hexpand(False)
+        self._ai_range_entry.set_hexpand(True)
         self._ai_range_entry.connect("activate", self._on_summarize_range_activate)
         summarize_controls.append(self._ai_range_entry)
 
@@ -2357,6 +2363,8 @@ class Focus(Adw.Application):
         summarize_range_btn.add_css_class("flat")
         summarize_range_btn.add_css_class("no-bold")
         summarize_range_btn.set_valign(Gtk.Align.CENTER)
+        summarize_range_btn.set_hexpand(False)
+        summarize_range_btn.set_halign(Gtk.Align.START)
         summarize_range_btn.connect("clicked", self._on_summarize_range_button_clicked)
         summarize_controls.append(summarize_range_btn)
 
@@ -2368,23 +2376,25 @@ class Focus(Adw.Application):
         qa_controls.set_valign(Gtk.Align.CENTER)
 
         self._rag_question_entry = Gtk.Entry()
-        self._rag_question_entry.set_width_chars(56)
-        self._rag_question_entry.set_max_width_chars(72)
         self._rag_question_entry.set_hexpand(True)
         self._rag_question_entry.connect("activate", self._on_rag_question_activate)
         qa_controls.append(self._rag_question_entry)
 
-        ask_button = Gtk.Button(label="Ask")
+        ask_button = Gtk.Button(label="A:")
         ask_button.add_css_class("flat")
         ask_button.add_css_class("no-bold")
         ask_button.set_valign(Gtk.Align.CENTER)
+        ask_button.set_hexpand(False)
+        ask_button.set_tooltip_text("Quick answer.")
         ask_button.connect("clicked", self._on_rag_question_button_clicked)
         qa_controls.append(ask_button)
 
-        deep_ask_button = Gtk.Button(label="Deep Ask")
+        deep_ask_button = Gtk.Button(label="R:")
         deep_ask_button.add_css_class("flat")
         deep_ask_button.add_css_class("no-bold")
         deep_ask_button.set_valign(Gtk.Align.CENTER)
+        deep_ask_button.set_hexpand(False)
+        deep_ask_button.set_tooltip_text("Deeper answer using a reasoning model.")
         deep_ask_button.connect("clicked", self._on_rag_deep_question_button_clicked)
         qa_controls.append(deep_ask_button)
 
@@ -2402,70 +2412,25 @@ class Focus(Adw.Application):
         rag_audit_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rag_audit_view.set_hexpand(True)
         rag_audit_view.set_vexpand(True)
-        rag_audit_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        rag_audit_controls.set_hexpand(True)
-        rag_audit_controls.set_valign(Gtk.Align.CENTER)
-        rag_audit_hint = Gtk.Label(label="Inspect the latest RAG payload, retrieval chunks, and scores.")
+        rag_audit_controls = self._build_wrapping_controls_box()
+        rag_audit_hint = Gtk.Label(label="Inspect the latest RAG payload.")
         rag_audit_hint.add_css_class("dim-label")
         rag_audit_hint.set_xalign(0.0)
         rag_audit_hint.set_hexpand(True)
-        rag_audit_controls.append(rag_audit_hint)
+        rag_audit_controls.insert(rag_audit_hint, -1)
 
         file_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         file_view.set_hexpand(True)
         file_view.set_vexpand(True)
-        summary_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        summary_row.set_hexpand(True)
-        summary_row.set_valign(Gtk.Align.CENTER)
+        summary_row = self._build_wrapping_controls_box()
 
-        summary_button_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        summary_button_group.set_hexpand(False)
-        summary_button_group.set_valign(Gtk.Align.CENTER)
-        summary_button_group.add_css_class("linked")
-        summary_button_group.add_css_class("round")
-        summary_button_group.add_css_class("focus-pill-group")
-
-        self._minutes_summary_button = Gtk.ToggleButton(label="Minutes Sum")
-        self._minutes_summary_button.add_css_class("flat")
-        self._minutes_summary_button.add_css_class("no-bold")
-        self._minutes_summary_button.add_css_class("round")
-        self._minutes_summary_button.add_css_class("focus-pill-segment")
-        self._minutes_summary_button.set_valign(Gtk.Align.CENTER)
-        self._minutes_summary_button.set_tooltip_text("Load minutes summary from manifest")
-        self._minutes_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_MINUTES)
-        summary_button_group.append(self._minutes_summary_button)
-        self._summary_toggles[SUMMARY_SOURCE_MINUTES] = self._minutes_summary_button
-
-        self._hearing_summary_button = Gtk.ToggleButton(label="Hearing Sum")
-        self._hearing_summary_button.add_css_class("flat")
-        self._hearing_summary_button.add_css_class("no-bold")
-        self._hearing_summary_button.add_css_class("round")
-        self._hearing_summary_button.add_css_class("focus-pill-segment")
-        self._hearing_summary_button.set_valign(Gtk.Align.CENTER)
-        self._hearing_summary_button.set_tooltip_text("Load hearing summary from summaries/")
-        self._hearing_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_HEARING)
-        summary_button_group.append(self._hearing_summary_button)
-        self._summary_toggles[SUMMARY_SOURCE_HEARING] = self._hearing_summary_button
-
-        self._reports_summary_button = Gtk.ToggleButton(label="Reports Sum")
-        self._reports_summary_button.add_css_class("flat")
-        self._reports_summary_button.add_css_class("no-bold")
-        self._reports_summary_button.add_css_class("round")
-        self._reports_summary_button.add_css_class("focus-pill-segment")
-        self._reports_summary_button.set_valign(Gtk.Align.CENTER)
-        self._reports_summary_button.set_tooltip_text("Load reports summary from summaries/")
-        self._reports_summary_button.connect("toggled", self._on_summary_toggle, SUMMARY_SOURCE_REPORTS)
-        summary_button_group.append(self._reports_summary_button)
-        self._summary_toggles[SUMMARY_SOURCE_REPORTS] = self._reports_summary_button
-
-        self._summary_search_entry = Gtk.SearchEntry()
-        self._summary_search_entry.set_placeholder_text("Search file")
-        self._summary_search_entry.set_width_chars(24)
-        self._summary_search_entry.set_max_width_chars(48)
-        self._summary_search_entry.set_hexpand(True)
-        self._summary_search_entry.set_valign(Gtk.Align.CENTER)
-        self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
-        self._summary_search_entry.connect("activate", self._on_summary_search_activate)
+        summary_source_model = Gtk.StringList.new([label for label, _source in SUMMARY_SOURCE_CHOICES])
+        self._summary_source_dropdown = Gtk.DropDown.new(summary_source_model, None)
+        self._summary_source_dropdown.set_valign(Gtk.Align.CENTER)
+        self._summary_source_dropdown.connect(
+            "notify::selected",
+            self._on_summary_source_dropdown_selected,
+        )
 
         self._summary_progress_label = Gtk.Label(label="0%")
         self._summary_progress_label.add_css_class("dim-label")
@@ -2491,11 +2456,10 @@ class Focus(Adw.Application):
         print_icon = self._choose_icon("document-print-symbolic", "document-print")
         self._summary_print_button.set_child(Gtk.Image.new_from_icon_name(print_icon))
         self._summary_print_button.connect("clicked", self._on_summary_print_clicked)
-        summary_row.append(summary_button_group)
-        summary_row.append(self._summary_search_entry)
-        summary_row.append(self._summary_progress_label)
-        summary_row.append(self._summary_bookmark_button)
-        summary_row.append(self._summary_print_button)
+        summary_row.insert(self._summary_source_dropdown, -1)
+        summary_row.insert(self._summary_progress_label, -1)
+        summary_row.insert(self._summary_bookmark_button, -1)
+        summary_row.insert(self._summary_print_button, -1)
 
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
@@ -2549,7 +2513,7 @@ class Focus(Adw.Application):
         self._auto_load_summary_file()
 
         ai_panel_root.append(self._ai_view_stack)
-        self._ai_panel_revealer.set_child(ai_panel_root)
+        self._attach_ai_panel_to_embedded_host()
         main_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         main_root.set_hexpand(True)
         main_root.set_vexpand(True)
@@ -2758,6 +2722,128 @@ class Focus(Adw.Application):
 
         self._install_navigation_controllers()
         self._install_actions()
+        self._update_ai_detach_button()
+
+    def _is_ai_panel_detached(self) -> bool:
+        return self._ai_panel_window is not None and self._ai_panel_root is not None
+
+    def _get_ai_host_window(self) -> Adw.ApplicationWindow | None:
+        if self._is_ai_panel_detached():
+            return self._ai_panel_window
+        return self.win
+
+    def _detach_widget_from_parent(self, widget: Gtk.Widget | None) -> None:
+        if widget is None:
+            return
+        parent = widget.get_parent()
+        if parent is None:
+            return
+        if isinstance(parent, Gtk.Box):
+            parent.remove(widget)
+            return
+        if isinstance(parent, Gtk.Revealer):
+            parent.set_child(None)
+            return
+        if isinstance(parent, Gtk.ScrolledWindow):
+            parent.set_child(None)
+            return
+        if isinstance(parent, Adw.ToolbarView):
+            parent.set_content(None)
+            return
+
+    def _attach_ai_panel_to_embedded_host(self) -> None:
+        if not self._ai_panel_revealer or not self._ai_panel_root:
+            return
+        self._detach_widget_from_parent(self._ai_panel_root)
+        self._ai_panel_revealer.set_child(self._ai_panel_root)
+
+    def _build_ai_panel_window(self) -> Adw.ApplicationWindow | None:
+        if self._ai_panel_window:
+            return self._ai_panel_window
+        if not self.win:
+            return None
+        window = Adw.ApplicationWindow(application=self, transient_for=self.win)
+        window.set_title(f"{APPLICATION_NAME} Case Tools")
+        window.set_default_size(760, 520)
+        window.connect("close-request", self._on_ai_panel_window_close_request)
+
+        view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.add_css_class("flat")
+
+        title = Gtk.Label(label="Case Tools")
+        title.add_css_class("heading")
+        header.set_title_widget(title)
+
+        view.add_top_bar(header)
+        window.set_content(view)
+        self._ai_panel_window = window
+        return window
+
+    def _attach_ai_panel_to_detached_host(self) -> None:
+        window = self._build_ai_panel_window()
+        if not window or not self._ai_panel_root:
+            return
+        content = window.get_content()
+        if isinstance(content, Adw.ToastOverlay):
+            content = content.get_child()
+        if not isinstance(content, Adw.ToolbarView):
+            return
+        self._detach_widget_from_parent(self._ai_panel_root)
+        content.set_content(self._ai_panel_root)
+
+    def _update_ai_detach_button(self) -> None:
+        if not self._ai_detach_button:
+            return
+        detached = self._is_ai_panel_detached()
+        tooltip = (
+            "Close the detached case tools window"
+            if detached
+            else "Detach case tools into a separate window"
+        )
+        self._ai_detach_button_guard = True
+        try:
+            self._ai_detach_button.set_active(detached)
+            self._ai_detach_button.set_tooltip_text(tooltip)
+        finally:
+            self._ai_detach_button_guard = False
+
+    def _detach_ai_panel(self) -> None:
+        if self._is_ai_panel_detached():
+            if self._ai_panel_window:
+                self._set_ai_panel_visible(True)
+                self._ai_panel_window.present()
+            return
+        self._attach_ai_panel_to_detached_host()
+        self._update_ai_detach_button()
+        if self._ai_panel_revealer:
+            self._ai_panel_revealer.set_reveal_child(False)
+        self._set_ai_panel_visible(True)
+        if self._ai_panel_window:
+            self._ai_panel_window.present()
+
+    def _reattach_ai_panel(self, *, preserve_visibility: bool = True) -> None:
+        if not self._is_ai_panel_detached():
+            self._attach_ai_panel_to_embedded_host()
+            self._update_ai_detach_button()
+            return
+        visible = self._current_view_state().ai_panel_visible if preserve_visibility else True
+        if self._ai_panel_window:
+            self._detach_widget_from_parent(self._ai_panel_root)
+            self._ai_panel_window.hide()
+            self._ai_panel_window.destroy()
+            self._ai_panel_window = None
+        self._attach_ai_panel_to_embedded_host()
+        if self._ai_panel_revealer:
+            self._ai_panel_revealer.set_reveal_child(visible)
+        self._update_ai_detach_button()
+
+    def _toggle_ai_panel_detached(self) -> None:
+        if self._is_ai_panel_detached():
+            self._set_ai_panel_visible(False)
+            self._reattach_ai_panel()
+        else:
+            self._detach_ai_panel()
 
     def _current_view_state(self) -> FocusViewState:
         return self._view_state
@@ -3758,6 +3844,18 @@ class Focus(Adw.Application):
             self._ai_outputs[view_name] = state
         return state
 
+    def _build_wrapping_controls_box(self) -> Gtk.FlowBox:
+        box = Gtk.FlowBox()
+        box.set_selection_mode(Gtk.SelectionMode.NONE)
+        box.set_valign(Gtk.Align.CENTER)
+        box.set_halign(Gtk.Align.FILL)
+        box.set_hexpand(True)
+        box.set_min_children_per_line(1)
+        box.set_max_children_per_line(32)
+        box.set_row_spacing(6)
+        box.set_column_spacing(6)
+        return box
+
     def _build_ai_output_view(self, view_name: str) -> Gtk.ScrolledWindow:
         state = self._get_ai_output_state(view_name)
         text_view = Gtk.TextView(
@@ -4547,11 +4645,11 @@ class Focus(Adw.Application):
 
     def _on_summary_bookmark_clicked(self, _button: Gtk.Button) -> None:
         if not self._summary_loaded_path:
-            self._transient_toast("No summary file is loaded.")
+            self._ai_transient_toast("No summary file is loaded.")
             return
         line_num = self._selected_summary_line_number()
         if line_num is None:
-            self._transient_toast("Select summary text first to create a bookmark.")
+            self._ai_transient_toast("Select summary text first to create a bookmark.")
             return
         bookmarks_path = self._summary_bookmarks_path_for(self._summary_loaded_path)
         data = self._read_summary_bookmarks(bookmarks_path)
@@ -4568,9 +4666,9 @@ class Focus(Adw.Application):
             bookmarks_path.parent.mkdir(parents=True, exist_ok=True)
             bookmarks_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
         except OSError as exc:  # noqa: BLE001
-            self._transient_toast(f"Could not save summary bookmark: {exc}")
+            self._ai_transient_toast(f"Could not save summary bookmark: {exc}")
             return
-        self._transient_toast(
+        self._ai_transient_toast(
             f"Bookmarked {self._summary_loaded_path.name} at line {line_num}."
         )
 
@@ -4834,31 +4932,39 @@ class Focus(Adw.Application):
         self._sync_summary_toggles(source)
 
     def _sync_summary_toggles(self, source: str | None) -> None:
-        if not self._summary_toggles:
+        if not self._summary_source_dropdown:
             return
         self._summary_toggle_guard = True
         try:
-            for key, button in self._summary_toggles.items():
-                button.set_active(key == source)
+            selected = 0
+            if source:
+                for index, (_label, value) in enumerate(SUMMARY_SOURCE_CHOICES):
+                    if value == source:
+                        selected = index
+                        break
+            self._summary_source_dropdown.set_selected(selected)
         finally:
             self._summary_toggle_guard = False
 
-    def _on_summary_toggle(self, button: Gtk.ToggleButton, source: str) -> None:
+    def _on_summary_source_dropdown_selected(
+        self,
+        dropdown: Gtk.DropDown,
+        _pspec: GObject.ParamSpec,
+    ) -> None:
         if self._summary_toggle_guard:
             return
-        if not button.get_active():
-            self._summary_toggle_guard = True
-            button.set_active(True)
-            self._summary_toggle_guard = False
+        selected = int(dropdown.get_selected())
+        if selected < 0 or selected >= len(SUMMARY_SOURCE_CHOICES):
             return
+        _label, source = SUMMARY_SOURCE_CHOICES[selected]
         if source == SUMMARY_SOURCE_MINUTES:
-            self._on_minutes_summary_clicked(button)
+            self._on_minutes_summary_clicked(None)
             return
         if source == SUMMARY_SOURCE_HEARING:
-            self._on_hearing_summary_clicked(button)
+            self._on_hearing_summary_clicked(None)
             return
         if source == SUMMARY_SOURCE_REPORTS:
-            self._on_reports_summary_clicked(button)
+            self._on_reports_summary_clicked(None)
             return
 
     def _infer_summary_source(self, path: Path) -> str:
@@ -5579,6 +5685,10 @@ class Focus(Adw.Application):
         focus_rag_question.connect("activate", lambda _a, _p: self._focus_rag_question_entry())
         self.add_action(focus_rag_question)
 
+        toggle_ai_panel_detached = Gio.SimpleAction.new("toggle_ai_panel_detached", None)
+        toggle_ai_panel_detached.connect("activate", lambda _a, _p: self._toggle_ai_panel_detached())
+        self.add_action(toggle_ai_panel_detached)
+
         for name, cb in {
             "next": self._go_next,
             "prev": self._go_prev,
@@ -5694,6 +5804,17 @@ class Focus(Adw.Application):
         if self._input_dir_dialog is dialog:
             self._input_dir_dialog = None
 
+    def _on_ai_detach_button_toggled(self, button: Gtk.ToggleButton) -> None:
+        if self._ai_detach_button_guard:
+            return
+        if button.get_active():
+            if not self._is_ai_panel_detached():
+                self._detach_ai_panel()
+            return
+        if self._is_ai_panel_detached():
+            self._set_ai_panel_visible(False)
+            self._reattach_ai_panel()
+
     def _on_open_ai_settings(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         try:
             window = self._ensure_ai_settings_window()
@@ -5718,7 +5839,15 @@ class Focus(Adw.Application):
 
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
         self._stop_grep_search_if_running()
+        if self._ai_panel_window:
+            self._ai_panel_window.destroy()
+            self._ai_panel_window = None
         return False
+
+    def _on_ai_panel_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
+        self._set_ai_panel_visible(False)
+        self._reattach_ai_panel()
+        return True
 
     def on_ai_settings_saved(self, settings: AiSettings) -> None:
         self._ai_settings = settings
@@ -6003,8 +6132,13 @@ class Focus(Adw.Application):
         self._set_ai_panel_visible(button.get_active())
 
     def _set_ai_panel_visible(self, visible: bool) -> None:
-        if self._ai_panel_revealer:
+        if self._ai_panel_revealer and not self._is_ai_panel_detached():
             self._ai_panel_revealer.set_reveal_child(visible)
+        if self._is_ai_panel_detached() and self._ai_panel_window:
+            if visible:
+                self._ai_panel_window.present()
+            else:
+                self._ai_panel_window.hide()
         if self._ai_panel_toggle and self._ai_panel_toggle.get_active() != visible:
             self._ai_panel_toggle.set_active(visible)
         self._current_view_state().ai_panel_visible = visible
@@ -6061,12 +6195,16 @@ class Focus(Adw.Application):
         self._auto_load_summary_file()
 
     def _sync_ai_view_toggles(self, target: str) -> None:
-        if not self._ai_view_toggles:
+        if not self._ai_view_dropdown:
             return
         self._ai_view_toggle_guard = True
         try:
-            for name, button in self._ai_view_toggles.items():
-                button.set_active(name == target)
+            selected = 0
+            for index, (_label, value) in enumerate(AI_VIEW_CHOICES):
+                if value == target:
+                    selected = index
+                    break
+            self._ai_view_dropdown.set_selected(selected)
         finally:
             self._ai_view_toggle_guard = False
 
@@ -6074,22 +6212,25 @@ class Focus(Adw.Application):
         name = stack.get_visible_child_name() or AI_VIEW_QA
         self._set_ai_view(name)
 
-    def _on_ai_view_toggle(self, button: Gtk.ToggleButton, view_name: str) -> None:
+    def _on_ai_view_dropdown_selected(
+        self,
+        dropdown: Gtk.DropDown,
+        _pspec: GObject.ParamSpec,
+    ) -> None:
         if self._ai_view_toggle_guard:
             return
-        if not button.get_active():
-            self._ai_view_toggle_guard = True
-            button.set_active(True)
-            self._ai_view_toggle_guard = False
+        selected = int(dropdown.get_selected())
+        if selected < 0 or selected >= len(AI_VIEW_CHOICES):
             return
+        _label, view_name = AI_VIEW_CHOICES[selected]
         self._set_ai_view(view_name)
 
     def _on_summarize_page_clicked(self, _button: Gtk.Button) -> None:
         if self._continuous_view or self._showing_grep_results:
-            self._transient_toast("Summarize Page only works when a single text page is visible.")
+            self._ai_transient_toast("Summarize Page only works when a single text page is visible.")
             return
         if not self.pages:
-            self._transient_toast("No page loaded to summarize.")
+            self._ai_transient_toast("No page loaded to summarize.")
             return
         self._set_ai_view(AI_VIEW_SUMMARIZE)
         page = self.pages[self.current_index]
@@ -6109,19 +6250,19 @@ class Focus(Adw.Application):
 
     def _summarize_page_range(self) -> None:
         if not self.pages:
-            self._transient_toast("No pages available to summarize.")
+            self._ai_transient_toast("No pages available to summarize.")
             return
         if not self._ai_range_entry:
             return
         raw = self._ai_range_entry.get_text().strip()
         page_range = self._parse_page_range(raw)
         if page_range is None:
-            self._transient_toast("Enter a page range like 10-25.")
+            self._ai_transient_toast("Enter a page range like 10-25.")
             return
         start_page, end_page = page_range
         targets = [p for p in self.pages if start_page <= p <= end_page]
         if not targets:
-            self._transient_toast("No matching pages found in that range.")
+            self._ai_transient_toast("No matching pages found in that range.")
             return
         self._set_ai_view(AI_VIEW_SUMMARIZE)
         parts: list[str] = []
@@ -6159,7 +6300,7 @@ class Focus(Adw.Application):
             return
         question = self._rag_question_entry.get_text().strip()
         if not question:
-            self._transient_toast("Enter a question to run RAG.")
+            self._ai_transient_toast("Enter a question to run RAG.")
             return
         self._start_rag_question(question, deep=deep)
 
@@ -6201,7 +6342,7 @@ class Focus(Adw.Application):
     ) -> Path | None:
         summaries_dir = self.input_dir / SUMMARY_DIR_NAME
         if not summaries_dir.exists():
-            self._transient_toast(f"Summaries folder not found: {summaries_dir}")
+            self._ai_transient_toast(f"Summaries folder not found: {summaries_dir}")
             return None
         for name in candidates:
             path = summaries_dir / name
@@ -6219,12 +6360,12 @@ class Focus(Adw.Application):
                     matches.append(item)
         except OSError as exc:  # noqa: BLE001
             if show_toast:
-                self._transient_toast(f"Could not read summaries folder: {exc}")
+                self._ai_transient_toast(f"Could not read summaries folder: {exc}")
             return None
         if matches:
             return sorted(matches)[0]
         if show_toast:
-            self._transient_toast(f"{label} summary not found in {summaries_dir}")
+            self._ai_transient_toast(f"{label} summary not found in {summaries_dir}")
         return None
 
     def _load_summary_from_summaries_dir(
@@ -6252,22 +6393,22 @@ class Focus(Adw.Application):
         self._set_ai_view(AI_VIEW_FILE)
         manifest = _read_manifest_file(manifest_path)
         if not manifest:
-            self._transient_toast(f"{label} summary manifest not found: {manifest_path}")
+            self._ai_transient_toast(f"{label} summary manifest not found: {manifest_path}")
             return
         files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
         summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
         if not summary_path:
-            self._transient_toast(f"{label} summary not listed in manifest: {manifest_path}")
+            self._ai_transient_toast(f"{label} summary not listed in manifest: {manifest_path}")
             return
         if not summary_path.exists():
-            self._transient_toast(f"{label} summary file not found: {summary_path}")
+            self._ai_transient_toast(f"{label} summary file not found: {summary_path}")
             return
         self._load_summary_from_path(summary_path, source=source)
 
     def _on_minutes_summary_clicked(self, _button: Gtk.Button) -> None:
         manifest_path = _find_manifest_near_path(self.input_dir)
         if not manifest_path:
-            self._transient_toast(
+            self._ai_transient_toast(
                 f"Minutes summary manifest not found near input dir: {self.input_dir}"
             )
             return
@@ -6382,7 +6523,7 @@ class Focus(Adw.Application):
 
     def _on_summary_print_clicked(self, _button: Gtk.Button) -> None:
         if not self._summary_raw.strip():
-            self._transient_toast("No summary loaded to print.")
+            self._ai_transient_toast("No summary loaded to print.")
             return
         self._summary_print_text = self._summary_raw
         operation = Gtk.PrintOperation()
@@ -6392,9 +6533,9 @@ class Focus(Adw.Application):
         operation.connect("begin-print", self._on_summary_begin_print)
         operation.connect("draw-page", self._on_summary_draw_page)
         try:
-            operation.run(Gtk.PrintOperationAction.PRINT_DIALOG, self.win)
+            operation.run(Gtk.PrintOperationAction.PRINT_DIALOG, self._get_ai_host_window())
         except GLib.Error as exc:
-            self._transient_toast(f"Print failed: {exc.message}")
+            self._ai_transient_toast(f"Print failed: {exc.message}")
 
     def _on_summary_begin_print(
         self, operation: Gtk.PrintOperation, context: Gtk.PrintContext
@@ -6457,12 +6598,12 @@ class Focus(Adw.Application):
         target = path.expanduser()
         resolved = target.resolve(strict=False)
         if not resolved.exists() or not resolved.is_file():
-            self._transient_toast(f"File not found: {resolved}")
+            self._ai_transient_toast(f"File not found: {resolved}")
             return
         try:
             text = resolved.read_text(encoding="utf-8", errors="ignore")
         except OSError as exc:  # noqa: BLE001
-            self._transient_toast(f"Could not read {resolved.name}: {exc}")
+            self._ai_transient_toast(f"Could not read {resolved.name}: {exc}")
             return
         self._stop_ai_stream_if_running()
         self._summary_loaded_path = resolved
@@ -6481,7 +6622,7 @@ class Focus(Adw.Application):
             self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
         self._update_ai_status("", spinning=False)
         if show_toast:
-            self._transient_toast(f"Loaded {resolved.name}")
+            self._ai_transient_toast(f"Loaded {resolved.name}")
         if not allow_auto:
             self._ensure_ai_panel_visible()
 
@@ -6494,38 +6635,38 @@ class Focus(Adw.Application):
             rag_api_url, rag_api_key = settings.rag_deep_credentials()
             rag_model = settings.rag_deep_llm_model.strip()
             if not rag_api_key:
-                self._transient_toast("Configure the Deep Ask API key in Settings.")
+                self._ai_transient_toast("Configure the Deep Ask API key in Settings.")
                 self._ensure_ai_panel_visible()
                 return
             if not rag_model:
-                self._transient_toast("Set the Deep Ask model in Settings.")
+                self._ai_transient_toast("Set the Deep Ask model in Settings.")
                 self._ensure_ai_panel_visible()
                 return
         else:
             rag_api_url, rag_api_key = settings.rag_credentials()
             rag_model = settings.rag_llm_model.strip()
             if not rag_api_key:
-                self._transient_toast("Configure the RAG API key in Settings.")
+                self._ai_transient_toast("Configure the RAG API key in Settings.")
                 self._ensure_ai_panel_visible()
                 return
             if not rag_model:
-                self._transient_toast("Set the RAG answer model in Settings.")
+                self._ai_transient_toast("Set the RAG answer model in Settings.")
                 self._ensure_ai_panel_visible()
                 return
         provider = _normalize_rag_provider(settings.rag_provider)
         if provider == RAG_PROVIDER_ISAACUS:
             if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
-                self._transient_toast("Set the Isaacus API key and model in Settings.")
+                self._ai_transient_toast("Set the Isaacus API key and model in Settings.")
                 self._ensure_ai_panel_visible()
                 return
         elif not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
-            self._transient_toast("Set the Voyage API key and model in Settings.")
+            self._ai_transient_toast("Set the Voyage API key and model in Settings.")
             self._ensure_ai_panel_visible()
             return
         if not settings.rag_prompt.strip():
             settings.rag_prompt = DEFAULT_RAG_PROMPT
         if not rag_api_url:
-            self._transient_toast("Set the RAG API URL in Settings.")
+            self._ai_transient_toast("Set the RAG API URL in Settings.")
             self._ensure_ai_panel_visible()
             return
         target_view = AI_VIEW_QA
@@ -7069,11 +7210,11 @@ class Focus(Adw.Application):
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
         if not settings.is_configured():
-            self._transient_toast("Configure API URL, model, API key, and prompt in Settings.")
+            self._ai_transient_toast("Configure API URL, model, API key, and prompt in Settings.")
             self._ensure_ai_panel_visible()
             return
         if not content.strip():
-            self._transient_toast("Nothing to summarize for the requested selection.")
+            self._ai_transient_toast("Nothing to summarize for the requested selection.")
             return
         if prompt_kind == "range":
             prompt = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
@@ -7394,7 +7535,7 @@ class Focus(Adw.Application):
         self._ai_cancel_event = None
         self._ai_stream_thread = None
         self._update_ai_status("AI request failed.", spinning=False)
-        self._transient_toast(message or "AI request failed.")
+        self._ai_transient_toast(message or "AI request failed.")
         return False
 
     def _on_ai_stream_cancelled(self, generation: int, _target_view: str) -> bool:
@@ -7427,23 +7568,31 @@ class Focus(Adw.Application):
             self.win.remove_css_class("accent")
         return False
 
-    def _transient_toast(self, text: str) -> None:
-        if not self.win:
+    def _transient_toast(
+        self,
+        text: str,
+        *,
+        window: Adw.ApplicationWindow | None = None,
+    ) -> None:
+        target_window = window or self.win
+        if target_window is None:
             return
         toast = Adw.Toast.new(text)
-        overlay = self._ensure_toast_overlay()
+        overlay = self._ensure_toast_overlay(target_window)
         overlay.add_toast(toast)
 
-    def _ensure_toast_overlay(self) -> Adw.ToastOverlay:
-        assert self.win is not None
-        content = self.win.get_content()
+    def _ai_transient_toast(self, text: str) -> None:
+        self._transient_toast(text, window=self._get_ai_host_window())
+
+    def _ensure_toast_overlay(self, window: Adw.ApplicationWindow) -> Adw.ToastOverlay:
+        content = window.get_content()
         if isinstance(content, Adw.ToastOverlay):
             return content
         overlay = Adw.ToastOverlay()
         if content is not None:
-            self.win.set_content(None)
+            window.set_content(None)
             overlay.set_child(content)
-        self.win.set_content(overlay)
+        window.set_content(overlay)
         return overlay
 
 
