@@ -177,6 +177,12 @@ AI_BLOCKQUOTE_LEFT_MARGIN = 24
 AI_BLOCKQUOTE_RIGHT_MARGIN = 12
 AI_BLOCKQUOTE_INDENT = 0
 AI_BLOCKQUOTE_SPACING_PX = 4
+CASE_TOOLS_ICON_CHOICES = ("preferences-system-symbolic", "applications-system-symbolic")
+DETACHED_CASE_TOOLS_ICON_CHOICES = (
+    "window-new-symbolic",
+    "open-in-new-symbolic",
+    "external-link-symbolic",
+)
 CONTINUOUS_PAGE_BATCH = 25
 CONTINUOUS_DIVIDER_GLYPH = "─"
 CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
@@ -1361,7 +1367,8 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
 }
 
 .focus-view-toggle:not(:checked),
-.focus-view-toggle:not(:checked) label {
+.focus-view-toggle:not(:checked) label,
+.focus-view-toggle:not(:checked) image {
   color: alpha(@window_fg_color, 0.62);
 }
 
@@ -1897,6 +1904,7 @@ class Focus(Adw.Application):
         self._summary_print_margins: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
         self._edge_flash_source_id: int | None = None
         self._content_stack: Gtk.Stack | None = None
+        self._main_root: Gtk.Box | None = None
         self._image_scroller: Gtk.ScrolledWindow | None = None
         self._image_picture: Gtk.Picture | None = None
         self._image_fixed: Gtk.Fixed | None = None
@@ -1920,14 +1928,21 @@ class Focus(Adw.Application):
         self._toc_load_generation = 0
         self._ai_panel_revealer: Gtk.Revealer | None = None
         self._ai_panel_root: Gtk.Widget | None = None
+        self._ai_panel_header: Gtk.Widget | None = None
         self._ai_view_stack: Adw.ViewStack | None = None
         self._ai_view_dropdown: Gtk.DropDown | None = None
         self._ai_view_toggle_guard = False
         self._ai_controls_stack: Gtk.Stack | None = None
+        self._ai_output_scrollers: list[Gtk.ScrolledWindow] = []
+        self._ai_panel_resize_tick_id: int | None = None
+        self._last_ai_panel_host_height = -1
+        self._last_ai_panel_target_height = -1
+        self._last_ai_panel_chrome_height = -1
         self._ai_status_label: Gtk.Label | None = None
         self._ai_spinner: Gtk.Spinner | None = None
         self._ai_range_entry: Gtk.Entry | None = None
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
+        self._ai_panel_toggle_guard = False
         self._ai_detach_button: Gtk.ToggleButton | None = None
         self._ai_detach_button_guard = False
         self._minutes_summary_button: Gtk.Button | None = None
@@ -1976,6 +1991,18 @@ class Focus(Adw.Application):
                 except TypeError:
                     continue
         return names[0]
+
+    def _build_header_toggle_content(self, label: str, *icon_names: str) -> Gtk.Box:
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        content.set_valign(Gtk.Align.CENTER)
+        icon = Gtk.Image.new_from_icon_name(self._choose_icon(*icon_names))
+        icon.add_css_class("focus-toggle-icon")
+        icon.set_valign(Gtk.Align.CENTER)
+        text = Gtk.Label(label=label)
+        text.set_valign(Gtk.Align.CENTER)
+        content.append(icon)
+        content.append(text)
+        return content
 
     def _scan_pages(self) -> None:
         self.page_to_path.clear()
@@ -2098,21 +2125,27 @@ class Focus(Adw.Application):
         self._toc_sidebar_button.connect("toggled", self._on_sidebar_toggle_button)
         left_box.append(self._toc_sidebar_button)
 
-        self._ai_panel_toggle = Gtk.ToggleButton(label="Case Tools")
+        self._ai_panel_toggle = Gtk.ToggleButton()
         self._ai_panel_toggle.add_css_class("flat")
         self._ai_panel_toggle.add_css_class("no-bold")
         self._ai_panel_toggle.add_css_class("focus-view-toggle")
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
+        self._ai_panel_toggle.set_child(
+            self._build_header_toggle_content("Case Tools", *CASE_TOOLS_ICON_CHOICES)
+        )
         self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
         self._set_ai_panel_visible(False)
         left_box.append(self._ai_panel_toggle)
 
-        self._ai_detach_button = Gtk.ToggleButton(label="Detach Case Tools")
+        self._ai_detach_button = Gtk.ToggleButton()
         self._ai_detach_button.add_css_class("flat")
         self._ai_detach_button.add_css_class("no-bold")
         self._ai_detach_button.add_css_class("focus-view-toggle")
         self._ai_detach_button.set_valign(Gtk.Align.CENTER)
+        self._ai_detach_button.set_child(
+            self._build_header_toggle_content("Detached", *DETACHED_CASE_TOOLS_ICON_CHOICES)
+        )
         self._ai_detach_button.set_tooltip_text("Detach case tools into a separate window")
         self._ai_detach_button.connect("toggled", self._on_ai_detach_button_toggled)
         left_box.append(self._ai_detach_button)
@@ -2314,6 +2347,7 @@ class Focus(Adw.Application):
         ai_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         ai_header.set_hexpand(True)
         ai_header.set_valign(Gtk.Align.CENTER)
+        self._ai_panel_header = ai_header
 
         self._ai_spinner = Gtk.Spinner(spinning=False)
         self._ai_spinner.set_visible(False)
@@ -2503,6 +2537,7 @@ class Focus(Adw.Application):
         self._summary_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
         self._summary_scroller.set_child(self._summary_view)
         self._connect_summary_scroll_watch()
+        self._ai_output_scrollers.append(self._summary_scroller)
 
         file_view.append(self._summary_scroller)
 
@@ -2530,6 +2565,7 @@ class Focus(Adw.Application):
         main_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         main_root.set_hexpand(True)
         main_root.set_vexpand(True)
+        self._main_root = main_root
         main_root.append(self._ai_panel_revealer)
 
         text_controls = Gtk.CenterBox()
@@ -2731,6 +2767,8 @@ class Focus(Adw.Application):
 
         main_root.append(self._split_view)
         toolbar.set_content(main_root)
+        self._ensure_ai_panel_resize_tracking()
+        self._reset_embedded_ai_panel_sizing()
         self._rebuild_toc_sidebar()
 
         self._install_navigation_controllers()
@@ -2769,6 +2807,10 @@ class Focus(Adw.Application):
             return
         self._detach_widget_from_parent(self._ai_panel_root)
         self._ai_panel_revealer.set_child(self._ai_panel_root)
+        if self._current_view_state().ai_panel_visible:
+            self._update_embedded_ai_panel_height(force=True)
+        else:
+            self._reset_embedded_ai_panel_sizing()
 
     def _build_ai_panel_window(self) -> Adw.ApplicationWindow | None:
         if self._ai_panel_window:
@@ -2803,7 +2845,98 @@ class Focus(Adw.Application):
         if not isinstance(content, Adw.ToolbarView):
             return
         self._detach_widget_from_parent(self._ai_panel_root)
+        self._reset_embedded_ai_panel_sizing()
         content.set_content(self._ai_panel_root)
+
+    def _reset_ai_output_scroller_sizing(self) -> None:
+        for scroller in self._ai_output_scrollers:
+            scroller.set_size_request(-1, -1)
+            scroller.set_propagate_natural_height(True)
+            scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
+            scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
+
+    def _reset_embedded_ai_panel_sizing(self) -> None:
+        if self._ai_panel_revealer:
+            self._ai_panel_revealer.set_size_request(-1, -1)
+        if self._ai_panel_root:
+            self._ai_panel_root.set_size_request(-1, -1)
+        if self._ai_view_stack:
+            self._ai_view_stack.set_size_request(-1, -1)
+        self._reset_ai_output_scroller_sizing()
+        self._last_ai_panel_target_height = -1
+        self._last_ai_panel_chrome_height = -1
+
+    def _current_ai_panel_chrome_height(self) -> int:
+        if self._ai_panel_root and self._ai_view_stack:
+            root_height = max(0, self._ai_panel_root.get_height())
+            stack_height = max(0, self._ai_view_stack.get_height())
+            chrome_height = max(0, root_height - stack_height)
+            if chrome_height > 0:
+                self._last_ai_panel_chrome_height = chrome_height
+                return chrome_height
+        if self._last_ai_panel_chrome_height >= 0:
+            return self._last_ai_panel_chrome_height
+        header_height = 0
+        if self._ai_panel_header:
+            header_height = max(0, self._ai_panel_header.get_height())
+        return header_height + 36
+
+    def _update_embedded_ai_panel_height(self, *, force: bool = False) -> None:
+        if self._is_ai_panel_detached():
+            return
+        if not self.win or not self._ai_panel_root or not self._ai_view_stack:
+            return
+        if not self._ai_panel_revealer or not self._ai_panel_revealer.get_reveal_child():
+            self._reset_embedded_ai_panel_sizing()
+            return
+        host_height = max(0, self.win.get_height())
+        if host_height <= 0:
+            return
+        chrome_height = self._current_ai_panel_chrome_height()
+        margins = self._ai_panel_root.get_margin_top() + self._ai_panel_root.get_margin_bottom()
+        target_panel_height = max(0, host_height // 3)
+        target_root_height = max(0, target_panel_height - margins)
+        target_stack_height = max(0, target_root_height - chrome_height)
+        if (
+            not force
+            and host_height == self._last_ai_panel_host_height
+            and target_panel_height == self._last_ai_panel_target_height
+        ):
+            return
+        self._last_ai_panel_host_height = host_height
+        self._last_ai_panel_target_height = target_panel_height
+        if self._ai_panel_revealer:
+            self._ai_panel_revealer.set_size_request(-1, target_panel_height)
+        self._ai_panel_root.set_size_request(-1, target_root_height)
+        self._ai_view_stack.set_size_request(-1, target_stack_height)
+        for scroller in self._ai_output_scrollers:
+            scroller.set_propagate_natural_height(False)
+            scroller.set_min_content_height(0)
+            scroller.set_max_content_height(target_stack_height)
+            scroller.set_size_request(-1, target_stack_height)
+
+    def _on_ai_panel_resize_tick(
+        self,
+        widget: Gtk.Widget,
+        _frame_clock: Gdk.FrameClock,
+    ) -> bool:
+        if self.win is None or widget is not self.win:
+            self._ai_panel_resize_tick_id = None
+            return False
+        current_height = max(0, self.win.get_height())
+        if current_height > 0 and current_height != self._last_ai_panel_host_height:
+            self._update_embedded_ai_panel_height(force=True)
+        return True
+
+    def _ensure_ai_panel_resize_tracking(self) -> None:
+        if not self.win or self._ai_panel_resize_tick_id is not None:
+            return
+        self._ai_panel_resize_tick_id = self.win.add_tick_callback(self._on_ai_panel_resize_tick)
+
+    def _stop_ai_panel_resize_tracking(self) -> None:
+        if self.win and self._ai_panel_resize_tick_id is not None:
+            self.win.remove_tick_callback(self._ai_panel_resize_tick_id)
+        self._ai_panel_resize_tick_id = None
 
     def _update_ai_detach_button(self) -> None:
         if not self._ai_detach_button:
@@ -2820,6 +2953,21 @@ class Focus(Adw.Application):
             self._ai_detach_button.set_tooltip_text(tooltip)
         finally:
             self._ai_detach_button_guard = False
+
+    def _update_ai_panel_toggle(self, visible: bool) -> None:
+        if not self._ai_panel_toggle:
+            return
+        tooltip = (
+            "Hide case tools (Ctrl+Shift+A)"
+            if visible
+            else "Show case tools (Ctrl+Shift+A)"
+        )
+        self._ai_panel_toggle_guard = True
+        try:
+            self._ai_panel_toggle.set_active(visible)
+            self._ai_panel_toggle.set_tooltip_text(tooltip)
+        finally:
+            self._ai_panel_toggle_guard = False
 
     def _detach_ai_panel(self) -> None:
         if self._is_ai_panel_detached():
@@ -2849,6 +2997,7 @@ class Focus(Adw.Application):
         self._attach_ai_panel_to_embedded_host()
         if self._ai_panel_revealer:
             self._ai_panel_revealer.set_reveal_child(visible)
+        self._update_embedded_ai_panel_height(force=True)
         self._update_ai_detach_button()
 
     def _toggle_ai_panel_detached(self) -> None:
@@ -3900,6 +4049,7 @@ class Focus(Adw.Application):
         scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
         scroller.set_child(text_view)
         state.scroller = scroller
+        self._ai_output_scrollers.append(scroller)
         return scroller
 
     @staticmethod
@@ -5852,6 +6002,7 @@ class Focus(Adw.Application):
 
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
         self._stop_grep_search_if_running()
+        self._stop_ai_panel_resize_tracking()
         if self._ai_panel_window:
             self._ai_panel_window.destroy()
             self._ai_panel_window = None
@@ -6142,26 +6293,28 @@ class Focus(Adw.Application):
         self._load_current()
 
     def _on_ai_panel_toggled(self, button: Gtk.ToggleButton) -> None:
+        if self._ai_panel_toggle_guard:
+            return
+        if self._is_ai_panel_detached():
+            # The embedded Case Tools toggle does not control the detached window.
+            self._update_ai_panel_toggle(True)
+            return
         self._set_ai_panel_visible(button.get_active())
 
     def _set_ai_panel_visible(self, visible: bool) -> None:
         if self._ai_panel_revealer and not self._is_ai_panel_detached():
             self._ai_panel_revealer.set_reveal_child(visible)
+            if visible:
+                self._update_embedded_ai_panel_height(force=True)
+            else:
+                self._reset_embedded_ai_panel_sizing()
         if self._is_ai_panel_detached() and self._ai_panel_window:
             if visible:
                 self._ai_panel_window.present()
             else:
                 self._ai_panel_window.hide()
-        if self._ai_panel_toggle and self._ai_panel_toggle.get_active() != visible:
-            self._ai_panel_toggle.set_active(visible)
         self._current_view_state().ai_panel_visible = visible
-        if self._ai_panel_toggle:
-            tooltip = (
-                "Hide case tools (Ctrl+Shift+A)"
-                if visible
-                else "Show case tools (Ctrl+Shift+A)"
-            )
-            self._ai_panel_toggle.set_tooltip_text(tooltip)
+        self._update_ai_panel_toggle(visible)
 
     def _ensure_ai_panel_visible(self) -> None:
         self._set_ai_panel_visible(True)
@@ -6183,6 +6336,8 @@ class Focus(Adw.Application):
         ):
             self._ai_controls_stack.set_visible_child_name(target)
         self._sync_ai_view_toggles(target)
+        if self._ai_panel_revealer and self._ai_panel_revealer.get_reveal_child():
+            self._update_embedded_ai_panel_height(force=True)
         if target == AI_VIEW_FILE:
             self._restore_summary_scroll_position(self._summary_loaded_path)
             self._update_summary_progress_label()
