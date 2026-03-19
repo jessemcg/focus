@@ -124,6 +124,7 @@ DEFAULT_RAG_CHUNK_COUNT = 8
 DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
 DEFAULT_RAG_ISAACUS_MODEL = "kanon-2-embedder"
 DEFAULT_DISABLE_REASONING = False
+EMBEDDED_AI_PANEL_HEIGHT_DIVISOR = 4
 RAG_PAYLOAD_CASE_DETAILS_HEADING = "# Case Context"
 RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING = "# Retrieved Record Excerpts"
 RAG_PAYLOAD_QUESTION_HEADING = "# Question"
@@ -2894,7 +2895,7 @@ class Focus(Adw.Application):
             return
         chrome_height = self._current_ai_panel_chrome_height()
         margins = self._ai_panel_root.get_margin_top() + self._ai_panel_root.get_margin_bottom()
-        target_panel_height = max(0, host_height // 3)
+        target_panel_height = max(0, host_height // EMBEDDED_AI_PANEL_HEIGHT_DIVISOR)
         target_root_height = max(0, target_panel_height - margins)
         target_stack_height = max(0, target_root_height - chrome_height)
         if (
