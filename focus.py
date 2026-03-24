@@ -4146,6 +4146,7 @@ class Focus(Adw.Application):
                 None,
                 foreground_rgba=quote_color,
                 underline=Pango.Underline.NONE,
+                weight=Pango.Weight.MEDIUM,
             )
             link_lookup[tag] = ("phrase", phrase)
             buffer.apply_tag(tag, start_iter, end_iter)
