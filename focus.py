@@ -4218,7 +4218,7 @@ class Focus(Adw.Application):
             return
         self._apply_summary_links(self._summary_raw)
         if self._summary_loaded_path:
-            self._restore_summary_scroll_position(self._summary_loaded_path)
+            self._restore_summary_position(self._summary_loaded_path)
 
     def _extract_ai_link_spans(self, text: str) -> tuple[str, list[tuple[int, int, str]]]:
         spans: list[tuple[int, int, str]] = []
@@ -4721,6 +4721,15 @@ class Focus(Adw.Application):
             return
         self._restore_summary_scroll_fraction(fraction)
 
+    def _restore_summary_position(self, path: Path | None) -> None:
+        if not path:
+            return
+        state = self._current_view_state()
+        if state.summary_loaded_path == path and state.summary_scroll_fraction is not None:
+            self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
+            return
+        self._restore_summary_bookmark_or_top(path)
+
     def _summary_bookmarks_path_for(self, summary_path: Path) -> Path:
         return summary_path.parent / SUMMARY_BOOKMARKS_FILENAME
 
@@ -4814,7 +4823,7 @@ class Focus(Adw.Application):
             return
         line_num = self._selected_summary_line_number()
         if line_num is None:
-            self._ai_transient_toast("Select summary text first to create a bookmark.")
+            self._ai_transient_toast("No bookmark saved. Select summary text first.")
             return
         bookmarks_path = self._summary_bookmarks_path_for(self._summary_loaded_path)
         data = self._read_summary_bookmarks(bookmarks_path)
@@ -5219,7 +5228,7 @@ class Focus(Adw.Application):
         if self._summary_view:
             self._summary_view.set_cursor_visible(False)
         if self._summary_loaded_path:
-            self._restore_summary_scroll_position(self._summary_loaded_path)
+            self._restore_summary_position(self._summary_loaded_path)
         self._update_summary_progress_label()
 
     def _set_show_image(self, enabled: bool, *, silent: bool = False) -> bool:
@@ -6786,10 +6795,7 @@ class Focus(Adw.Application):
         state.summary_loaded_path = resolved
         state.summary_active_source = source
         self._set_summary_text(text, switch_view=not allow_auto)
-        if state.summary_scroll_fraction is None:
-            self._restore_summary_bookmark_or_top(resolved)
-        else:
-            self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
+        self._restore_summary_position(resolved)
         self._update_ai_status("", spinning=False)
         if show_toast:
             self._ai_transient_toast(f"Loaded {resolved.name}")
