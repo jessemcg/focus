@@ -101,6 +101,7 @@ CONFIG_KEY_RECORD_FONT_FAMILY = "record_font_family"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
 CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR = "phrase_highlight_color"
+CONFIG_KEY_SUMMARY_EMPHASIS_COLOR = "summary_emphasis_color"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
 CASE_NAME_FILENAME = "case_name.txt"
 DEFAULT_SUMMARIZATION_PROMPT = (
@@ -164,6 +165,7 @@ DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
 DEFAULT_HIGHLIGHT_COLOR = "#e5e4e2"     # platinum
+DEFAULT_SUMMARY_EMPHASIS_COLOR = "#f6c65b"
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
 DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
 DEFAULT_PRINT_FONT_FAMILY = "Century Schoolbook"
@@ -816,6 +818,7 @@ class AiSettings:
     highlight_phrases: list[str]
     grep_highlight_color: str
     phrase_highlight_color: str
+    summary_emphasis_color: str
 
     def page_credentials(self) -> tuple[str, str, str]:
         return (
@@ -997,6 +1000,10 @@ def load_ai_settings() -> AiSettings:
         config.get(CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR),
         DEFAULT_HIGHLIGHT_COLOR,
     )
+    summary_emphasis_color = _coerce_color_value(
+        config.get(CONFIG_KEY_SUMMARY_EMPHASIS_COLOR),
+        DEFAULT_SUMMARY_EMPHASIS_COLOR,
+    )
     return AiSettings(
         api_url=api_url,
         model_id=model_id,
@@ -1029,6 +1036,7 @@ def load_ai_settings() -> AiSettings:
         highlight_phrases=highlight_phrases,
         grep_highlight_color=grep_highlight_color,
         phrase_highlight_color=phrase_highlight_color,
+        summary_emphasis_color=summary_emphasis_color,
     )
 
 
@@ -1077,6 +1085,10 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR] = _coerce_color_value(
         settings.phrase_highlight_color,
         DEFAULT_HIGHLIGHT_COLOR,
+    )
+    config[CONFIG_KEY_SUMMARY_EMPHASIS_COLOR] = _coerce_color_value(
+        settings.summary_emphasis_color,
+        DEFAULT_SUMMARY_EMPHASIS_COLOR,
     )
     _write_config(config)
 
@@ -1560,6 +1572,18 @@ MARKDOWN_PAGE_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*(?!\s)([^*\n]+?)\*\*|\*(?!\s)([^*\n]+?)\*")
+SUMMARY_HEARING_ENTRY_RE = re.compile(
+    r"^(?P<entry>"
+    r"(?:january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|"
+    r"august|aug|september|sep|sept|october|oct|november|nov|december|dec)"
+    r"\.?\s+\d{1,2},\s+\d{4})"
+    r"(?=\s+\[)",
+    re.IGNORECASE | re.MULTILINE,
+)
+SUMMARY_REPORT_ENTRY_RE = re.compile(
+    r"^(?P<entry>[^\[\n][^\n]*?)(?=\s+\[[^\]\n]+\]\(\s*page\s*:\s*\d{1,8}\s*\)\s*$)",
+    re.IGNORECASE | re.MULTILINE,
+)
 ROUNDED_GRID_TOP_BORDER_RE = re.compile(r"^\s*╭[─┬]+╮\s*$")
 ROUNDED_GRID_MIDDLE_BORDER_RE = re.compile(r"^\s*├[─┼]+┤\s*$")
 ROUNDED_GRID_BOTTOM_BORDER_RE = re.compile(r"^\s*╰[─┴]+╯\s*$")
@@ -1678,6 +1702,21 @@ def _render_markdown_text(text: str) -> tuple[str, list[tuple[int, int, str]], l
 
     orig_to_clean[len(text)] = clean_index
     return "".join(out), spans, orig_to_clean
+
+
+def _extract_summary_emphasis_spans(
+    text: str,
+    source: str | None,
+) -> list[tuple[int, int]]:
+    if not text:
+        return []
+    if source == SUMMARY_SOURCE_HEARING:
+        pattern = SUMMARY_HEARING_ENTRY_RE
+    elif source == SUMMARY_SOURCE_REPORTS:
+        pattern = SUMMARY_REPORT_ENTRY_RE
+    else:
+        return []
+    return [match.span("entry") for match in pattern.finditer(text)]
 
 
 def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:
@@ -4088,6 +4127,62 @@ class Focus(Adw.Application):
         quote.alpha = DEFAULT_QUOTED_PHRASE_ALPHA
         return quote
 
+    def _resolve_summary_emphasis_color(self) -> Gdk.RGBA:
+        accent = Gdk.RGBA()
+        configured = (
+            self._ai_settings.summary_emphasis_color
+            if self._ai_settings
+            else DEFAULT_SUMMARY_EMPHASIS_COLOR
+        )
+        if not accent.parse(configured):
+            accent.parse(DEFAULT_SUMMARY_EMPHASIS_COLOR)
+        return accent
+
+    def _apply_summary_emphasis(
+        self,
+        text: str,
+        source: str | None,
+        buffer: Gtk.TextBuffer | None,
+        page_offset_map: list[int],
+        markdown_offset_map: list[int],
+    ) -> None:
+        if not buffer:
+            return
+        spans = _extract_summary_emphasis_spans(text, source)
+        if not spans:
+            return
+        table = buffer.get_tag_table()
+        if table is None:
+            return
+        tag = table.lookup("summary-entry-emphasis")
+        accent_color = self._resolve_summary_emphasis_color()
+        if tag is None:
+            tag = buffer.create_tag(
+                "summary-entry-emphasis",
+                foreground_rgba=accent_color,
+                weight=Pango.Weight.BOLD,
+                scale=1.08,
+            )
+        else:
+            tag.set_property("foreground-rgba", accent_color)
+            tag.set_property("weight", Pango.Weight.BOLD)
+            tag.set_property("scale", 1.08)
+
+        for start, end in spans:
+            if end <= start:
+                continue
+            start = self._map_markdown_offset(start, page_offset_map)
+            end = self._map_markdown_offset(end, page_offset_map)
+            if end <= start:
+                continue
+            start = self._map_markdown_offset(start, markdown_offset_map)
+            end = self._map_markdown_offset(end, markdown_offset_map)
+            if end <= start:
+                continue
+            start_iter = buffer.get_iter_at_offset(start)
+            end_iter = buffer.get_iter_at_offset(end)
+            buffer.apply_tag(tag, start_iter, end_iter)
+
     def _apply_link_spans(
         self,
         text: str,
@@ -4110,6 +4205,7 @@ class Focus(Adw.Application):
         link_lookup.clear()
 
         rendered_text, phrase_spans = self._extract_ai_link_spans(text)
+        summary_match_text = rendered_text
         rendered_text, page_spans, phrase_to_page_map = self._extract_markdown_page_link_spans(
             rendered_text
         )
@@ -4124,6 +4220,17 @@ class Focus(Adw.Application):
         rendered_text, markdown_spans, orig_to_clean = _render_markdown_text(rendered_text)
         buffer.set_text(rendered_text)
         self._apply_markdown_spans(buffer, markdown_spans)
+        if buffer is self._summary_buffer:
+            summary_source = self._summary_active_source
+            if summary_source is None and self._summary_loaded_path is not None:
+                summary_source = self._infer_summary_source(self._summary_loaded_path)
+            self._apply_summary_emphasis(
+                summary_match_text,
+                summary_source,
+                buffer,
+                phrase_to_page_map,
+                orig_to_clean,
+            )
 
         quote_color = self._resolve_ai_quote_color(
             self._summary_view if buffer is self._summary_buffer else None
@@ -6032,6 +6139,7 @@ class Focus(Adw.Application):
             self._ai_settings.range_prompt = DEFAULT_SUMMARIZATION_PROMPT
         if not self._ai_settings.rag_prompt.strip():
             self._ai_settings.rag_prompt = DEFAULT_RAG_PROMPT
+        self._refresh_ai_quote_colors()
         self._kickoff_rag_background_load()
         if self.textview:
             self._load_current()
@@ -7817,6 +7925,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._record_font_family_values: list[str] = []
         self._grep_highlight_color_control: Gtk.Widget | None = None
         self._phrase_highlight_color_control: Gtk.Widget | None = None
+        self._summary_emphasis_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._prompt_editors: dict[str, SummarizationPromptWidgets | RagPromptWidgets] = {}
         self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
@@ -7912,6 +8021,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_HIGHLIGHT_COLOR,
         )
         highlight_group.add(phrase_color_row)
+
+        summary_emphasis_row, self._summary_emphasis_color_control = self._build_color_row(
+            "Summary Emphasis Color",
+            DEFAULT_SUMMARY_EMPHASIS_COLOR,
+        )
+        highlight_group.add(summary_emphasis_row)
 
         highlight_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         highlight_box.set_margin_top(6)
@@ -8428,6 +8543,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             settings.phrase_highlight_color,
             DEFAULT_HIGHLIGHT_COLOR,
         )
+        self._set_color_control_value(
+            self._summary_emphasis_color_control,
+            settings.summary_emphasis_color,
+            DEFAULT_SUMMARY_EMPHASIS_COLOR,
+        )
         self._set_status("Loaded saved values.")
 
     def _set_status(self, text: str) -> None:
@@ -8493,6 +8613,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._phrase_highlight_color_control,
             DEFAULT_HIGHLIGHT_COLOR,
         )
+        summary_emphasis_color = self._read_color_control_value(
+            self._summary_emphasis_color_control,
+            DEFAULT_SUMMARY_EMPHASIS_COLOR,
+        )
 
         record_font_size = (
             int(round(self._record_font_size_row.get_value()))
@@ -8550,6 +8674,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
+            summary_emphasis_color=summary_emphasis_color,
         )
         save_ai_settings(settings)
         self.app.update_font_sizes(
