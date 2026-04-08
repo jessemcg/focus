@@ -1864,7 +1864,7 @@ class Focus(Adw.Application):
         self._split_sidebar_page: Adw.NavigationPage | None = None
         self._toc_placeholder: Gtk.Widget | None = None
         self._toc_sidebar_has_items = False
-        self._toc_sidebar_visible = False
+        self._toc_sidebar_visible = True
         self._sidebar_button_guard = False
         self._continuous_view = False
         self._continuous_text: str | None = None
