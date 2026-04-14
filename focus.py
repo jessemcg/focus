@@ -134,10 +134,20 @@ RAG_PROVIDER_VOYAGE = "voyage"
 RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
 SUMMARY_DIR_NAME = "summaries"
-HEARING_SUMMARY_CANDIDATES = ("hearing_sum.txt", "hearing_summary.txt")
-REPORTS_SUMMARY_CANDIDATES = ("reports_sum.txt", "reports_summary.txt")
+HEARING_SUMMARY_CANDIDATES = (
+    "summarized_hearings_consolidated.txt",
+    "hearing_sum.txt",
+    "hearing_summary.txt",
+)
+REPORTS_SUMMARY_CANDIDATES = (
+    "summarized_reports_consolidated.txt",
+    "reports_sum.txt",
+    "reports_summary.txt",
+)
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
 MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
+HEARING_SUMMARY_MANIFEST_KEYS = ("consolidated_hearings", "summarized_hearings")
+REPORTS_SUMMARY_MANIFEST_KEYS = ("consolidated_reports", "summarized_reports")
 SUMMARY_SOURCE_MINUTES = "minutes"
 SUMMARY_SOURCE_HEARING = "hearing"
 SUMMARY_SOURCE_REPORTS = "reports"
@@ -6725,7 +6735,13 @@ class Focus(Adw.Application):
                 self._ai_transient_toast(f"Could not read summaries folder: {exc}")
             return None
         if matches:
-            return sorted(matches)[0]
+            return sorted(
+                matches,
+                key=lambda path: (
+                    "consolidated" not in path.name.casefold(),
+                    path.name,
+                ),
+            )[0]
         if show_toast:
             self._ai_transient_toast(f"{label} summary not found in {summaries_dir}")
         return None
@@ -6748,7 +6764,7 @@ class Focus(Adw.Application):
         self,
         label: str,
         manifest_path: Path,
-        file_key: str,
+        file_keys: str | tuple[str, ...],
         source: str,
     ) -> None:
         self._ensure_ai_panel_visible()
@@ -6758,7 +6774,12 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"{label} summary manifest not found: {manifest_path}")
             return
         files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-        summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+        keys = (file_keys,) if isinstance(file_keys, str) else file_keys
+        summary_path: Path | None = None
+        for file_key in keys:
+            summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+            if summary_path and summary_path.exists():
+                break
         if not summary_path:
             self._ai_transient_toast(f"{label} summary not listed in manifest: {manifest_path}")
             return
@@ -6782,6 +6803,20 @@ class Focus(Adw.Application):
         )
 
     def _on_hearing_summary_clicked(self, _button: Gtk.Button) -> None:
+        manifest_path = _find_manifest_near_path(self.input_dir)
+        if manifest_path:
+            manifest = _read_manifest_file(manifest_path)
+            files = (
+                manifest.get("files")
+                if isinstance(manifest, dict) and isinstance(manifest.get("files"), dict)
+                else {}
+            )
+            summary_path = None
+            for file_key in HEARING_SUMMARY_MANIFEST_KEYS:
+                summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+                if summary_path and summary_path.exists():
+                    self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_HEARING)
+                    return
         self._load_summary_from_summaries_dir(
             "Hearing",
             HEARING_SUMMARY_CANDIDATES,
@@ -6790,6 +6825,20 @@ class Focus(Adw.Application):
         )
 
     def _on_reports_summary_clicked(self, _button: Gtk.Button) -> None:
+        manifest_path = _find_manifest_near_path(self.input_dir)
+        if manifest_path:
+            manifest = _read_manifest_file(manifest_path)
+            files = (
+                manifest.get("files")
+                if isinstance(manifest, dict) and isinstance(manifest.get("files"), dict)
+                else {}
+            )
+            summary_path = None
+            for file_key in REPORTS_SUMMARY_MANIFEST_KEYS:
+                summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+                if summary_path and summary_path.exists():
+                    self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_REPORTS)
+                    return
         self._load_summary_from_summaries_dir(
             "Reports",
             REPORTS_SUMMARY_CANDIDATES,
@@ -6817,12 +6866,21 @@ class Focus(Adw.Application):
                         show_toast=False,
                     )
                     return
-            hearing = self._find_summary_in_dir(
-                "Hearing",
-                HEARING_SUMMARY_CANDIDATES,
-                ("hearing",),
-                show_toast=False,
-            )
+            hearing: Path | None = None
+            if manifest_path and manifest:
+                files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+                for file_key in HEARING_SUMMARY_MANIFEST_KEYS:
+                    summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+                    if summary_path and summary_path.exists():
+                        hearing = summary_path
+                        break
+            if hearing is None:
+                hearing = self._find_summary_in_dir(
+                    "Hearing",
+                    HEARING_SUMMARY_CANDIDATES,
+                    ("hearing",),
+                    show_toast=False,
+                )
             if hearing:
                 self._load_summary_from_path(
                     hearing,
@@ -6831,12 +6889,21 @@ class Focus(Adw.Application):
                     show_toast=False,
                 )
                 return
-            reports = self._find_summary_in_dir(
-                "Reports",
-                REPORTS_SUMMARY_CANDIDATES,
-                ("report", "reports"),
-                show_toast=False,
-            )
+            reports: Path | None = None
+            if manifest_path and manifest:
+                files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+                for file_key in REPORTS_SUMMARY_MANIFEST_KEYS:
+                    summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+                    if summary_path and summary_path.exists():
+                        reports = summary_path
+                        break
+            if reports is None:
+                reports = self._find_summary_in_dir(
+                    "Reports",
+                    REPORTS_SUMMARY_CANDIDATES,
+                    ("report", "reports"),
+                    show_toast=False,
+                )
             if reports:
                 self._load_summary_from_path(
                     reports,
