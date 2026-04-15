@@ -2612,9 +2612,9 @@ class Focus(Adw.Application):
         self._refresh_summary_actions_state()
 
         if self._ai_controls_stack:
-            self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
+            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_SUMMARIZE)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_QA)
-            self._ai_controls_stack.add_named(rag_audit_controls, AI_VIEW_RAG_AUDIT)
+            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_RAG_AUDIT)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
 
@@ -2650,11 +2650,13 @@ class Focus(Adw.Application):
         qa_scroller = self._build_ai_output_view(AI_VIEW_QA)
         rag_audit_scroller = self._build_ai_output_view(AI_VIEW_RAG_AUDIT)
 
+        summarize_view.append(summarize_controls)
         summarize_view.append(summarize_scroller)
         qa_view.append(qa_controls)
         if self._rag_filter_chip:
             qa_view.append(self._rag_filter_chip)
         qa_view.append(qa_scroller)
+        rag_audit_view.append(rag_audit_controls)
         rag_audit_view.append(rag_audit_scroller)
 
         self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
