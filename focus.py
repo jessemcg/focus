@@ -321,18 +321,6 @@ def _apply_disable_reasoning_to_body(
     else:
         body["reasoning_effort"] = "none"
 AI_VIEW_FILE = "show-file"
-AI_VIEW_CHOICES: tuple[tuple[str, str], ...] = (
-    ("Summarize", AI_VIEW_SUMMARIZE),
-    ("Q & A", AI_VIEW_QA),
-    ("RAG Audit", AI_VIEW_RAG_AUDIT),
-    ("Show File", AI_VIEW_FILE),
-)
-SUMMARY_SOURCE_CHOICES: tuple[tuple[str, str], ...] = (
-    ("Minutes", SUMMARY_SOURCE_MINUTES),
-    ("Hearing Sum", SUMMARY_SOURCE_HEARING),
-    ("Reports Sum", SUMMARY_SOURCE_REPORTS),
-)
-
 
 def _normalize_rag_provider(value: str) -> str:
     provider = (value or "").strip().lower()
@@ -1944,10 +1932,9 @@ class Focus(Adw.Application):
         self._summary_scroll_restore_guard = False
         self._summary_active_source: str | None = None
         self._summary_toggle_guard = False
-        self._summary_source_dropdown: Gtk.DropDown | None = None
+        self._summary_source_buttons: dict[str, Gtk.ToggleButton] = {}
         self._summary_progress_label: Gtk.Label | None = None
-        self._summary_actions_button: Gtk.MenuButton | None = None
-        self._summary_actions_popover: Gtk.Popover | None = None
+        self._ai_overflow_popover: Gtk.Popover | None = None
         self._summary_bookmark_action_button: Gtk.Button | None = None
         self._summary_return_bookmark_action_button: Gtk.Button | None = None
         self._summary_print_action_button: Gtk.Button | None = None
@@ -1983,7 +1970,7 @@ class Focus(Adw.Application):
         self._ai_panel_root: Gtk.Widget | None = None
         self._ai_panel_header: Gtk.Widget | None = None
         self._ai_view_stack: Adw.ViewStack | None = None
-        self._ai_view_dropdown: Gtk.DropDown | None = None
+        self._ai_view_buttons: dict[str, Gtk.ToggleButton] = {}
         self._ai_view_toggle_guard = False
         self._ai_controls_stack: Gtk.Stack | None = None
         self._ai_output_scrollers: list[Gtk.ScrolledWindow] = []
@@ -1998,9 +1985,9 @@ class Focus(Adw.Application):
         self._ai_panel_toggle_guard = False
         self._ai_detach_button: Gtk.ToggleButton | None = None
         self._ai_detach_button_guard = False
-        self._minutes_summary_button: Gtk.Button | None = None
-        self._hearing_summary_button: Gtk.Button | None = None
-        self._reports_summary_button: Gtk.Button | None = None
+        self._minutes_summary_button: Gtk.ToggleButton | None = None
+        self._hearing_summary_button: Gtk.ToggleButton | None = None
+        self._reports_summary_button: Gtk.ToggleButton | None = None
         self._ai_stream_thread: threading.Thread | None = None
         self._ai_cancel_event: threading.Event | None = None
         self._ai_settings_window: AiSettingsWindow | None = None
@@ -2420,16 +2407,40 @@ class Focus(Adw.Application):
         self._ai_view_stack.set_vexpand(True)
         self._ai_view_stack.connect("notify::visible-child-name", self._on_ai_view_changed)
 
-        ai_view_model = Gtk.StringList.new([label for label, _name in AI_VIEW_CHOICES])
-        self._ai_view_dropdown = Gtk.DropDown.new(ai_view_model, None)
-        self._ai_view_dropdown.set_valign(Gtk.Align.CENTER)
-        self._ai_view_dropdown.connect("notify::selected", self._on_ai_view_dropdown_selected)
-        ai_header.append(self._ai_view_dropdown)
+        ai_mode_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        ai_mode_strip.add_css_class("focus-pill-group")
+        ai_mode_strip.set_valign(Gtk.Align.CENTER)
+        ai_mode_strip.set_hexpand(False)
+
+        qa_mode_button = self._build_ai_mode_button("Q & A", AI_VIEW_QA, "Ask questions about the record")
+        ai_mode_strip.append(qa_mode_button)
+
+        self._minutes_summary_button = self._build_summary_mode_button(
+            "Min",
+            SUMMARY_SOURCE_MINUTES,
+            "Minutes Summary",
+        )
+        ai_mode_strip.append(self._minutes_summary_button)
+
+        self._hearing_summary_button = self._build_summary_mode_button(
+            "Hearings",
+            SUMMARY_SOURCE_HEARING,
+            "Hearing Summary",
+        )
+        ai_mode_strip.append(self._hearing_summary_button)
+
+        self._reports_summary_button = self._build_summary_mode_button(
+            "Reports",
+            SUMMARY_SOURCE_REPORTS,
+            "Reports Summary",
+        )
+        ai_mode_strip.append(self._reports_summary_button)
+        ai_header.append(ai_mode_strip)
 
         self._ai_controls_stack = Gtk.Stack()
         self._ai_controls_stack.set_hexpand(True)
         self._ai_controls_stack.set_hhomogeneous(False)
-        self._ai_controls_stack.set_vhomogeneous(False)
+        self._ai_controls_stack.set_vhomogeneous(True)
         self._ai_controls_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self._ai_controls_stack.set_hexpand(True)
         ai_header.append(self._ai_controls_stack)
@@ -2524,14 +2535,6 @@ class Focus(Adw.Application):
         file_view.set_vexpand(True)
         summary_row = self._build_wrapping_controls_box()
 
-        summary_source_model = Gtk.StringList.new([label for label, _source in SUMMARY_SOURCE_CHOICES])
-        self._summary_source_dropdown = Gtk.DropDown.new(summary_source_model, None)
-        self._summary_source_dropdown.set_valign(Gtk.Align.CENTER)
-        self._summary_source_dropdown.connect(
-            "notify::selected",
-            self._on_summary_source_dropdown_selected,
-        )
-
         self._summary_progress_label = Gtk.Label(label="0%")
         self._summary_progress_label.add_css_class("dim-label")
         self._summary_progress_label.set_valign(Gtk.Align.CENTER)
@@ -2540,27 +2543,51 @@ class Focus(Adw.Application):
         self._summary_progress_label.set_single_line_mode(True)
         self._summary_progress_label.set_ellipsize(Pango.EllipsizeMode.END)
 
-        self._summary_actions_button = Gtk.MenuButton()
-        self._summary_actions_button.add_css_class("flat")
-        self._summary_actions_button.set_valign(Gtk.Align.CENTER)
-        self._summary_actions_button.set_tooltip_text("Summary actions")
         menu_icon = self._choose_icon("view-more-symbolic", "open-menu-symbolic")
-        self._summary_actions_button.set_child(Gtk.Image.new_from_icon_name(menu_icon))
+        summary_row.insert(self._summary_progress_label, -1)
 
-        self._summary_actions_popover = Gtk.Popover()
-        self._summary_actions_popover.set_has_arrow(False)
-        summary_actions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        summary_actions_box.set_margin_top(6)
-        summary_actions_box.set_margin_bottom(6)
-        summary_actions_box.set_margin_start(6)
-        summary_actions_box.set_margin_end(6)
+        ai_overflow_button = Gtk.MenuButton()
+        ai_overflow_button.add_css_class("flat")
+        ai_overflow_button.set_valign(Gtk.Align.CENTER)
+        ai_overflow_button.set_tooltip_text("More case tools")
+        ai_overflow_button.set_child(Gtk.Image.new_from_icon_name(menu_icon))
+
+        self._ai_overflow_popover = Gtk.Popover()
+        self._ai_overflow_popover.set_has_arrow(False)
+        ai_overflow_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        ai_overflow_box.set_margin_top(6)
+        ai_overflow_box.set_margin_bottom(6)
+        ai_overflow_box.set_margin_start(6)
+        ai_overflow_box.set_margin_end(6)
+
+        summarize_mode_button = Gtk.Button(label="Summarize")
+        summarize_mode_button.add_css_class("flat")
+        summarize_mode_button.add_css_class("no-bold")
+        summarize_mode_button.set_halign(Gtk.Align.FILL)
+        summarize_mode_button.connect(
+            "clicked",
+            lambda _button: self._on_ai_overflow_mode_clicked(self._ai_overflow_popover, AI_VIEW_SUMMARIZE),
+        )
+        ai_overflow_box.append(summarize_mode_button)
+
+        rag_audit_mode_button = Gtk.Button(label="RAG Audit")
+        rag_audit_mode_button.add_css_class("flat")
+        rag_audit_mode_button.add_css_class("no-bold")
+        rag_audit_mode_button.set_halign(Gtk.Align.FILL)
+        rag_audit_mode_button.connect(
+            "clicked",
+            lambda _button: self._on_ai_overflow_mode_clicked(self._ai_overflow_popover, AI_VIEW_RAG_AUDIT),
+        )
+        ai_overflow_box.append(rag_audit_mode_button)
+
+        ai_overflow_box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
         self._summary_bookmark_action_button = Gtk.Button(label="Bookmark selected line")
         self._summary_bookmark_action_button.add_css_class("flat")
         self._summary_bookmark_action_button.set_halign(Gtk.Align.FILL)
         self._summary_bookmark_action_button.set_tooltip_text("Bookmark selected summary line")
         self._summary_bookmark_action_button.connect("clicked", self._on_summary_bookmark_clicked)
-        summary_actions_box.append(self._summary_bookmark_action_button)
+        ai_overflow_box.append(self._summary_bookmark_action_button)
 
         self._summary_return_bookmark_action_button = Gtk.Button(label="Return to bookmark")
         self._summary_return_bookmark_action_button.add_css_class("flat")
@@ -2570,25 +2597,23 @@ class Focus(Adw.Application):
             "clicked",
             self._on_summary_return_bookmark_clicked,
         )
-        summary_actions_box.append(self._summary_return_bookmark_action_button)
+        ai_overflow_box.append(self._summary_return_bookmark_action_button)
 
         self._summary_print_action_button = Gtk.Button(label="Print summary")
         self._summary_print_action_button.add_css_class("flat")
         self._summary_print_action_button.set_halign(Gtk.Align.FILL)
         self._summary_print_action_button.set_tooltip_text("Print summary")
         self._summary_print_action_button.connect("clicked", self._on_summary_print_clicked)
-        summary_actions_box.append(self._summary_print_action_button)
+        ai_overflow_box.append(self._summary_print_action_button)
 
-        self._summary_actions_popover.set_child(summary_actions_box)
-        self._summary_actions_button.set_popover(self._summary_actions_popover)
-        summary_row.insert(self._summary_source_dropdown, -1)
-        summary_row.insert(self._summary_progress_label, -1)
-        summary_row.insert(self._summary_actions_button, -1)
+        self._ai_overflow_popover.set_child(ai_overflow_box)
+        ai_overflow_button.set_popover(self._ai_overflow_popover)
+        ai_header.append(ai_overflow_button)
         self._refresh_summary_actions_state()
 
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
-            self._ai_controls_stack.add_named(qa_controls, AI_VIEW_QA)
+            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_QA)
             self._ai_controls_stack.add_named(rag_audit_controls, AI_VIEW_RAG_AUDIT)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
@@ -2626,6 +2651,7 @@ class Focus(Adw.Application):
         rag_audit_scroller = self._build_ai_output_view(AI_VIEW_RAG_AUDIT)
 
         summarize_view.append(summarize_scroller)
+        qa_view.append(qa_controls)
         if self._rag_filter_chip:
             qa_view.append(self._rag_filter_chip)
         qa_view.append(qa_scroller)
@@ -4086,6 +4112,38 @@ class Focus(Adw.Application):
             self._ai_outputs[view_name] = state
         return state
 
+    def _build_ai_mode_button(
+        self,
+        label: str,
+        view_name: str,
+        tooltip: str,
+    ) -> Gtk.ToggleButton:
+        button = Gtk.ToggleButton(label=label)
+        button.add_css_class("flat")
+        button.add_css_class("no-bold")
+        button.add_css_class("focus-pill-segment")
+        button.set_valign(Gtk.Align.CENTER)
+        button.set_tooltip_text(tooltip)
+        button.connect("toggled", self._on_ai_mode_button_toggled, view_name)
+        self._ai_view_buttons[view_name] = button
+        return button
+
+    def _build_summary_mode_button(
+        self,
+        label: str,
+        source: str,
+        tooltip: str,
+    ) -> Gtk.ToggleButton:
+        button = Gtk.ToggleButton(label=label)
+        button.add_css_class("flat")
+        button.add_css_class("no-bold")
+        button.add_css_class("focus-pill-segment")
+        button.set_valign(Gtk.Align.CENTER)
+        button.set_tooltip_text(tooltip)
+        button.connect("toggled", self._on_summary_mode_button_toggled, source)
+        self._summary_source_buttons[source] = button
+        return button
+
     def _build_wrapping_controls_box(self) -> Gtk.FlowBox:
         box = Gtk.FlowBox()
         box.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -4982,8 +5040,8 @@ class Focus(Adw.Application):
             self._summary_print_action_button.set_sensitive(has_summary and has_printable_text)
 
     def _dismiss_summary_actions_popover(self) -> None:
-        if self._summary_actions_popover:
-            self._summary_actions_popover.popdown()
+        if self._ai_overflow_popover:
+            self._ai_overflow_popover.popdown()
 
     def _on_summary_selection_changed(
         self,
@@ -5298,40 +5356,34 @@ class Focus(Adw.Application):
         self._sync_summary_toggles(source)
 
     def _sync_summary_toggles(self, source: str | None) -> None:
-        if not self._summary_source_dropdown:
+        if not self._summary_source_buttons:
             return
         self._summary_toggle_guard = True
         try:
-            selected = 0
-            if source:
-                for index, (_label, value) in enumerate(SUMMARY_SOURCE_CHOICES):
-                    if value == source:
-                        selected = index
-                        break
-            self._summary_source_dropdown.set_selected(selected)
+            for button_source, button in self._summary_source_buttons.items():
+                button.set_active(source == button_source and self._ai_active_view == AI_VIEW_FILE)
         finally:
             self._summary_toggle_guard = False
 
-    def _on_summary_source_dropdown_selected(
+    def _on_summary_mode_button_toggled(
         self,
-        dropdown: Gtk.DropDown,
-        _pspec: GObject.ParamSpec,
+        button: Gtk.ToggleButton,
+        source: str,
     ) -> None:
         if self._summary_toggle_guard:
             return
-        selected = int(dropdown.get_selected())
-        if selected < 0 or selected >= len(SUMMARY_SOURCE_CHOICES):
+        if not button.get_active():
+            if self._ai_active_view == AI_VIEW_FILE and self._summary_active_source == source:
+                self._sync_summary_toggles(source)
             return
-        _label, source = SUMMARY_SOURCE_CHOICES[selected]
         if source == SUMMARY_SOURCE_MINUTES:
             self._on_minutes_summary_clicked(None)
-            return
-        if source == SUMMARY_SOURCE_HEARING:
+        elif source == SUMMARY_SOURCE_HEARING:
             self._on_hearing_summary_clicked(None)
-            return
-        if source == SUMMARY_SOURCE_REPORTS:
+        elif source == SUMMARY_SOURCE_REPORTS:
             self._on_reports_summary_clicked(None)
-            return
+        if self._ai_active_view != AI_VIEW_FILE or self._summary_active_source != source:
+            self._sync_ai_view_toggles(self._ai_active_view)
 
     def _infer_summary_source(self, path: Path) -> str:
         name = path.name.casefold()
@@ -6567,34 +6619,39 @@ class Focus(Adw.Application):
         self._auto_load_summary_file()
 
     def _sync_ai_view_toggles(self, target: str) -> None:
-        if not self._ai_view_dropdown:
+        if not self._ai_view_buttons and not self._summary_source_buttons:
             return
         self._ai_view_toggle_guard = True
+        self._summary_toggle_guard = True
         try:
-            selected = 0
-            for index, (_label, value) in enumerate(AI_VIEW_CHOICES):
-                if value == target:
-                    selected = index
-                    break
-            self._ai_view_dropdown.set_selected(selected)
+            for view_name, button in self._ai_view_buttons.items():
+                button.set_active(view_name == target)
+            for source, button in self._summary_source_buttons.items():
+                button.set_active(target == AI_VIEW_FILE and source == self._summary_active_source)
         finally:
             self._ai_view_toggle_guard = False
+            self._summary_toggle_guard = False
 
     def _on_ai_view_changed(self, stack: Adw.ViewStack, _pspec: GObject.ParamSpec) -> None:
         name = stack.get_visible_child_name() or AI_VIEW_QA
         self._set_ai_view(name)
 
-    def _on_ai_view_dropdown_selected(
+    def _on_ai_mode_button_toggled(
         self,
-        dropdown: Gtk.DropDown,
-        _pspec: GObject.ParamSpec,
+        button: Gtk.ToggleButton,
+        view_name: str,
     ) -> None:
         if self._ai_view_toggle_guard:
             return
-        selected = int(dropdown.get_selected())
-        if selected < 0 or selected >= len(AI_VIEW_CHOICES):
+        if not button.get_active():
+            if self._ai_active_view == view_name:
+                self._sync_ai_view_toggles(view_name)
             return
-        _label, view_name = AI_VIEW_CHOICES[selected]
+        self._set_ai_view(view_name)
+
+    def _on_ai_overflow_mode_clicked(self, popover: Gtk.Popover | None, view_name: str) -> None:
+        if popover:
+            popover.popdown()
         self._set_ai_view(view_name)
 
     def _on_summarize_page_clicked(self, _button: Gtk.Button) -> None:
