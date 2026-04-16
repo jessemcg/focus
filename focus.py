@@ -112,8 +112,8 @@ DEFAULT_SUMMARIZATION_PROMPT = (
 DEFAULT_RAG_PROMPT = (
     'I will ask you a question about a child welfare case. Below are case details and retrieved record excerpts from '
     'hearings and reports. Some excerpts may include explicit metadata labels such as "Hearing Date" for hearing '
-    'transcript chunks and "Report Name" for report chunks. Use those labels to identify the source of the excerpt, '
-    'and when helpful, refer to that hearing date or report name in your answer. Do not invent a hearing date or '
+    'transcript chunks and "Report Name" or "Report Date" for report chunks. Use those labels to identify the source of the excerpt, '
+    'and when helpful, refer to that hearing date, report date, or report name in your answer. Do not invent a hearing date or '
     'report name if the label is not provided. Base your answer only on the supplied material, and make clear when '
     'the record is ambiguous or incomplete. In your answer, include short direct quotes taken from the record to '
     'highlight legally significant statements. Each quote must be enclosed in quotation marks, must consist of an '
@@ -347,12 +347,8 @@ def _format_rag_long_us_date(month: int, day: int, year: int) -> str | None:
     return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
 
 
-def _extract_hearing_date_filter(question: str) -> str | None:
-    lowered = question.lower()
-    if not any(keyword in lowered for keyword in RAG_HEARING_QUERY_KEYWORDS):
-        return None
-
-    long_match = RAG_LONG_DATE_PATTERN.search(question)
+def _extract_rag_date_mention(text: str) -> str | None:
+    long_match = RAG_LONG_DATE_PATTERN.search(text)
     if long_match:
         month_name = long_match.group(1).rstrip(".").lower()
         month = MONTH_NAME_TO_NUMBER.get(month_name)
@@ -365,7 +361,7 @@ def _extract_hearing_date_filter(question: str) -> str | None:
             if formatted:
                 return formatted
 
-    numeric_match = RAG_NUMERIC_DATE_PATTERN.search(question)
+    numeric_match = RAG_NUMERIC_DATE_PATTERN.search(text)
     if not numeric_match:
         return None
     month = int(numeric_match.group(1))
@@ -374,6 +370,13 @@ def _extract_hearing_date_filter(question: str) -> str | None:
     if year < 100:
         year += 2000 if year <= 69 else 1900
     return _format_rag_long_us_date(month, day, year)
+
+
+def _extract_hearing_date_filter(question: str) -> str | None:
+    lowered = question.lower()
+    if not any(keyword in lowered for keyword in RAG_HEARING_QUERY_KEYWORDS):
+        return None
+    return _extract_rag_date_mention(question)
 
 
 def _extract_embedding_vectors(response: Any) -> list[list[float]]:
@@ -1996,7 +1999,7 @@ class Focus(Adw.Application):
         self._ai_request_generation = 0
         self._rag_vectorstore: Any | None = None
         self._rag_case_details: str | None = None
-        self._rag_report_name_catalog: tuple[str, ...] = ()
+        self._rag_report_name_catalog: tuple[dict[str, str], ...] = ()
         self._rag_load_thread: threading.Thread | None = None
         self._rag_load_generation = 0
         self._rag_load_error: str | None = None
@@ -6745,8 +6748,14 @@ class Focus(Adw.Application):
                 return f"Hearing: {hearing_date}"
             return None
         if filter_type == "report":
+            report_label = str(filter_details.get("report_label") or "").strip()
+            if report_label:
+                return f"Report: {report_label}"
             report_name = str(filter_details.get("report_name") or "").strip()
+            report_date = str(filter_details.get("report_date") or "").strip()
             if report_name:
+                if report_date:
+                    return f"Report: {report_date} - {report_name}"
                 return f"Report: {report_name}"
         return None
 
@@ -7436,7 +7445,7 @@ class Focus(Adw.Application):
         }
         return chunk
 
-    def _load_rag_report_name_catalog(self, vectorstore: Any) -> tuple[str, ...]:
+    def _load_rag_report_name_catalog(self, vectorstore: Any) -> tuple[dict[str, str], ...]:
         try:
             payload = vectorstore.get(include=["metadatas"])
         except Exception:
@@ -7444,16 +7453,42 @@ class Focus(Adw.Application):
         metadatas = payload.get("metadatas") if isinstance(payload, dict) else None
         if not isinstance(metadatas, list):
             return ()
-        names: set[str] = set()
+        entries: dict[tuple[str, str, str], dict[str, str]] = {}
         for metadata in metadatas:
             if not isinstance(metadata, dict):
                 continue
             report_name = str(metadata.get("report_name") or "").strip()
-            if report_name:
-                names.add(report_name)
-        return tuple(sorted(names))
+            if not report_name:
+                continue
+            report_date = str(metadata.get("report_date") or "").strip()
+            report_label = str(metadata.get("report_label") or "").strip()
+            if not report_label:
+                report_label = (
+                    f"{report_date} - {report_name}" if report_date else report_name
+                )
+            report_id = str(metadata.get("report_id") or "").strip()
+            key = (report_id, report_date, report_name)
+            entries.setdefault(
+                key,
+                {
+                    "report_name": report_name,
+                    "report_date": report_date,
+                    "report_label": report_label,
+                    "report_id": report_id,
+                },
+            )
+        return tuple(
+            entries[key]
+            for key in sorted(
+                entries,
+                key=lambda item: (
+                    entries[item].get("report_label", ""),
+                    entries[item].get("report_id", ""),
+                ),
+            )
+        )
 
-    def _match_report_name_filter(self, question: str) -> str | None:
+    def _match_report_name_filter(self, question: str) -> dict[str, str] | None:
         lowered = question.lower()
         if not any(keyword in lowered for keyword in RAG_REPORT_QUERY_KEYWORDS):
             return None
@@ -7461,14 +7496,21 @@ class Focus(Adw.Application):
         if not normalized_question:
             return None
         question_tokens = set(normalized_question.split())
+        question_date = _extract_rag_date_mention(question) or ""
 
-        matches: list[tuple[float, int, str]] = []
-        for report_name in self._rag_report_name_catalog:
+        matches: list[tuple[float, int, dict[str, str]]] = []
+        for report_entry in self._rag_report_name_catalog:
+            report_name = str(report_entry.get("report_name") or "").strip()
             normalized_report_name = _canonicalize_report_phrase(report_name)
             if not normalized_report_name:
                 continue
+            report_date = str(report_entry.get("report_date") or "").strip()
+            date_matches = bool(question_date and report_date == question_date)
+            if question_date and report_date and not date_matches:
+                continue
+            score_boost = 20.0 if date_matches else 0.0
             if normalized_report_name in normalized_question:
-                matches.append((10.0, len(normalized_report_name), report_name))
+                matches.append((10.0 + score_boost, len(normalized_report_name), report_entry))
                 continue
             alias_variants = {normalized_report_name}
             if normalized_report_name.endswith(" report"):
@@ -7480,7 +7522,7 @@ class Focus(Adw.Application):
             if "jurisdiction disposition" in normalized_report_name:
                 alias_variants.add("jurisdiction disposition report")
             if any(alias and alias in normalized_question for alias in alias_variants):
-                matches.append((9.0, len(normalized_report_name), report_name))
+                matches.append((9.0 + score_boost, len(normalized_report_name), report_entry))
                 continue
 
             meaningful_tokens = [
@@ -7496,27 +7538,49 @@ class Focus(Adw.Application):
             if len(meaningful_tokens) == 1:
                 token = meaningful_tokens[0]
                 if token in RAG_REPORT_NAME_STRONG_TOKENS and "report" in question_tokens:
-                    matches.append((0.8, 1, report_name))
+                    matches.append((0.8 + score_boost, 1, report_entry))
                 continue
             ratio = overlap / len(meaningful_tokens)
             if overlap >= 2 and ratio >= 0.6:
-                matches.append((ratio, overlap, report_name))
+                matches.append((ratio + score_boost, overlap, report_entry))
             elif overlap >= 3 and ratio >= 0.5:
-                matches.append((ratio, overlap, report_name))
+                matches.append((ratio + score_boost, overlap, report_entry))
         if not matches:
+            if question_date:
+                date_matches = [
+                    entry
+                    for entry in self._rag_report_name_catalog
+                    if str(entry.get("report_date") or "").strip() == question_date
+                ]
+                date_match_keys = {
+                    (
+                        str(entry.get("report_id") or ""),
+                        str(entry.get("report_date") or ""),
+                        str(entry.get("report_name") or ""),
+                    )
+                    for entry in date_matches
+                }
+                if len(date_match_keys) == 1:
+                    return date_matches[0]
             return None
-        matches.sort(reverse=True)
-        best_score, best_overlap, _best_name = matches[0]
-        best_names = sorted(
-            {
-                name
-                for score, overlap, name in matches
-                if abs(score - best_score) < 1e-9 and overlap == best_overlap
-            }
-        )
-        if len(best_names) != 1:
+        matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        best_score, best_overlap, _best_entry = matches[0]
+        best_entries = [
+            entry
+            for score, overlap, entry in matches
+            if abs(score - best_score) < 1e-9 and overlap == best_overlap
+        ]
+        best_keys = {
+            (
+                str(entry.get("report_id") or ""),
+                str(entry.get("report_date") or ""),
+                str(entry.get("report_name") or ""),
+            )
+            for entry in best_entries
+        }
+        if len(best_keys) != 1:
             return None
-        return best_names[0]
+        return best_entries[0]
 
     def _infer_rag_metadata_filter(
         self,
@@ -7525,11 +7589,28 @@ class Focus(Adw.Application):
     ) -> tuple[dict[str, str] | None, dict[str, str] | None]:
         if not self._rag_report_name_catalog and vectorstore is not None:
             self._rag_report_name_catalog = self._load_rag_report_name_catalog(vectorstore)
-        report_name = self._match_report_name_filter(question)
-        if report_name:
+        report_entry = self._match_report_name_filter(question)
+        if report_entry:
+            report_id = str(report_entry.get("report_id") or "").strip()
+            report_name = str(report_entry.get("report_name") or "").strip()
+            report_date = str(report_entry.get("report_date") or "").strip()
+            report_label = str(report_entry.get("report_label") or "").strip()
+            metadata_filter: dict[str, str] = {"type": "report"}
+            if report_id:
+                metadata_filter["report_id"] = report_id
+            else:
+                metadata_filter["report_name"] = report_name
+                if report_date:
+                    metadata_filter["report_date"] = report_date
             return (
-                {"type": "report", "report_name": report_name},
-                {"type": "report", "report_name": report_name},
+                metadata_filter,
+                {
+                    "type": "report",
+                    "report_name": report_name,
+                    "report_date": report_date,
+                    "report_label": report_label,
+                    "report_id": report_id,
+                },
             )
 
         hearing_date = _extract_hearing_date_filter(question)
@@ -7673,6 +7754,12 @@ class Focus(Adw.Application):
             report_name = str(metadata_dict.get("report_name") or "").strip()
             if report_name:
                 context_lines.append(f"Report Name: {report_name}")
+            report_date = str(metadata_dict.get("report_date") or "").strip()
+            if report_date:
+                context_lines.append(f"Report Date: {report_date}")
+            report_label = str(metadata_dict.get("report_label") or "").strip()
+            if report_label:
+                context_lines.append(f"Report Label: {report_label}")
             context_lines.append(text)
             rendered.append("\n".join(context_lines))
         return "\n\n".join(rendered)
