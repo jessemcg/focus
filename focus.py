@@ -1567,6 +1567,7 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
 
 PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
+IMAGE_PAGE_SELECTION_RE = re.compile(r"^\s*(\d{1,4})(?:\s*-\s*(\d{1,4}))?\s*$")
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
 MARKDOWN_PAGE_LINK_RE = re.compile(
     r"\[(?P<label>[^\]\n]*?)\]\(\s*page\s*:\s*(?P<page>\d{1,8})\s*\)",
@@ -1596,6 +1597,26 @@ MARKDOWN_HEADING_SCALES = {
     2: 1.3,
     3: 1.15,
 }
+
+
+def parse_image_page_selection(raw: str) -> list[int] | None:
+    if not raw.strip():
+        return None
+    pages: list[int] = []
+    seen: set[int] = set()
+    for token in raw.split(","):
+        match = IMAGE_PAGE_SELECTION_RE.fullmatch(token)
+        if not match:
+            return None
+        start = int(match.group(1))
+        end = int(match.group(2) or start)
+        if start > end:
+            start, end = end, start
+        for page in range(start, end + 1):
+            if page not in seen:
+                pages.append(page)
+                seen.add(page)
+    return pages
 
 
 def _render_markdown_text(text: str) -> tuple[str, list[tuple[int, int, str]], list[int]]:
@@ -1956,6 +1977,9 @@ class Focus(Adw.Application):
         self._image_tick_id: int | None = None
         self._image_viewport_size: tuple[int, int] | None = None
         self._show_image = False
+        self._image_print_window: Adw.ApplicationWindow | None = None
+        self._image_print_entry: Gtk.Entry | None = None
+        self._image_print_pages: list[int] = []
         self._show_image_action: Gio.SimpleAction | None = None
         self._continuous_toggle_button: Gtk.ToggleButton | None = None
         self._continuous_icon: Gtk.Image | None = None
@@ -2205,6 +2229,7 @@ class Focus(Adw.Application):
 
         # Hamburger menu on the right
         menu_model = Gio.Menu()
+        menu_model.append("Print Images", "app.print_images")
         menu_model.append("Input Directory", "app.choose_input")
         menu_model.append("Settings", "app.open_ai_settings")
         menu_model.append("Keyboard Shortcuts", "app.show_shortcuts")
@@ -6077,6 +6102,10 @@ class Focus(Adw.Application):
         show_shortcuts.connect("activate", self._on_show_shortcuts)
         self.add_action(show_shortcuts)
 
+        print_images = Gio.SimpleAction.new("print_images", None)
+        print_images.connect("activate", self._on_print_images_action)
+        self.add_action(print_images)
+
         toggle_sidebar = Gio.SimpleAction.new_stateful(
             "toggle_toc_sidebar",
             None,
@@ -6200,6 +6229,210 @@ class Focus(Adw.Application):
             window.set_transient_for(self.win)
         window.present()
 
+    def _on_print_images_action(
+        self, _action: Gio.SimpleAction, _param: GLib.Variant | None
+    ) -> None:
+        if not self.pages:
+            self._transient_toast("No pages available to print.")
+            return
+        window = self._ensure_image_print_window()
+        if self._image_print_entry:
+            if 0 <= self.current_index < len(self.pages):
+                self._image_print_entry.set_text(f"{self.pages[self.current_index]:04d}")
+            self._image_print_entry.grab_focus()
+            self._image_print_entry.select_region(0, -1)
+        window.present()
+
+    def _ensure_image_print_window(self) -> Adw.ApplicationWindow:
+        if self._image_print_window:
+            return self._image_print_window
+
+        window = Adw.ApplicationWindow(application=self, transient_for=self.win)
+        window.set_title("Print Images")
+        window.set_default_size(380, 170)
+        window.set_resizable(False)
+        window.connect("close-request", self._on_image_print_window_close_request)
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.add_css_class("flat")
+        toolbar.add_top_bar(header)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        root.set_margin_top(18)
+        root.set_margin_bottom(18)
+        root.set_margin_start(18)
+        root.set_margin_end(18)
+
+        label = Gtk.Label(label="Pages to print")
+        label.set_halign(Gtk.Align.START)
+        root.append(label)
+
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("12, 18-22, 30")
+        entry.set_activates_default(True)
+        entry.connect("activate", self._on_image_print_entry_activate)
+        root.append(entry)
+
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        button_box.set_halign(Gtk.Align.END)
+
+        cancel_button = Gtk.Button(label="Cancel")
+        cancel_button.add_css_class("flat")
+        cancel_button.connect("clicked", self._on_image_print_cancel_clicked)
+        button_box.append(cancel_button)
+
+        print_button = Gtk.Button(label="Print")
+        print_button.add_css_class("flat")
+        print_button.add_css_class("suggested-action")
+        print_button.connect("clicked", self._on_image_print_clicked)
+        button_box.append(print_button)
+        root.append(button_box)
+
+        toolbar.set_content(root)
+        window.set_content(toolbar)
+        window.set_default_widget(print_button)
+
+        self._image_print_window = window
+        self._image_print_entry = entry
+        return window
+
+    def _on_image_print_window_close_request(self, window: Adw.ApplicationWindow) -> bool:
+        window.set_visible(False)
+        return True
+
+    def _on_image_print_cancel_clicked(self, _button: Gtk.Button) -> None:
+        if self._image_print_window:
+            self._image_print_window.set_visible(False)
+
+    def _on_image_print_entry_activate(self, _entry: Gtk.Entry) -> None:
+        self._start_image_print()
+
+    def _on_image_print_clicked(self, _button: Gtk.Button) -> None:
+        self._start_image_print()
+
+    def _parse_image_page_selection(self, raw: str) -> list[int] | None:
+        return parse_image_page_selection(raw)
+
+    def _collect_printable_image_pages(
+        self, requested_pages: list[int]
+    ) -> tuple[list[int], int, int]:
+        available_pages = set(self.pages)
+        printable_pages: list[int] = []
+        missing_pages = 0
+        missing_images = 0
+        for page in requested_pages:
+            if page not in available_pages:
+                missing_pages += 1
+                continue
+            image_path = self.images_dir / f"{page:04d}.png"
+            if not image_path.exists():
+                missing_images += 1
+                continue
+            printable_pages.append(page)
+        return printable_pages, missing_pages, missing_images
+
+    def _start_image_print(self) -> None:
+        if not self._image_print_entry:
+            return
+        requested_pages = self._parse_image_page_selection(self._image_print_entry.get_text())
+        if requested_pages is None:
+            self._transient_toast(
+                "Enter pages like 12, 18-22, 30.",
+                window=self._image_print_window,
+            )
+            return
+
+        printable_pages, missing_pages, missing_images = self._collect_printable_image_pages(
+            requested_pages
+        )
+        if not printable_pages:
+            self._transient_toast(
+                "No printable images found for that selection.",
+                window=self._image_print_window,
+            )
+            return
+        skipped_parts: list[str] = []
+        if missing_pages:
+            skipped_parts.append(f"{missing_pages} unavailable page(s)")
+        if missing_images:
+            skipped_parts.append(f"{missing_images} missing image(s)")
+        skipped_message = "Skipped " + " and ".join(skipped_parts) + "." if skipped_parts else ""
+
+        self._image_print_pages = printable_pages
+        operation = Gtk.PrintOperation()
+        operation.set_use_full_page(True)
+        operation.set_job_name(self._build_image_print_job_name(printable_pages))
+        operation.connect("begin-print", self._on_image_print_begin_print)
+        operation.connect("draw-page", self._on_image_print_draw_page)
+        if self._image_print_window:
+            self._image_print_window.set_visible(False)
+        if skipped_message:
+            self._transient_toast(skipped_message)
+        try:
+            operation.run(
+                Gtk.PrintOperationAction.PRINT_DIALOG,
+                self.win,
+            )
+        except GLib.Error as exc:
+            self._transient_toast(f"Print failed: {exc.message}")
+
+    def _build_image_print_job_name(self, pages: list[int]) -> str:
+        if not pages:
+            return "Focus image pages"
+        if len(pages) == 1:
+            return f"Focus image page {pages[0]:04d}"
+        contiguous = pages == list(range(min(pages), max(pages) + 1))
+        if contiguous:
+            return f"Focus image pages {pages[0]:04d}-{pages[-1]:04d}"
+        if len(pages) <= 4:
+            page_label = ", ".join(f"{page:04d}" for page in pages)
+        else:
+            page_label = f"{pages[0]:04d}-{pages[-1]:04d}"
+        return f"Focus image pages {page_label}"
+
+    def _on_image_print_begin_print(
+        self, operation: Gtk.PrintOperation, _context: Gtk.PrintContext
+    ) -> None:
+        operation.set_n_pages(len(self._image_print_pages))
+
+    def _on_image_print_draw_page(
+        self, _operation: Gtk.PrintOperation, context: Gtk.PrintContext, page_num: int
+    ) -> None:
+        if page_num < 0 or page_num >= len(self._image_print_pages):
+            return
+        page = self._image_print_pages[page_num]
+        image_path = self.images_dir / f"{page:04d}.png"
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(image_path))
+        except GLib.Error:
+            return
+
+        dpi_x = context.get_dpi_x()
+        dpi_y = context.get_dpi_y()
+        margin_left = DEFAULT_PRINT_MARGIN_IN * dpi_x
+        margin_right = DEFAULT_PRINT_MARGIN_IN * dpi_x
+        margin_top = DEFAULT_PRINT_MARGIN_IN * dpi_y
+        margin_bottom = DEFAULT_PRINT_MARGIN_IN * dpi_y
+        content_width = max(1.0, context.get_width() - margin_left - margin_right)
+        content_height = max(1.0, context.get_height() - margin_top - margin_bottom)
+
+        image_width = max(1, pixbuf.get_width())
+        image_height = max(1, pixbuf.get_height())
+        scale = min(content_width / image_width, content_height / image_height)
+        scaled_width = image_width * scale
+        scaled_height = image_height * scale
+        x = margin_left + (content_width - scaled_width) / 2
+        y = margin_top + (content_height - scaled_height) / 2
+
+        cr = context.get_cairo_context()
+        cr.save()
+        cr.translate(x, y)
+        cr.scale(scale, scale)
+        Gdk.cairo_set_source_pixbuf(cr, pixbuf, 0, 0)
+        cr.paint()
+        cr.restore()
+
     def _on_choose_input_dir(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         if not self.win:
             return
@@ -6266,6 +6499,9 @@ class Focus(Adw.Application):
         if self._ai_panel_window:
             self._ai_panel_window.destroy()
             self._ai_panel_window = None
+        if self._image_print_window:
+            self._image_print_window.destroy()
+            self._image_print_window = None
         return False
 
     def _on_ai_panel_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:

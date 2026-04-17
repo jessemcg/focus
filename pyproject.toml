@@ -12,3 +12,8 @@ dependencies = [
     "langchain-voyageai>=0.3.2",
     "pygobject==3.54.5",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
