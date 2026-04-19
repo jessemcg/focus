@@ -26,7 +26,7 @@ Run
 from __future__ import annotations
 
 import bisect
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import importlib
 import io
 import json
@@ -72,11 +72,16 @@ CONFIG_KEY_PAGE_API_KEY = "page_api_key"
 CONFIG_KEY_RANGE_API_URL = "range_api_url"
 CONFIG_KEY_RANGE_MODEL_ID = "range_model_id"
 CONFIG_KEY_RANGE_API_KEY = "range_api_key"
+CONFIG_KEY_EXTRACT_API_URL = "extract_api_url"
+CONFIG_KEY_EXTRACT_MODEL_ID = "extract_model_id"
+CONFIG_KEY_EXTRACT_API_KEY = "extract_api_key"
 CONFIG_KEY_PAGE_DISABLE_REASONING = "page_disable_reasoning"
 CONFIG_KEY_RANGE_DISABLE_REASONING = "range_disable_reasoning"
+CONFIG_KEY_EXTRACT_DISABLE_REASONING = "extract_disable_reasoning"
 CONFIG_KEY_SUMMARIZATION_PROMPT = "summarization_prompt"
 CONFIG_KEY_PAGE_PROMPT = "page_summarization_prompt"
 CONFIG_KEY_RANGE_PROMPT = "range_summarization_prompt"
+CONFIG_KEY_EXTRACT_PROMPT = "extract_information_prompt"
 CONFIG_KEY_VOYAGE_API_KEY = "voyage_api_key"
 CONFIG_KEY_VOYAGE_MODEL = "voyage_model"
 CONFIG_KEY_RAG_PROVIDER = "rag_provider"
@@ -108,6 +113,13 @@ DEFAULT_SUMMARIZATION_PROMPT = (
     "Summarize the provided court transcript in 3–5 concise bullet points. "
     "Highlight the core issues, who is speaking, and any rulings or key facts. "
     "If the text is incomplete or appears truncated, mention that plainly."
+)
+DEFAULT_EXTRACT_PROMPT = (
+    "Extract information about each child mentioned in the provided court transcript pages. "
+    "For each child, identify the child's name if stated, date of birth exactly as it appears, "
+    "current age as of the current date provided above, source page number, and a short supporting "
+    "quote when available. If a DOB is incomplete, conflicting, or not found, say so plainly and "
+    "do not guess. Always respond in English."
 )
 DEFAULT_RAG_PROMPT = (
     'I will ask you a question about a child welfare case. Below are case details and retrieved record excerpts from '
@@ -294,6 +306,7 @@ RAG_LONG_DATE_PATTERN = re.compile(
 RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
 AI_VIEW_SUMMARIZE = "summarize"
+AI_VIEW_EXTRACT = "extract"
 AI_VIEW_QA = "qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
 
@@ -797,10 +810,15 @@ class AiSettings:
     range_api_url: str
     range_model_id: str
     range_api_key: str
+    extract_api_url: str
+    extract_model_id: str
+    extract_api_key: str
     page_disable_reasoning: bool
     range_disable_reasoning: bool
+    extract_disable_reasoning: bool
     page_prompt: str
     range_prompt: str
+    extract_prompt: str
     rag_provider: str
     voyage_api_key: str
     voyage_model: str
@@ -835,6 +853,14 @@ class AiSettings:
             self.range_api_key.strip() or self.api_key.strip(),
         )
 
+    def extract_credentials(self) -> tuple[str, str, str]:
+        range_api_url, range_model_id, range_api_key = self.range_credentials()
+        return (
+            self.extract_api_url.strip() or range_api_url,
+            self.extract_model_id.strip() or range_model_id,
+            self.extract_api_key.strip() or range_api_key,
+        )
+
     def rag_credentials(self) -> tuple[str, str]:
         page_api_url, _, page_api_key = self.page_credentials()
         return (
@@ -863,6 +889,18 @@ class AiSettings:
                 range_api_key,
                 self.page_prompt,
                 self.range_prompt,
+            )
+        )
+
+    def is_extract_configured(self) -> bool:
+        extract_api_url, extract_model_id, extract_api_key = self.extract_credentials()
+        return all(
+            value.strip()
+            for value in (
+                extract_api_url,
+                extract_model_id,
+                extract_api_key,
+                self.extract_prompt,
             )
         )
 
@@ -921,6 +959,7 @@ class FocusViewState:
     ai_output_raw: dict[str, str] = field(
         default_factory=lambda: {
             AI_VIEW_SUMMARIZE: "",
+            AI_VIEW_EXTRACT: "",
             AI_VIEW_QA: "",
             AI_VIEW_RAG_AUDIT: "",
         }
@@ -932,6 +971,7 @@ class FocusViewState:
     ai_cancel_event: threading.Event | None = None
     ai_stream_thread: threading.Thread | None = None
     ai_range_text: str = ""
+    extract_range_text: str = ""
     rag_question_text: str = ""
     rag_filter_chip_text: str = ""
     sidebar_expanded: list[str] = field(default_factory=list)
@@ -950,15 +990,24 @@ def load_ai_settings() -> AiSettings:
     range_api_url = str(config.get(CONFIG_KEY_RANGE_API_URL, "") or "").strip()
     range_model_id = str(config.get(CONFIG_KEY_RANGE_MODEL_ID, "") or "").strip()
     range_api_key = str(config.get(CONFIG_KEY_RANGE_API_KEY, "") or "").strip()
+    extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip()
+    extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip()
+    extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip()
     page_disable_reasoning = bool(
         config.get(CONFIG_KEY_PAGE_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
     )
     range_disable_reasoning = bool(
         config.get(CONFIG_KEY_RANGE_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
     )
+    extract_disable_reasoning = bool(
+        config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    )
     fallback_prompt = str(config.get(CONFIG_KEY_SUMMARIZATION_PROMPT, DEFAULT_SUMMARIZATION_PROMPT) or "").strip()
     page_prompt = str(config.get(CONFIG_KEY_PAGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
     range_prompt = str(config.get(CONFIG_KEY_RANGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
+    extract_prompt = str(
+        config.get(CONFIG_KEY_EXTRACT_PROMPT, DEFAULT_EXTRACT_PROMPT) or DEFAULT_EXTRACT_PROMPT
+    ).strip()
     rag_prompt = str(config.get(CONFIG_KEY_RAG_PROMPT, DEFAULT_RAG_PROMPT) or DEFAULT_RAG_PROMPT).strip()
     rag_provider = _normalize_rag_provider(str(config.get(CONFIG_KEY_RAG_PROVIDER, DEFAULT_RAG_PROVIDER) or ""))
     voyage_model = str(
@@ -1015,10 +1064,15 @@ def load_ai_settings() -> AiSettings:
         range_api_url=range_api_url,
         range_model_id=range_model_id,
         range_api_key=range_api_key,
+        extract_api_url=extract_api_url,
+        extract_model_id=extract_model_id,
+        extract_api_key=extract_api_key,
         page_disable_reasoning=page_disable_reasoning,
         range_disable_reasoning=range_disable_reasoning,
+        extract_disable_reasoning=extract_disable_reasoning,
         page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
         range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
+        extract_prompt=extract_prompt or DEFAULT_EXTRACT_PROMPT,
         rag_provider=rag_provider,
         voyage_api_key=voyage_api_key,
         voyage_model=voyage_model or DEFAULT_RAG_VOYAGE_MODEL,
@@ -1052,11 +1106,16 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_RANGE_API_URL] = settings.range_api_url
     config[CONFIG_KEY_RANGE_MODEL_ID] = settings.range_model_id
     config[CONFIG_KEY_RANGE_API_KEY] = settings.range_api_key
+    config[CONFIG_KEY_EXTRACT_API_URL] = settings.extract_api_url
+    config[CONFIG_KEY_EXTRACT_MODEL_ID] = settings.extract_model_id
+    config[CONFIG_KEY_EXTRACT_API_KEY] = settings.extract_api_key
     config[CONFIG_KEY_PAGE_DISABLE_REASONING] = bool(settings.page_disable_reasoning)
     config[CONFIG_KEY_RANGE_DISABLE_REASONING] = bool(settings.range_disable_reasoning)
+    config[CONFIG_KEY_EXTRACT_DISABLE_REASONING] = bool(settings.extract_disable_reasoning)
     config[CONFIG_KEY_SUMMARIZATION_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_PAGE_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_RANGE_PROMPT] = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
+    config[CONFIG_KEY_EXTRACT_PROMPT] = settings.extract_prompt or DEFAULT_EXTRACT_PROMPT
     config[CONFIG_KEY_RAG_PROVIDER] = _normalize_rag_provider(settings.rag_provider)
     config[CONFIG_KEY_VOYAGE_API_KEY] = settings.voyage_api_key
     config[CONFIG_KEY_VOYAGE_MODEL] = settings.voyage_model or DEFAULT_RAG_VOYAGE_MODEL
@@ -1092,6 +1151,27 @@ def save_ai_settings(settings: AiSettings) -> None:
         DEFAULT_SUMMARY_EMPHASIS_COLOR,
     )
     _write_config(config)
+
+
+def compose_extract_information_prompt(
+    prompt: str,
+    *,
+    today: date | None = None,
+) -> str:
+    current_date = today or date.today()
+    current_date_iso = current_date.isoformat()
+    current_date_long = f"{current_date:%B} {current_date.day}, {current_date:%Y}"
+    base_prompt = (prompt or DEFAULT_EXTRACT_PROMPT).strip() or DEFAULT_EXTRACT_PROMPT
+    preface = (
+        "Current date for this extraction: "
+        f"{current_date_long} ({current_date_iso}).\n\n"
+        "When the record gives a child's date of birth, calculate the child's current age "
+        "as of the current date above. Use the child's birthday in the current year: if the "
+        "birthday has not occurred yet this year, subtract one year from the raw year "
+        "difference. If the DOB is incomplete, ambiguous, or conflicting, report that issue "
+        "instead of guessing an age."
+    )
+    return f"{preface}\n\n{base_prompt}"
 
 
 CONTINUOUS_ICON_ON_CHOICES = (
@@ -1928,6 +2008,7 @@ class Focus(Adw.Application):
         self._link_tag_lookup: dict[Gtk.TextTag, tuple[str, str]] = {}
         self._ai_outputs: dict[str, AiOutputView] = {
             AI_VIEW_SUMMARIZE: AiOutputView(),
+            AI_VIEW_EXTRACT: AiOutputView(),
             AI_VIEW_QA: AiOutputView(),
             AI_VIEW_RAG_AUDIT: AiOutputView(),
         }
@@ -2008,6 +2089,7 @@ class Focus(Adw.Application):
         self._ai_status_label: Gtk.Label | None = None
         self._ai_spinner: Gtk.Spinner | None = None
         self._ai_range_entry: Gtk.Entry | None = None
+        self._extract_range_entry: Gtk.Entry | None = None
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
         self._ai_panel_toggle_guard = False
         self._ai_detach_button: Gtk.ToggleButton | None = None
@@ -2507,6 +2589,38 @@ class Focus(Adw.Application):
         summarize_range_btn.connect("clicked", self._on_summarize_range_button_clicked)
         summarize_controls.append(summarize_range_btn)
 
+        extract_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        extract_view.set_hexpand(True)
+        extract_view.set_vexpand(True)
+        extract_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        extract_controls.set_hexpand(True)
+        extract_controls.set_valign(Gtk.Align.CENTER)
+
+        extract_btn = Gtk.Button(label="Current Page")
+        extract_btn.add_css_class("flat")
+        extract_btn.add_css_class("no-bold")
+        extract_btn.set_valign(Gtk.Align.CENTER)
+        extract_btn.set_hexpand(False)
+        extract_btn.set_halign(Gtk.Align.START)
+        extract_btn.connect("clicked", self._on_extract_page_clicked)
+        extract_controls.append(extract_btn)
+
+        self._extract_range_entry = Gtk.Entry()
+        self._extract_range_entry.set_placeholder_text("Page Range")
+        self._extract_range_entry.set_max_length(9)
+        self._extract_range_entry.set_hexpand(True)
+        self._extract_range_entry.connect("activate", self._on_extract_range_activate)
+        extract_controls.append(self._extract_range_entry)
+
+        extract_range_btn = Gtk.Button(label="Submit")
+        extract_range_btn.add_css_class("flat")
+        extract_range_btn.add_css_class("no-bold")
+        extract_range_btn.set_valign(Gtk.Align.CENTER)
+        extract_range_btn.set_hexpand(False)
+        extract_range_btn.set_halign(Gtk.Align.START)
+        extract_range_btn.connect("clicked", self._on_extract_range_button_clicked)
+        extract_controls.append(extract_range_btn)
+
         qa_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         qa_view.set_hexpand(True)
         qa_view.set_vexpand(True)
@@ -2598,6 +2712,16 @@ class Focus(Adw.Application):
         )
         ai_overflow_box.append(summarize_mode_button)
 
+        extract_mode_button = Gtk.Button(label="Extract Information")
+        extract_mode_button.add_css_class("flat")
+        extract_mode_button.add_css_class("no-bold")
+        extract_mode_button.set_halign(Gtk.Align.FILL)
+        extract_mode_button.connect(
+            "clicked",
+            lambda _button: self._on_ai_overflow_mode_clicked(self._ai_overflow_popover, AI_VIEW_EXTRACT),
+        )
+        ai_overflow_box.append(extract_mode_button)
+
         rag_audit_mode_button = Gtk.Button(label="RAG Audit")
         rag_audit_mode_button.add_css_class("flat")
         rag_audit_mode_button.add_css_class("no-bold")
@@ -2641,6 +2765,7 @@ class Focus(Adw.Application):
 
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_SUMMARIZE)
+            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_EXTRACT)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_QA)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_RAG_AUDIT)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
@@ -2675,11 +2800,14 @@ class Focus(Adw.Application):
         file_view.append(self._summary_scroller)
 
         summarize_scroller = self._build_ai_output_view(AI_VIEW_SUMMARIZE)
+        extract_scroller = self._build_ai_output_view(AI_VIEW_EXTRACT)
         qa_scroller = self._build_ai_output_view(AI_VIEW_QA)
         rag_audit_scroller = self._build_ai_output_view(AI_VIEW_RAG_AUDIT)
 
         summarize_view.append(summarize_controls)
         summarize_view.append(summarize_scroller)
+        extract_view.append(extract_controls)
+        extract_view.append(extract_scroller)
         qa_view.append(qa_controls)
         if self._rag_filter_chip:
             qa_view.append(self._rag_filter_chip)
@@ -2688,6 +2816,7 @@ class Focus(Adw.Application):
         rag_audit_view.append(rag_audit_scroller)
 
         self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
+        self._ai_view_stack.add_titled(extract_view, AI_VIEW_EXTRACT, "Extract")
         self._ai_view_stack.add_titled(qa_view, AI_VIEW_QA, "Q & A")
         self._ai_view_stack.add_titled(rag_audit_view, AI_VIEW_RAG_AUDIT, "RAG Audit")
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
@@ -3227,6 +3356,8 @@ class Focus(Adw.Application):
         state.sidebar_expanded = self._get_sidebar_expanded_keys()
         if self._ai_range_entry:
             state.ai_range_text = self._ai_range_entry.get_text()
+        if self._extract_range_entry:
+            state.extract_range_text = self._extract_range_entry.get_text()
         if self._rag_question_entry:
             state.rag_question_text = self._rag_question_entry.get_text()
         if self._rag_filter_chip and self._rag_filter_chip.get_visible():
@@ -6956,6 +7087,55 @@ class Focus(Adw.Application):
             start, end = end, start
         return start, end
 
+    def _on_extract_page_clicked(self, _button: Gtk.Button) -> None:
+        if self._continuous_view or self._showing_grep_results:
+            self._ai_transient_toast("Extract Current Page only works when a single text page is visible.")
+            return
+        if not self.pages:
+            self._ai_transient_toast("No page loaded to extract from.")
+            return
+        self._set_ai_view(AI_VIEW_EXTRACT)
+        page = self.pages[self.current_index]
+        content, _, _ = self._read_page_text(page)
+        payload = f"Page {page:04d}\n\n{content}"
+        self._start_ai_stream(
+            label=f"page {page:04d}",
+            content=payload,
+            prompt_kind="extract",
+        )
+
+    def _on_extract_range_activate(self, _entry: Gtk.Entry) -> None:
+        self._extract_page_range()
+
+    def _on_extract_range_button_clicked(self, _button: Gtk.Button) -> None:
+        self._extract_page_range()
+
+    def _extract_page_range(self) -> None:
+        if not self.pages:
+            self._ai_transient_toast("No pages available to extract from.")
+            return
+        if not self._extract_range_entry:
+            return
+        raw = self._extract_range_entry.get_text().strip()
+        page_range = self._parse_page_range(raw)
+        if page_range is None:
+            self._ai_transient_toast("Enter a page range like 10-25.")
+            return
+        start_page, end_page = page_range
+        targets = [p for p in self.pages if start_page <= p <= end_page]
+        if not targets:
+            self._ai_transient_toast("No matching pages found in that range.")
+            return
+        self._set_ai_view(AI_VIEW_EXTRACT)
+        parts: list[str] = []
+        for page in targets:
+            content, _, _ = self._read_page_text(page)
+            parts.append(f"Page {page:04d}\n\n{content}\n\n")
+        combined = "".join(parts)
+        label = f"pages {start_page:04d}-{end_page:04d}"
+        self._start_ai_stream(label=label, content=combined, prompt_kind="extract")
+        self._extract_range_entry.set_text("")
+
     def _on_rag_question_activate(self, _entry: Gtk.Entry) -> None:
         self._submit_rag_question(deep=False)
 
@@ -8017,14 +8197,25 @@ class Focus(Adw.Application):
         state = self._current_view_state()
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
-        if not settings.is_configured():
+        target_view = AI_VIEW_EXTRACT if prompt_kind == "extract" else AI_VIEW_SUMMARIZE
+        action_label = "Extracting" if prompt_kind == "extract" else "Summarizing"
+        if prompt_kind == "extract":
+            if not settings.is_extract_configured():
+                self._ai_transient_toast("Configure extract API URL, model, API key, and prompt in Settings.")
+                self._ensure_ai_panel_visible()
+                return
+        elif not settings.is_configured():
             self._ai_transient_toast("Configure API URL, model, API key, and prompt in Settings.")
             self._ensure_ai_panel_visible()
             return
         if not content.strip():
-            self._ai_transient_toast("Nothing to summarize for the requested selection.")
+            self._ai_transient_toast(f"Nothing to {action_label.lower()} for the requested selection.")
             return
-        if prompt_kind == "range":
+        if prompt_kind == "extract":
+            prompt = compose_extract_information_prompt(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
+            api_url, model_id, api_key = settings.extract_credentials()
+            disable_reasoning = settings.extract_disable_reasoning
+        elif prompt_kind == "range":
             prompt = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
             api_url, model_id, api_key = settings.range_credentials()
             disable_reasoning = settings.range_disable_reasoning
@@ -8039,14 +8230,13 @@ class Focus(Adw.Application):
         state.ai_request_generation += 1
         generation = state.ai_request_generation
         self._ai_request_generation = generation
-        state.ai_active_view = AI_VIEW_SUMMARIZE
+        state.ai_active_view = target_view
         self._ai_cancel_event = state.ai_cancel_event
         self._ai_in_flight = True
         self._ensure_ai_panel_visible()
-        target_view = AI_VIEW_SUMMARIZE
         self._set_ai_view(target_view)
         self._reset_ai_output("", target=target_view)
-        self._update_ai_status(f"Summarizing {label}…", spinning=True)
+        self._update_ai_status(f"{action_label} {label}…", spinning=True)
 
         payload_text = content
         worker_settings = settings
@@ -8609,6 +8799,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         prompt_definitions = [
             ("page", "Single Page Summarization", self._build_summarization_prompt_page),
             ("range", "Page Range Summarization", self._build_summarization_prompt_page),
+            ("extract", "Extract Information", self._build_summarization_prompt_page),
             ("rag", "RAG Answer Prompt", self._build_rag_prompt_page),
         ]
         first_row: Gtk.ListBoxRow | None = None
@@ -8807,7 +8998,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         prompt_label = Gtk.Label(label="Prompt", xalign=0)
         prompt_label.add_css_class("dim-label")
         prompt_section.append(prompt_label)
-        prompt_scroller, buffer = self._build_prompt_editor(DEFAULT_SUMMARIZATION_PROMPT)
+        default_prompt = DEFAULT_EXTRACT_PROMPT if key == "extract" else DEFAULT_SUMMARIZATION_PROMPT
+        prompt_scroller, buffer = self._build_prompt_editor(default_prompt)
         prompt_section.append(prompt_scroller)
         page_box.append(prompt_section)
 
@@ -8983,6 +9175,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         settings = load_ai_settings()
         page_widgets = self._prompt_editors.get("page")
         range_widgets = self._prompt_editors.get("range")
+        extract_widgets = self._prompt_editors.get("extract")
         rag_widgets = self._prompt_editors.get("rag")
 
         if isinstance(page_widgets, SummarizationPromptWidgets):
@@ -9002,6 +9195,15 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 bool(settings.range_disable_reasoning)
             )
             range_widgets.prompt_buffer.set_text(settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT)
+
+        if isinstance(extract_widgets, SummarizationPromptWidgets):
+            extract_widgets.api_url_row.set_text(settings.extract_api_url or settings.range_api_url or settings.api_url)
+            extract_widgets.model_row.set_text(settings.extract_model_id or settings.range_model_id or settings.model_id)
+            extract_widgets.api_key_row.set_text(settings.extract_api_key or settings.range_api_key or settings.api_key)
+            extract_widgets.disable_reasoning_row.set_active(
+                bool(settings.extract_disable_reasoning)
+            )
+            extract_widgets.prompt_buffer.set_text(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
 
         if isinstance(rag_widgets, RagPromptWidgets):
             rag_widgets.api_url_row.set_text(
@@ -9081,10 +9283,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
     def _on_save_clicked(self, _btn: Gtk.Button) -> None:
         page_widgets = self._prompt_editors.get("page")
         range_widgets = self._prompt_editors.get("range")
+        extract_widgets = self._prompt_editors.get("extract")
         rag_widgets = self._prompt_editors.get("rag")
         if not isinstance(page_widgets, SummarizationPromptWidgets):
             return
         if not isinstance(range_widgets, SummarizationPromptWidgets):
+            return
+        if not isinstance(extract_widgets, SummarizationPromptWidgets):
             return
         if not isinstance(rag_widgets, RagPromptWidgets):
             return
@@ -9097,6 +9302,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         range_model_id = range_widgets.model_row.get_text().strip()
         range_api_key = range_widgets.api_key_row.get_text().strip()
         range_disable_reasoning = bool(range_widgets.disable_reasoning_row.get_active())
+        extract_api_url = extract_widgets.api_url_row.get_text().strip()
+        extract_model_id = extract_widgets.model_row.get_text().strip()
+        extract_api_key = extract_widgets.api_key_row.get_text().strip()
+        extract_disable_reasoning = bool(extract_widgets.disable_reasoning_row.get_active())
         rag_api_url = rag_widgets.api_url_row.get_text().strip()
         rag_api_key = rag_widgets.api_key_row.get_text().strip()
         rag_model = rag_widgets.model_row.get_text().strip()
@@ -9123,6 +9332,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
+        extract_prompt = self._prompt_text(extract_widgets.prompt_buffer).strip()
         rag_prompt = self._prompt_text(rag_widgets.prompt_buffer).strip()
         highlight_phrases = (
             _normalize_highlight_phrases(self._prompt_text(self._highlight_phrases_buffer))
@@ -9176,10 +9386,15 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             range_api_url=range_api_url,
             range_model_id=range_model_id,
             range_api_key=range_api_key,
+            extract_api_url=extract_api_url,
+            extract_model_id=extract_model_id,
+            extract_api_key=extract_api_key,
             page_disable_reasoning=page_disable_reasoning,
             range_disable_reasoning=range_disable_reasoning,
+            extract_disable_reasoning=extract_disable_reasoning,
             page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
+            extract_prompt=extract_prompt or DEFAULT_EXTRACT_PROMPT,
             rag_provider=rag_provider,
             voyage_api_key=voyage_key,
             voyage_model=voyage_model or DEFAULT_RAG_VOYAGE_MODEL,
