@@ -6019,6 +6019,7 @@ class Focus(Adw.Application):
         cmd = [
             rg_path,
             "--pcre2",
+            "--multiline",
             "--ignore-case",
             "--files-with-matches",
             "--no-messages",
