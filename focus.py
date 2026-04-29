@@ -1823,6 +1823,29 @@ def _extract_summary_emphasis_spans(
     return [match.span("entry") for match in pattern.finditer(text)]
 
 
+def split_span_at_line_breaks(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    if end <= start:
+        return []
+    text_len = len(text)
+    start = max(0, min(start, text_len))
+    end = max(0, min(end, text_len))
+    if end <= start:
+        return []
+
+    spans: list[tuple[int, int]] = []
+    cursor = start
+    while cursor < end:
+        line_break = text.find("\n", cursor, end)
+        if line_break == -1:
+            if end > cursor:
+                spans.append((cursor, end))
+            break
+        if line_break > cursor:
+            spans.append((cursor, line_break))
+        cursor = line_break + 1
+    return spans
+
+
 def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:
     if not text:
         return
@@ -3412,9 +3435,10 @@ class Focus(Adw.Application):
                     end = max(0, min(end, char_count))
                     if end <= start:
                         continue
-                    start_iter = buf.get_iter_at_offset(start)
-                    end_iter = buf.get_iter_at_offset(end)
-                    buf.apply_tag(tag, start_iter, end_iter)
+                    for line_start, line_end in split_span_at_line_breaks(rendered_text, start, end):
+                        start_iter = buf.get_iter_at_offset(line_start)
+                        end_iter = buf.get_iter_at_offset(line_end)
+                        buf.apply_tag(tag, start_iter, end_iter)
         self._apply_keyword_highlights(buf, rendered_text)
         self._apply_continuous_divider_style(buf, rendered_text)
         self._apply_rounded_grid_table_no_wrap(buf, rendered_text)
