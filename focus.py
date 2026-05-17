@@ -305,9 +305,13 @@ RAG_LONG_DATE_PATTERN = re.compile(
 )
 RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
-IMAGE_HOVER_ZONE_WIDTH = 500
-IMAGE_HOVER_ZONE_HEIGHT = 40
-IMAGE_HOVER_ZONE_TOP_MARGIN = 18
+RIGHT_SCROLL_ZONE_EDGE_MARGIN = 18
+HOVER_CONTROL_BAR_WIDTH = 620
+HOVER_CONTROL_HEIGHT = 40
+HOVER_CONTROL_TOP_MARGIN = 18
+HOVER_CONTROL_SPACING = 8
+HOVER_SUMMARY_CARD_WIDTH = 620
+HOVER_SUMMARY_CARD_TOP_MARGIN = 68
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_EXTRACT = "extract"
 AI_VIEW_QA = "qa"
@@ -1394,8 +1398,8 @@ listbox.focus-sidebar-listview row {
   background-color: __PAGE_TEXT_BG__;
 }
 
-.focus-text-rounded,
-.focus-text-rounded > viewport {
+.focus-page-rounded,
+.focus-page-rounded > viewport {
   background-color: __PAGE_TEXT_BG__;
   border-radius: 16px;
 }
@@ -1410,7 +1414,7 @@ listbox.focus-sidebar-listview row {
 }
 
 button.focus-right-scroll-zone {
-  border-radius: 0;
+  border-radius: 14px;
   padding: 0;
   background-color: rgba(128, 128, 128, 0.00);
   background-image: none;
@@ -1439,26 +1443,57 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
   color: rgba(95, 95, 95, 0.62);
 }
 
-button.focus-image-hover-zone {
+box.focus-hover-control-bar {
+  background: transparent;
+}
+
+button.focus-hover-zone {
   border-radius: 14px;
   padding: 0;
-  background-color: rgba(128, 128, 128, 0.12);
   background-image: none;
   box-shadow: none;
   transition: background-color 120ms ease;
 }
 
-button.focus-image-hover-zone:hover,
-button.focus-image-hover-zone:active {
+button.focus-image-hover-zone {
   background-color: rgba(128, 128, 128, 0.12);
+}
+
+button.focus-summary-hover-zone {
+  background-color: rgba(128, 128, 128, 0.12);
+}
+
+button.focus-hover-zone:hover,
+button.focus-hover-zone:active {
   background-image: none;
   box-shadow: none;
 }
 
-button.focus-image-hover-zone label.focus-image-hover-label {
+button.focus-image-hover-zone:hover,
+button.focus-image-hover-zone:active {
+  background-color: rgba(128, 128, 128, 0.16);
+}
+
+button.focus-summary-hover-zone:hover,
+button.focus-summary-hover-zone:active {
+  background-color: rgba(128, 128, 128, 0.16);
+}
+
+button.focus-hover-zone label.focus-hover-label {
   color: rgba(95, 95, 95, 0.62);
   font-size: 11px;
   font-weight: 500;
+}
+
+box.focus-hover-summary-card {
+  background-color: __PAGE_TEXT_BG__;
+  border: 1px solid rgba(95, 95, 95, 0.26);
+  border-radius: 16px;
+  padding: 12px;
+}
+
+textview.focus-hover-summary-view {
+  background: transparent;
 }
 
 .ai-output-frame {
@@ -1993,9 +2028,26 @@ class Focus(Adw.Application):
         self._right_scroll_zone: Gtk.Button | None = None
         self._right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
         self._right_scroll_active = False
+        self._hover_control_bar: Gtk.Box | None = None
         self._image_hover_zone: Gtk.Button | None = None
         self._image_hover_motion_controller: Gtk.EventControllerMotion | None = None
         self._image_hover_peek_active = False
+        self._summary_hover_zone: Gtk.Button | None = None
+        self._summary_hover_motion_controller: Gtk.EventControllerMotion | None = None
+        self._summary_hover_card: Gtk.Box | None = None
+        self._summary_hover_card_motion_controller: Gtk.EventControllerMotion | None = None
+        self._summary_hover_scroller: Gtk.ScrolledWindow | None = None
+        self._summary_hover_view: Gtk.TextView | None = None
+        self._summary_hover_buffer: Gtk.TextBuffer | None = None
+        self._summary_hover_control_inside = False
+        self._summary_hover_card_inside = False
+        self._summary_hover_hide_source_id: int | None = None
+        self._summary_hover_generation = 0
+        self._summary_hover_page: int | None = None
+        self._summary_hover_raw = ""
+        self._summary_hover_cancel_event: threading.Event | None = None
+        self._summary_hover_thread: threading.Thread | None = None
+        self._summary_hover_in_flight = False
         self._image_scroll_overlay: Gtk.Overlay | None = None
         self._image_right_scroll_zone: Gtk.Button | None = None
         self._image_right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
@@ -2395,6 +2447,7 @@ class Focus(Adw.Application):
 
         self.scroller = Gtk.ScrolledWindow()
         self.scroller.add_css_class("focus-scroller")
+        self.scroller.add_css_class("focus-page-rounded")
         self.scroller.set_hexpand(True)
         self.scroller.set_vexpand(True)
         self.scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -2403,7 +2456,6 @@ class Focus(Adw.Application):
         self.scroller.set_min_content_height(0)
         self.scroller.set_size_request(-1, 0)
         self.scroller.set_child(self.textview)
-        self._update_text_rounding()
         self._text_scroll_overlay = Gtk.Overlay()
         self._text_scroll_overlay.set_hexpand(True)
         self._text_scroll_overlay.set_vexpand(True)
@@ -2417,16 +2469,15 @@ class Focus(Adw.Application):
         self._right_scroll_zone.set_hexpand(False)
         self._right_scroll_zone.set_vexpand(True)
         self._right_scroll_zone.set_margin_start(0)
-        self._right_scroll_zone.set_margin_top(0)
-        self._right_scroll_zone.set_margin_bottom(0)
-        self._right_scroll_zone.set_margin_end(0)
+        self._right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+        self._right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+        self._right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
         self._right_scroll_zone.set_can_target(True)
         self._right_scroll_zone.set_focus_on_click(False)
         right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
         right_scroll_label.add_css_class("focus-right-scroll-label")
         right_scroll_label.set_halign(Gtk.Align.CENTER)
-        right_scroll_label.set_valign(Gtk.Align.END)
-        right_scroll_label.set_margin_bottom(16)
+        right_scroll_label.set_valign(Gtk.Align.CENTER)
         self._right_scroll_zone.set_child(right_scroll_label)
         self._right_scroll_zone.connect("clicked", self._on_right_scroll_zone_clicked)
 
@@ -2459,6 +2510,7 @@ class Focus(Adw.Application):
         self._image_scroller = Gtk.ScrolledWindow()
         self._image_scroller.add_css_class("focus-scroller")
         self._image_scroller.add_css_class("focus-image-scroller")
+        self._image_scroller.add_css_class("focus-page-rounded")
         self._image_scroller.set_hexpand(True)
         self._image_scroller.set_vexpand(True)
         self._image_scroller.set_halign(Gtk.Align.FILL)
@@ -2487,16 +2539,15 @@ class Focus(Adw.Application):
         self._image_right_scroll_zone.set_hexpand(False)
         self._image_right_scroll_zone.set_vexpand(True)
         self._image_right_scroll_zone.set_margin_start(0)
-        self._image_right_scroll_zone.set_margin_top(0)
-        self._image_right_scroll_zone.set_margin_bottom(0)
-        self._image_right_scroll_zone.set_margin_end(0)
+        self._image_right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+        self._image_right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+        self._image_right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
         self._image_right_scroll_zone.set_can_target(True)
         self._image_right_scroll_zone.set_focus_on_click(False)
         image_right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
         image_right_scroll_label.add_css_class("focus-right-scroll-label")
         image_right_scroll_label.set_halign(Gtk.Align.CENTER)
-        image_right_scroll_label.set_valign(Gtk.Align.END)
-        image_right_scroll_label.set_margin_bottom(16)
+        image_right_scroll_label.set_valign(Gtk.Align.CENTER)
         self._image_right_scroll_zone.set_child(image_right_scroll_label)
         self._image_right_scroll_zone.connect("clicked", self._on_image_right_scroll_zone_clicked)
 
@@ -2539,20 +2590,50 @@ class Focus(Adw.Application):
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self._content_stack)
 
+        self._hover_control_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=HOVER_CONTROL_SPACING)
+        self._hover_control_bar.add_css_class("focus-hover-control-bar")
+        self._hover_control_bar.set_halign(Gtk.Align.CENTER)
+        self._hover_control_bar.set_valign(Gtk.Align.START)
+        self._hover_control_bar.set_hexpand(False)
+        self._hover_control_bar.set_vexpand(False)
+        self._hover_control_bar.set_margin_top(HOVER_CONTROL_TOP_MARGIN)
+        self._hover_control_bar.set_size_request(HOVER_CONTROL_BAR_WIDTH, HOVER_CONTROL_HEIGHT)
+        self._hover_control_bar.set_visible(False)
+
+        self._summary_hover_zone = Gtk.Button()
+        self._summary_hover_zone.add_css_class("flat")
+        self._summary_hover_zone.add_css_class("focus-hover-zone")
+        self._summary_hover_zone.add_css_class("focus-summary-hover-zone")
+        self._summary_hover_zone.set_hexpand(True)
+        self._summary_hover_zone.set_vexpand(False)
+        self._summary_hover_zone.set_size_request(-1, HOVER_CONTROL_HEIGHT)
+        self._summary_hover_zone.set_can_target(True)
+        self._summary_hover_zone.set_focus_on_click(False)
+        summary_hover_label = Gtk.Label(label="Summarize Page")
+        summary_hover_label.add_css_class("focus-hover-label")
+        summary_hover_label.set_halign(Gtk.Align.CENTER)
+        summary_hover_label.set_valign(Gtk.Align.START)
+        summary_hover_label.set_vexpand(True)
+        summary_hover_label.set_margin_top(5)
+        self._summary_hover_zone.set_child(summary_hover_label)
+        self._summary_hover_motion_controller = Gtk.EventControllerMotion()
+        self._summary_hover_motion_controller.connect("enter", self._on_summary_hover_zone_enter)
+        self._summary_hover_motion_controller.connect("motion", self._on_summary_hover_zone_enter)
+        self._summary_hover_motion_controller.connect("leave", self._on_summary_hover_zone_leave)
+        self._summary_hover_zone.add_controller(self._summary_hover_motion_controller)
+        self._hover_control_bar.append(self._summary_hover_zone)
+
         self._image_hover_zone = Gtk.Button()
         self._image_hover_zone.add_css_class("flat")
+        self._image_hover_zone.add_css_class("focus-hover-zone")
         self._image_hover_zone.add_css_class("focus-image-hover-zone")
-        self._image_hover_zone.set_halign(Gtk.Align.CENTER)
-        self._image_hover_zone.set_valign(Gtk.Align.START)
-        self._image_hover_zone.set_hexpand(False)
+        self._image_hover_zone.set_hexpand(True)
         self._image_hover_zone.set_vexpand(False)
-        self._image_hover_zone.set_margin_top(IMAGE_HOVER_ZONE_TOP_MARGIN)
-        self._image_hover_zone.set_size_request(IMAGE_HOVER_ZONE_WIDTH, IMAGE_HOVER_ZONE_HEIGHT)
+        self._image_hover_zone.set_size_request(-1, HOVER_CONTROL_HEIGHT)
         self._image_hover_zone.set_can_target(True)
         self._image_hover_zone.set_focus_on_click(False)
-        self._image_hover_zone.set_visible(False)
         image_hover_label = Gtk.Label(label="Show Image")
-        image_hover_label.add_css_class("focus-image-hover-label")
+        image_hover_label.add_css_class("focus-hover-label")
         image_hover_label.set_halign(Gtk.Align.CENTER)
         image_hover_label.set_valign(Gtk.Align.START)
         image_hover_label.set_vexpand(True)
@@ -2563,9 +2644,47 @@ class Focus(Adw.Application):
         self._image_hover_motion_controller.connect("motion", self._on_image_hover_zone_enter)
         self._image_hover_motion_controller.connect("leave", self._on_image_hover_zone_leave)
         self._image_hover_zone.add_controller(self._image_hover_motion_controller)
-        self._content_overlay.add_overlay(self._image_hover_zone)
+        self._hover_control_bar.append(self._image_hover_zone)
+
+        self._content_overlay.add_overlay(self._hover_control_bar)
         if hasattr(self._content_overlay, "set_overlay_pass_through"):
-            self._content_overlay.set_overlay_pass_through(self._image_hover_zone, False)
+            self._content_overlay.set_overlay_pass_through(self._hover_control_bar, False)
+
+        self._summary_hover_view = Gtk.TextView(editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        self._summary_hover_view.add_css_class("focus-hover-summary-view")
+        self._summary_hover_view.set_cursor_visible(False)
+        self._summary_hover_view.set_top_margin(4)
+        self._summary_hover_view.set_bottom_margin(4)
+        self._summary_hover_view.set_left_margin(4)
+        self._summary_hover_view.set_right_margin(4)
+        self._summary_hover_buffer = self._summary_hover_view.get_buffer()
+
+        self._summary_hover_scroller = Gtk.ScrolledWindow()
+        self._summary_hover_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self._summary_hover_scroller.set_hexpand(True)
+        self._summary_hover_scroller.set_vexpand(False)
+        self._summary_hover_scroller.set_propagate_natural_height(True)
+        self._summary_hover_scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
+        self._summary_hover_scroller.set_child(self._summary_hover_view)
+
+        self._summary_hover_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._summary_hover_card.add_css_class("focus-hover-summary-card")
+        self._summary_hover_card.set_halign(Gtk.Align.CENTER)
+        self._summary_hover_card.set_valign(Gtk.Align.START)
+        self._summary_hover_card.set_hexpand(False)
+        self._summary_hover_card.set_vexpand(False)
+        self._summary_hover_card.set_margin_top(HOVER_SUMMARY_CARD_TOP_MARGIN)
+        self._summary_hover_card.set_size_request(HOVER_SUMMARY_CARD_WIDTH, -1)
+        self._summary_hover_card.set_visible(False)
+        self._summary_hover_card.append(self._summary_hover_scroller)
+        self._summary_hover_card_motion_controller = Gtk.EventControllerMotion()
+        self._summary_hover_card_motion_controller.connect("enter", self._on_summary_hover_card_enter)
+        self._summary_hover_card_motion_controller.connect("motion", self._on_summary_hover_card_enter)
+        self._summary_hover_card_motion_controller.connect("leave", self._on_summary_hover_card_leave)
+        self._summary_hover_card.add_controller(self._summary_hover_card_motion_controller)
+        self._content_overlay.add_overlay(self._summary_hover_card)
+        if hasattr(self._content_overlay, "set_overlay_pass_through"):
+            self._content_overlay.set_overlay_pass_through(self._summary_hover_card, False)
 
         self._ai_panel_revealer = Gtk.Revealer()
         self._ai_panel_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
@@ -3365,6 +3484,7 @@ class Focus(Adw.Application):
     def _reset_view_states(self) -> None:
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
+        self._hide_summary_hover_preview(cancel=True)
         self._view_state = FocusViewState()
         self._current_view_state().sidebar_visible = self._toc_sidebar_visible
         self._current_view_state().ai_panel_visible = bool(
@@ -4112,6 +4232,7 @@ class Focus(Adw.Application):
 
     def _set_continuous_view(self, enabled: bool) -> bool:
         if enabled:
+            self._hide_summary_hover_preview(cancel=True)
             if self._showing_grep_results:
                 self._transient_toast("Continuous view is unavailable while showing grep results.")
                 self._sync_continuous_action()
@@ -4231,6 +4352,9 @@ class Focus(Adw.Application):
             "}"
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
+            "}"
+            "textview.focus-hover-summary-view { "
+            f"color: {PAGE_TEXT_FG_COLOR}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
             "}"
             "textview.ai-output-view.rag-audit-view { "
             f"font-size: {DEFAULT_RAG_AUDIT_FONT_SIZE_PT}pt; "
@@ -4803,9 +4927,9 @@ class Focus(Adw.Application):
             zone_width = max(1, int(round(right - left)))
             self._right_scroll_zone.set_size_request(zone_width, -1)
             self._right_scroll_zone.set_margin_start(0)
-            self._right_scroll_zone.set_margin_top(0)
-            self._right_scroll_zone.set_margin_bottom(0)
-            self._right_scroll_zone.set_margin_end(0)
+            self._right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+            self._right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+            self._right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
         return left, right, top, bottom
 
     def _refresh_right_scroll_zone_geometry(self) -> bool:
@@ -4829,12 +4953,35 @@ class Focus(Adw.Application):
             return False
         return (self.images_dir / f"{page:04d}.png").exists()
 
+    def _can_show_summary_hover_preview(self) -> bool:
+        if self._show_image or self._continuous_view or self._showing_grep_results:
+            return False
+        if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
+            return False
+        page = self.pages[self.current_index]
+        path = self.page_to_path.get(page)
+        return bool(path and path.exists())
+
     def _update_image_hover_zone_visible(self) -> None:
-        if not self._image_hover_zone:
+        if not self._hover_control_bar:
             return
-        visible = self._image_hover_peek_active or self._can_show_image_hover_peek()
-        self._image_hover_zone.set_visible(visible)
-        self._image_hover_zone.set_sensitive(visible)
+        image_visible = self._image_hover_peek_active or self._can_show_image_hover_peek()
+        summary_visible = (
+            self._image_hover_peek_active
+            or
+            self._summary_hover_control_inside
+            or self._summary_hover_card_inside
+            or self._can_show_summary_hover_preview()
+        )
+        if self._image_hover_zone:
+            self._image_hover_zone.set_visible(image_visible)
+            self._image_hover_zone.set_sensitive(image_visible)
+        if self._summary_hover_zone:
+            self._summary_hover_zone.set_visible(summary_visible)
+            self._summary_hover_zone.set_sensitive(summary_visible)
+        self._hover_control_bar.set_visible(image_visible or summary_visible)
+        if not summary_visible:
+            self._hide_summary_hover_preview(cancel=True)
 
     def _on_image_hover_zone_enter(
         self,
@@ -4867,6 +5014,153 @@ class Focus(Adw.Application):
         else:
             self._update_image_hover_zone_visible()
 
+    def _on_summary_hover_zone_enter(
+        self,
+        _controller: Gtk.EventControllerMotion,
+        _x: float,
+        _y: float,
+    ) -> None:
+        self._summary_hover_control_inside = True
+        self._cancel_summary_hover_hide_timer()
+        self._start_summary_hover_preview()
+
+    def _on_summary_hover_zone_leave(self, _controller: Gtk.EventControllerMotion) -> None:
+        self._summary_hover_control_inside = False
+        self._schedule_summary_hover_hide()
+
+    def _on_summary_hover_card_enter(
+        self,
+        _controller: Gtk.EventControllerMotion,
+        _x: float,
+        _y: float,
+    ) -> None:
+        self._summary_hover_card_inside = True
+        self._cancel_summary_hover_hide_timer()
+
+    def _on_summary_hover_card_leave(self, _controller: Gtk.EventControllerMotion) -> None:
+        self._summary_hover_card_inside = False
+        self._schedule_summary_hover_hide()
+
+    def _cancel_summary_hover_hide_timer(self) -> None:
+        if self._summary_hover_hide_source_id is None:
+            return
+        GLib.source_remove(self._summary_hover_hide_source_id)
+        self._summary_hover_hide_source_id = None
+
+    def _schedule_summary_hover_hide(self) -> None:
+        self._cancel_summary_hover_hide_timer()
+        self._summary_hover_hide_source_id = GLib.timeout_add(120, self._maybe_hide_summary_hover)
+
+    def _maybe_hide_summary_hover(self) -> bool:
+        self._summary_hover_hide_source_id = None
+        if not self._summary_hover_control_inside and not self._summary_hover_card_inside:
+            self._hide_summary_hover_preview(cancel=True)
+        return False
+
+    def _hide_summary_hover_preview(self, *, cancel: bool) -> None:
+        self._cancel_summary_hover_hide_timer()
+        self._summary_hover_control_inside = False
+        self._summary_hover_card_inside = False
+        if cancel:
+            self._cancel_summary_hover_stream()
+        self._summary_hover_page = None
+        self._summary_hover_raw = ""
+        if self._summary_hover_card:
+            self._summary_hover_card.set_visible(False)
+        if self._summary_hover_buffer:
+            self._summary_hover_buffer.set_text("")
+
+    def _cancel_summary_hover_stream(self) -> None:
+        self._summary_hover_generation += 1
+        if self._summary_hover_cancel_event:
+            self._summary_hover_cancel_event.set()
+        if self._summary_hover_thread and self._summary_hover_thread.is_alive():
+            try:
+                self._summary_hover_thread.join(timeout=0.1)
+            except Exception:
+                pass
+        self._summary_hover_cancel_event = None
+        self._summary_hover_thread = None
+        self._summary_hover_in_flight = False
+
+    def _set_summary_hover_text(self, text: str) -> None:
+        if not self._summary_hover_buffer:
+            return
+        rendered_text, markdown_spans, _ = _render_markdown_text(text)
+        self._summary_hover_buffer.set_text(rendered_text)
+        self._apply_markdown_spans(self._summary_hover_buffer, markdown_spans)
+        if self._summary_hover_scroller:
+            self._summary_hover_scroller.queue_resize()
+
+    def _start_summary_hover_preview(self) -> None:
+        if not self._can_show_summary_hover_preview():
+            self._hide_summary_hover_preview(cancel=True)
+            self._update_image_hover_zone_visible()
+            return
+        page = self.pages[self.current_index]
+        if self._summary_hover_page == page and (
+            self._summary_hover_in_flight or self._summary_hover_raw.strip()
+        ):
+            if self._summary_hover_card:
+                self._summary_hover_card.set_visible(True)
+            return
+
+        self._cancel_summary_hover_stream()
+        self._summary_hover_page = page
+        self._summary_hover_raw = ""
+        if self._summary_hover_card:
+            self._summary_hover_card.set_visible(True)
+        self._set_summary_hover_text(f"Summarizing page {page:04d}...")
+
+        settings = load_ai_settings()
+        api_url, model_id, api_key = settings.page_credentials()
+        if not all(
+            value.strip()
+            for value in (
+                api_url,
+                model_id,
+                api_key,
+                settings.page_prompt,
+            )
+        ):
+            self._set_summary_hover_text(
+                "Configure page API URL, model, API key, and prompt in Settings."
+            )
+            return
+
+        content, _, _ = self._read_page_text(page)
+        if not content.strip():
+            self._set_summary_hover_text(f"Nothing to summarize for page {page:04d}.")
+            return
+
+        payload = f"Page {page:04d}\n\n{content}"
+        self._summary_hover_generation += 1
+        generation = self._summary_hover_generation
+        cancel_event = threading.Event()
+        self._summary_hover_cancel_event = cancel_event
+        self._summary_hover_in_flight = True
+        prompt = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
+        worker_settings = settings
+        self._summary_hover_thread = threading.Thread(
+            target=self._summary_hover_stream_worker,
+            args=(
+                worker_settings,
+                payload,
+                f"page {page:04d}",
+                cancel_event,
+                generation,
+                prompt,
+            ),
+            kwargs={
+                "model_id": model_id,
+                "api_url": api_url,
+                "api_key": api_key,
+                "disable_reasoning": settings.page_disable_reasoning,
+            },
+            daemon=True,
+        )
+        self._summary_hover_thread.start()
+
     def _on_image_motion(
         self,
         _controller: Gtk.EventControllerMotion,
@@ -4889,9 +5183,9 @@ class Focus(Adw.Application):
             zone_width = max(1, int(round(right - left)))
             self._image_right_scroll_zone.set_size_request(zone_width, -1)
             self._image_right_scroll_zone.set_margin_start(0)
-            self._image_right_scroll_zone.set_margin_top(0)
-            self._image_right_scroll_zone.set_margin_bottom(0)
-            self._image_right_scroll_zone.set_margin_end(0)
+            self._image_right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+            self._image_right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+            self._image_right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
         return left, right, top, bottom
 
     def _refresh_image_right_scroll_zone_geometry(self) -> bool:
@@ -5625,7 +5919,6 @@ class Focus(Adw.Application):
             GLib.idle_add(self._refresh_image_right_scroll_zone_geometry)
         else:
             self._set_image_right_scroll_active(False)
-        self._update_text_rounding()
         self._update_image_hover_zone_visible()
 
     def _sync_show_image_action(self) -> None:
@@ -5777,6 +6070,7 @@ class Focus(Adw.Application):
 
     def _set_show_image(self, enabled: bool, *, silent: bool = False) -> bool:
         if enabled:
+            self._hide_summary_hover_preview(cancel=True)
             if self._continuous_view:
                 if not silent:
                     self._transient_toast("Show Image is unavailable in continuous view.")
@@ -5812,14 +6106,6 @@ class Focus(Adw.Application):
         self._clear_image_view()
         self._sync_show_image_action()
         return True
-
-    def _update_text_rounding(self) -> None:
-        if not self.scroller:
-            return
-        if self._show_image:
-            self.scroller.remove_css_class("focus-text-rounded")
-        else:
-            self.scroller.add_css_class("focus-text-rounded")
 
     def _link_at_coords(self, textview: Gtk.TextView, x: float, y: float) -> tuple[str, str] | None:
         bx, by = textview.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
@@ -5941,6 +6227,7 @@ class Focus(Adw.Application):
         return header + content, adjusted if adjusted else None
 
     def _load_current(self) -> None:
+        self._hide_summary_hover_preview(cancel=True)
         if self._showing_grep_results and self._grep_combined_text:
             self._set_show_image(False, silent=True)
             self._show_grep_results()
@@ -6283,6 +6570,7 @@ class Focus(Adw.Application):
     def _show_grep_results(self) -> None:
         if not self._showing_grep_results or not self._grep_combined_text:
             return
+        self._hide_summary_hover_preview(cancel=True)
         if self._grep_entry and self._grep_phrase_raw is not None:
             self._grep_entry.set_text(self._grep_phrase_raw)
         self._set_text(self._grep_combined_text, self._grep_combined_highlights)
@@ -8576,6 +8864,128 @@ class Focus(Adw.Application):
             except Exception as exc:  # noqa: BLE001
                 GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
                 return
+
+    def _summary_hover_stream_worker(
+        self,
+        settings: AiSettings,
+        content: str,
+        label: str,
+        cancel_event: threading.Event | None,
+        generation: int,
+        prompt: str,
+        *,
+        model_id: str,
+        api_url: str,
+        api_key: str | None = None,
+        disable_reasoning: bool = False,
+    ) -> None:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "Authorization": f"Bearer {api_key or settings.api_key}",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Focus/1.0",
+        }
+        body = {
+            "model": model_id,
+            "stream": True,
+            "messages": [
+                {"role": "system", "content": prompt or DEFAULT_SUMMARIZATION_PROMPT},
+                {"role": "user", "content": content},
+            ],
+        }
+        _apply_disable_reasoning_to_body(
+            body,
+            model_id=model_id,
+            disable_reasoning=disable_reasoning,
+        )
+        attempted_without_thinking = False
+        attempted_without_reasoning_effort = False
+
+        while True:
+            data = json.dumps(body).encode("utf-8")
+            req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    for chunk in self._iter_sse_chunks(resp, cancel_event):
+                        if cancel_event and cancel_event.is_set():
+                            GLib.idle_add(self._on_summary_hover_stream_cancelled, generation)
+                            return
+                        GLib.idle_add(self._append_summary_hover_output, chunk, generation)
+                if cancel_event and cancel_event.is_set():
+                    GLib.idle_add(self._on_summary_hover_stream_cancelled, generation)
+                else:
+                    GLib.idle_add(self._on_summary_hover_stream_finished, label, generation)
+                return
+            except urllib.error.HTTPError as exc:
+                try:
+                    error_body = exc.read().decode("utf-8", errors="ignore")
+                except Exception:  # noqa: BLE001
+                    error_body = ""
+                message = (error_body.strip() or exc.reason or "request failed").lower()
+                if (
+                    not attempted_without_thinking
+                    and "thinking" in body
+                    and "thinking" in message
+                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
+                ):
+                    attempted_without_thinking = True
+                    body.pop("thinking", None)
+                    continue
+                if (
+                    not attempted_without_reasoning_effort
+                    and "reasoning_effort" in body
+                    and "reasoning_effort" in message
+                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
+                ):
+                    attempted_without_reasoning_effort = True
+                    body.pop("reasoning_effort", None)
+                    continue
+                detail = error_body.strip() or exc.reason or "request failed"
+                GLib.idle_add(
+                    self._on_summary_hover_stream_error,
+                    f"HTTP error {exc.code}: {detail}",
+                    generation,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                GLib.idle_add(self._on_summary_hover_stream_error, str(exc), generation)
+                return
+
+    def _append_summary_hover_output(self, text: str, generation: int) -> bool:
+        if generation != self._summary_hover_generation:
+            return False
+        if not text:
+            return False
+        self._summary_hover_raw += text
+        self._set_summary_hover_text(self._summary_hover_raw)
+        return False
+
+    def _on_summary_hover_stream_finished(self, _label: str, generation: int) -> bool:
+        if generation != self._summary_hover_generation:
+            return False
+        self._summary_hover_in_flight = False
+        self._summary_hover_cancel_event = None
+        self._summary_hover_thread = None
+        if not self._summary_hover_raw.strip():
+            self._set_summary_hover_text("No summary text was returned.")
+        return False
+
+    def _on_summary_hover_stream_error(self, message: str, generation: int) -> bool:
+        if generation != self._summary_hover_generation:
+            return False
+        self._summary_hover_in_flight = False
+        self._summary_hover_cancel_event = None
+        self._summary_hover_thread = None
+        self._set_summary_hover_text(message or "Summary request failed.")
+        return False
+
+    def _on_summary_hover_stream_cancelled(self, generation: int) -> bool:
+        if generation != self._summary_hover_generation:
+            return False
+        self._summary_hover_in_flight = False
+        self._summary_hover_cancel_event = None
+        self._summary_hover_thread = None
+        return False
 
     def _iter_sse_chunks(
         self,
