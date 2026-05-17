@@ -306,8 +306,8 @@ RAG_LONG_DATE_PATTERN = re.compile(
 RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
 IMAGE_HOVER_ZONE_WIDTH = 500
-IMAGE_HOVER_ZONE_HEIGHT = 75
-IMAGE_HOVER_ZONE_BOTTOM_MARGIN = 18
+IMAGE_HOVER_ZONE_HEIGHT = 40
+IMAGE_HOVER_ZONE_TOP_MARGIN = 18
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_EXTRACT = "extract"
 AI_VIEW_QA = "qa"
@@ -1411,19 +1411,17 @@ listbox.focus-sidebar-listview row {
 
 button.focus-right-scroll-zone {
   border-radius: 0;
-  border-left: 1px solid rgba(128, 128, 128, 0.00);
   padding: 0;
   background-color: rgba(128, 128, 128, 0.00);
   background-image: none;
   box-shadow: none;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease;
 }
 
 button.focus-right-scroll-zone:hover,
 button.focus-right-scroll-zone.hover,
 button.focus-right-scroll-zone:active {
   background-color: rgba(128, 128, 128, 0.12);
-  border-left: 1px solid rgba(128, 128, 128, 0.24);
   background-image: none;
   box-shadow: none;
 }
@@ -1443,18 +1441,16 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
 
 button.focus-image-hover-zone {
   border-radius: 14px;
-  border: 1px solid rgba(128, 128, 128, 0.24);
   padding: 0;
   background-color: rgba(128, 128, 128, 0.12);
   background-image: none;
   box-shadow: none;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  transition: background-color 120ms ease;
 }
 
 button.focus-image-hover-zone:hover,
 button.focus-image-hover-zone:active {
   background-color: rgba(128, 128, 128, 0.12);
-  border-color: rgba(128, 128, 128, 0.24);
   background-image: none;
   box-shadow: none;
 }
@@ -2547,10 +2543,10 @@ class Focus(Adw.Application):
         self._image_hover_zone.add_css_class("flat")
         self._image_hover_zone.add_css_class("focus-image-hover-zone")
         self._image_hover_zone.set_halign(Gtk.Align.CENTER)
-        self._image_hover_zone.set_valign(Gtk.Align.END)
+        self._image_hover_zone.set_valign(Gtk.Align.START)
         self._image_hover_zone.set_hexpand(False)
         self._image_hover_zone.set_vexpand(False)
-        self._image_hover_zone.set_margin_bottom(IMAGE_HOVER_ZONE_BOTTOM_MARGIN)
+        self._image_hover_zone.set_margin_top(IMAGE_HOVER_ZONE_TOP_MARGIN)
         self._image_hover_zone.set_size_request(IMAGE_HOVER_ZONE_WIDTH, IMAGE_HOVER_ZONE_HEIGHT)
         self._image_hover_zone.set_can_target(True)
         self._image_hover_zone.set_focus_on_click(False)
@@ -2558,9 +2554,9 @@ class Focus(Adw.Application):
         image_hover_label = Gtk.Label(label="Show Image")
         image_hover_label.add_css_class("focus-image-hover-label")
         image_hover_label.set_halign(Gtk.Align.CENTER)
-        image_hover_label.set_valign(Gtk.Align.END)
+        image_hover_label.set_valign(Gtk.Align.START)
         image_hover_label.set_vexpand(True)
-        image_hover_label.set_margin_bottom(5)
+        image_hover_label.set_margin_top(5)
         self._image_hover_zone.set_child(image_hover_label)
         self._image_hover_motion_controller = Gtk.EventControllerMotion()
         self._image_hover_motion_controller.connect("enter", self._on_image_hover_zone_enter)
