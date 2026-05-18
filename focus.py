@@ -10,7 +10,9 @@ Features
 - Mouse wheel scrolls within the current record; hold Ctrl and wheel to load the previous/next page.
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
 - Grep matches render in red and can show all matching pages in a single scrollable view.
-- Ctrl+Shift+A opens case tools and focuses the RAG question box.
+- Ctrl+Shift+Q opens case tools and focuses the RAG question box.
+- Ctrl+Shift+A opens detached case tools.
+- Ctrl+Shift+S summarizes the current page.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
 
@@ -2392,7 +2394,7 @@ class Focus(Adw.Application):
         self._ai_panel_toggle.add_css_class("focus-view-toggle")
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
         self._ai_panel_toggle.set_child(self._build_header_icon(*CASE_TOOLS_ICON_CHOICES))
-        self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
+        self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+Q)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
         self._set_ai_panel_visible(False)
         left_box.append(self._ai_panel_toggle)
@@ -2405,7 +2407,7 @@ class Focus(Adw.Application):
             self._build_header_icon(*DETACHED_CASE_TOOLS_ICON_CHOICES)
         )
         self._ai_detach_button.set_tooltip_text(
-            "Detach case tools into a separate window (Ctrl+Shift+S)"
+            "Detach case tools into a separate window (Ctrl+Shift+A)"
         )
         self._ai_detach_button.connect("toggled", self._on_ai_detach_button_toggled)
         left_box.append(self._ai_detach_button)
@@ -3063,7 +3065,7 @@ class Focus(Adw.Application):
         self._single_page_summary_button = Gtk.Button()
         self._single_page_summary_button.add_css_class("flat")
         self._single_page_summary_button.set_valign(Gtk.Align.CENTER)
-        self._single_page_summary_button.set_tooltip_text("Summarize current page")
+        self._single_page_summary_button.set_tooltip_text("Summarize current page (Ctrl+Shift+S)")
         self._single_page_summary_button.set_child(
             self._build_header_icon(*PAGE_SUMMARY_ICON_CHOICES)
         )
@@ -3383,9 +3385,9 @@ class Focus(Adw.Application):
             return
         detached = self._is_ai_panel_detached()
         tooltip = (
-            "Close the detached case tools window (Ctrl+Shift+S)"
+            "Close the detached case tools window (Ctrl+Shift+A)"
             if detached
-            else "Detach case tools into a separate window (Ctrl+Shift+S)"
+            else "Detach case tools into a separate window (Ctrl+Shift+A)"
         )
         self._ai_detach_button_guard = True
         try:
@@ -3398,9 +3400,9 @@ class Focus(Adw.Application):
         if not self._ai_panel_toggle:
             return
         tooltip = (
-            "Hide case tools (Ctrl+Shift+A)"
+            "Hide case tools (Ctrl+Shift+Q)"
             if visible
-            else "Show case tools (Ctrl+Shift+A)"
+            else "Show case tools (Ctrl+Shift+Q)"
         )
         self._ai_panel_toggle_guard = True
         try:
@@ -6665,6 +6667,20 @@ class Focus(Adw.Application):
         focus_page_number.connect("activate", lambda _a, _p: self._focus_page_number_entry())
         self.add_action(focus_page_number)
 
+        summarize_current_page = Gio.SimpleAction.new("summarize_current_page", None)
+        summarize_current_page.connect(
+            "activate",
+            lambda _a, _p: self._start_summary_hover_preview(),
+        )
+        self.add_action(summarize_current_page)
+
+        toggle_ai_panel = Gio.SimpleAction.new("toggle_ai_panel", None)
+        toggle_ai_panel.connect(
+            "activate",
+            lambda _a, _p: self._toggle_embedded_ai_panel_from_shortcut(),
+        )
+        self.add_action(toggle_ai_panel)
+
         toggle_ai_panel_detached = Gio.SimpleAction.new("toggle_ai_panel_detached", None)
         toggle_ai_panel_detached.connect("activate", lambda _a, _p: self._toggle_ai_panel_detached())
         self.add_action(toggle_ai_panel_detached)
@@ -6687,7 +6703,9 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
-        self.set_accels_for_action("app.toggle_ai_panel_detached", ["<Primary><Shift>s"])
+        self.set_accels_for_action("app.summarize_current_page", ["<Primary><Shift>s"])
+        self.set_accels_for_action("app.toggle_ai_panel_detached", ["<Primary><Shift>a"])
+        self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>q"])
         self.set_accels_for_action("app.show_shortcuts", ["F1"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
@@ -6735,14 +6753,20 @@ class Focus(Adw.Application):
         tools_group = Gtk.ShortcutsGroup(title="AI Panel")
         tools_group.append(
             Gtk.ShortcutsShortcut(
-                title="Toggle case tools and focus question box",
+                title="Toggle detached Case Tools",
                 accelerator="<Primary><Shift>A",
             )
         )
         tools_group.append(
             Gtk.ShortcutsShortcut(
-                title="Toggle detached Case Tools",
+                title="Summarize current page",
                 accelerator="<Primary><Shift>S",
+            )
+        )
+        tools_group.append(
+            Gtk.ShortcutsShortcut(
+                title="Toggle case tools and focus question box",
+                accelerator="<Primary><Shift>Q",
             )
         )
         tools_group.append(
@@ -7126,24 +7150,26 @@ class Focus(Adw.Application):
             self._focus_page_number_entry(); return True
         if key == "f" and (state & Gdk.ModifierType.CONTROL_MASK):
             self._focus_grep_entry(); return True
-        if key in ("A", "a") and (state & Gdk.ModifierType.CONTROL_MASK) and (state & Gdk.ModifierType.SHIFT_MASK):
-            if self._ai_panel_toggle:
-                current_visible = self._ai_panel_toggle.get_active()
-            elif self._ai_panel_revealer:
-                current_visible = self._ai_panel_revealer.get_child_revealed()
-            else:
-                current_visible = False
-            new_visible = not bool(current_visible)
-            self._set_ai_panel_visible(new_visible)
-            if new_visible:
-                self._focus_rag_question_entry()
+        if (
+            key in ("A", "a")
+            and (state & Gdk.ModifierType.CONTROL_MASK)
+            and (state & Gdk.ModifierType.SHIFT_MASK)
+        ):
+            self._toggle_ai_panel_detached()
+            return True
+        if (
+            key in ("Q", "q")
+            and (state & Gdk.ModifierType.CONTROL_MASK)
+            and (state & Gdk.ModifierType.SHIFT_MASK)
+        ):
+            self._toggle_embedded_ai_panel_from_shortcut()
             return True
         if (
             key in ("S", "s")
             and (state & Gdk.ModifierType.CONTROL_MASK)
             and (state & Gdk.ModifierType.SHIFT_MASK)
         ):
-            self._toggle_ai_panel_detached()
+            self._start_summary_hover_preview()
             return True
         return False
 
@@ -7340,6 +7366,18 @@ class Focus(Adw.Application):
             self._showing_grep_results = False
         self.current_index = len(self.pages) - 1
         self._load_current()
+
+    def _toggle_embedded_ai_panel_from_shortcut(self) -> None:
+        if self._ai_panel_toggle:
+            current_visible = self._ai_panel_toggle.get_active()
+        elif self._ai_panel_revealer:
+            current_visible = self._ai_panel_revealer.get_child_revealed()
+        else:
+            current_visible = False
+        new_visible = not bool(current_visible)
+        self._set_ai_panel_visible(new_visible)
+        if new_visible:
+            self._focus_rag_question_entry()
 
     def _on_ai_panel_toggled(self, button: Gtk.ToggleButton) -> None:
         if self._ai_panel_toggle_guard:
