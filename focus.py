@@ -103,6 +103,7 @@ CONFIG_KEY_RAG_DEEP_API_KEY = "rag_deep_api_key"
 CONFIG_KEY_RAG_DISABLE_REASONING = "rag_disable_reasoning"
 CONFIG_KEY_RAG_DEEP_DISABLE_REASONING = "rag_deep_disable_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
+CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_TABLE_FONT_SIZE_PT = "table_font_size_pt"
@@ -335,6 +336,13 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
                 "focus_rag_question",
                 "<Primary>Q",
                 "Focus the RAG question box.",
+            ),
+            FocusCommand(
+                "AI Panel",
+                "Submit speech RAG question",
+                "submit_speech_rag_question",
+                "D-Bus",
+                "Read the configured speech text file and submit it as a quick RAG question.",
             ),
         ),
     ),
@@ -922,6 +930,10 @@ def _coerce_rag_chunk_count(value: Any, default: int) -> int:
     return min(50, max(1, count))
 
 
+def _normalize_speech_rag_question_text(text: str) -> str:
+    return " ".join(text.split())
+
+
 def _coerce_bool_config(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -1018,6 +1030,7 @@ class AiSettings:
     rag_disable_reasoning: bool
     rag_deep_disable_reasoning: bool
     rag_chunk_count: int
+    speech_rag_source_file: str
     highlight_phrases: list[str]
     grep_highlight_color: str
     phrase_highlight_color: str
@@ -1225,6 +1238,7 @@ def load_ai_settings() -> AiSettings:
         config.get(CONFIG_KEY_RAG_CHUNK_COUNT),
         DEFAULT_RAG_CHUNK_COUNT,
     )
+    speech_rag_source_file = str(config.get(CONFIG_KEY_SPEECH_RAG_SOURCE_FILE, "") or "")
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
     grep_highlight_color = _coerce_color_value(
         config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
@@ -1272,6 +1286,7 @@ def load_ai_settings() -> AiSettings:
         rag_disable_reasoning=rag_disable_reasoning,
         rag_deep_disable_reasoning=rag_deep_disable_reasoning,
         rag_chunk_count=rag_chunk_count,
+        speech_rag_source_file=speech_rag_source_file,
         highlight_phrases=highlight_phrases,
         grep_highlight_color=grep_highlight_color,
         phrase_highlight_color=phrase_highlight_color,
@@ -1320,6 +1335,7 @@ def save_ai_settings(settings: AiSettings) -> None:
         settings.rag_chunk_count,
         DEFAULT_RAG_CHUNK_COUNT,
     )
+    config[CONFIG_KEY_SPEECH_RAG_SOURCE_FILE] = settings.speech_rag_source_file
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
         settings.grep_highlight_color,
@@ -6852,6 +6868,13 @@ class Focus(Adw.Application):
         focus_rag_question.connect("activate", lambda _a, _p: self._focus_rag_question_entry())
         self.add_action(focus_rag_question)
 
+        submit_speech_rag_question = Gio.SimpleAction.new("submit_speech_rag_question", None)
+        submit_speech_rag_question.connect(
+            "activate",
+            lambda _a, _p: self._submit_speech_rag_question(),
+        )
+        self.add_action(submit_speech_rag_question)
+
         focus_page_number = Gio.SimpleAction.new("focus_page_number", None)
         focus_page_number.connect("activate", lambda _a, _p: self._focus_page_number_entry())
         self.add_action(focus_page_number)
@@ -7830,6 +7853,36 @@ class Focus(Adw.Application):
             self._ai_transient_toast("Enter a question to run RAG.")
             return
         self._start_rag_question(question, deep=deep)
+
+    def _submit_speech_rag_question(self) -> None:
+        settings = load_ai_settings()
+        raw_path = settings.speech_rag_source_file.strip()
+        if not raw_path:
+            self._ai_transient_toast("Set the speech-to-text question file in Settings.")
+            self._ensure_ai_panel_visible()
+            return
+        source_path = Path(raw_path).expanduser().resolve(strict=False)
+        if not source_path.exists() or not source_path.is_file():
+            self._ai_transient_toast(f"Speech question file not found: {source_path}")
+            self._ensure_ai_panel_visible()
+            return
+        try:
+            raw_question = source_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            self._ai_transient_toast(f"Could not read speech question file: {exc}")
+            self._ensure_ai_panel_visible()
+            return
+        question = _normalize_speech_rag_question_text(raw_question)
+        if not question:
+            self._ai_transient_toast("Speech question file is empty.")
+            self._ensure_ai_panel_visible()
+            return
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_QA)
+        self._current_view_state().rag_question_text = question
+        if self._rag_question_entry:
+            self._rag_question_entry.set_text(question)
+        self._start_rag_question(question, deep=False)
 
     def _format_rag_filter_chip_text(self, filter_details: dict[str, str] | None) -> str | None:
         if not filter_details:
@@ -9422,6 +9475,7 @@ class RagPromptWidgets:
     isaacus_model_row: Adw.EntryRow
     isaacus_key_row: Adw.EntryRow
     rag_chunk_row: Adw.SpinRow
+    speech_rag_source_row: Adw.EntryRow
     prompt_buffer: Gtk.TextBuffer
 
 
@@ -9527,6 +9581,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
         self._prompt_list: Gtk.ListBox | None = None
         self._prompt_stack: Gtk.Stack | None = None
+        self._speech_rag_source_dialog: Gtk.FileDialog | None = None
 
         self.set_title("Settings")
         self.set_default_size(900, 720)
@@ -9982,6 +10037,18 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_chunk_row.set_digits(0)
         rag_context_group.add(rag_chunk_row)
 
+        speech_rag_source_row = Adw.EntryRow(title="Speech-to-text question file")
+        speech_rag_source_row.set_hexpand(True)
+        choose_speech_rag_btn = Gtk.Button(label="Choose")
+        choose_speech_rag_btn.add_css_class("flat")
+        choose_speech_rag_btn.connect("clicked", self._on_choose_speech_rag_source_file)
+        speech_rag_source_row.add_suffix(choose_speech_rag_btn)
+        clear_speech_rag_btn = Gtk.Button(label="Clear")
+        clear_speech_rag_btn.add_css_class("flat")
+        clear_speech_rag_btn.connect("clicked", self._on_clear_speech_rag_source_file)
+        speech_rag_source_row.add_suffix(clear_speech_rag_btn)
+        rag_context_group.add(speech_rag_source_row)
+
         voyage_group = Adw.PreferencesGroup(title="Voyage Embeddings")
         voyage_group.add_css_class("list-stack")
         voyage_group.set_hexpand(True)
@@ -10038,6 +10105,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             isaacus_model_row=isaacus_model_row,
             isaacus_key_row=isaacus_key_row,
             rag_chunk_row=rag_chunk_row,
+            speech_rag_source_row=speech_rag_source_row,
             prompt_buffer=buffer,
         )
         return page
@@ -10052,6 +10120,49 @@ class AiSettingsWindow(Adw.ApplicationWindow):
     def _prompt_text(self, buffer: Gtk.TextBuffer) -> str:
         start, end = buffer.get_bounds()
         return buffer.get_text(start, end, True)
+
+    def _on_choose_speech_rag_source_file(self, _button: Gtk.Button) -> None:
+        rag_widgets = self._prompt_editors.get("rag")
+        if not isinstance(rag_widgets, RagPromptWidgets):
+            return
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Select Speech-to-Text Question File")
+        dialog.set_modal(True)
+        raw_path = rag_widgets.speech_rag_source_row.get_text().strip()
+        if raw_path:
+            current_path = Path(raw_path).expanduser()
+            initial_folder = current_path.parent if current_path.parent.exists() else None
+            if initial_folder is not None:
+                try:
+                    dialog.set_initial_folder(Gio.File.new_for_path(str(initial_folder)))
+                except (TypeError, AttributeError):
+                    pass
+        dialog.open(self, None, self._on_speech_rag_source_file_chosen)
+        self._speech_rag_source_dialog = dialog
+
+    def _on_speech_rag_source_file_chosen(
+        self,
+        dialog: Gtk.FileDialog,
+        result: Gio.AsyncResult,
+    ) -> None:
+        try:
+            file = dialog.open_finish(result)
+        except GLib.Error as exc:
+            if not exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
+                self._set_status(f"File selection failed: {exc.message}")
+        else:
+            path_str = file.get_path() if file else None
+            if path_str:
+                rag_widgets = self._prompt_editors.get("rag")
+                if isinstance(rag_widgets, RagPromptWidgets):
+                    rag_widgets.speech_rag_source_row.set_text(path_str)
+        if self._speech_rag_source_dialog is dialog:
+            self._speech_rag_source_dialog = None
+
+    def _on_clear_speech_rag_source_file(self, _button: Gtk.Button) -> None:
+        rag_widgets = self._prompt_editors.get("rag")
+        if isinstance(rag_widgets, RagPromptWidgets):
+            rag_widgets.speech_rag_source_row.set_text("")
 
     def _load_settings(self) -> None:
         settings = load_ai_settings()
@@ -10118,6 +10229,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.isaacus_model_row.set_text(settings.isaacus_model)
             rag_widgets.isaacus_key_row.set_text(settings.isaacus_api_key)
             rag_widgets.rag_chunk_row.set_value(float(settings.rag_chunk_count))
+            rag_widgets.speech_rag_source_row.set_text(settings.speech_rag_source_file)
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
         if self._ai_font_size_row:
@@ -10211,6 +10323,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             int(round(rag_widgets.rag_chunk_row.get_value())),
             DEFAULT_RAG_CHUNK_COUNT,
         )
+        speech_rag_source_file = rag_widgets.speech_rag_source_row.get_text()
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
@@ -10292,6 +10405,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_disable_reasoning=rag_disable_reasoning,
             rag_deep_disable_reasoning=rag_deep_disable_reasoning,
             rag_chunk_count=rag_chunk_count,
+            speech_rag_source_file=speech_rag_source_file,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
