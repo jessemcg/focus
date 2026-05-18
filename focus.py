@@ -1207,9 +1207,9 @@ IMAGE_ICON_OFF_CHOICES = (
     "image-missing",
 )
 PAGE_SUMMARY_ICON_CHOICES = (
-    "text-x-generic-symbolic",
+    "document-edit-symbolic",
     "accessories-text-editor-symbolic",
-    "edit-select-all-symbolic",
+    "text-x-generic-symbolic",
 )
 @dataclass
 class TocBookmark:
@@ -4965,7 +4965,7 @@ class Focus(Adw.Application):
         return (self.images_dir / f"{page:04d}.png").exists()
 
     def _can_summarize_current_page(self) -> bool:
-        if self._show_image or self._continuous_view or self._showing_grep_results:
+        if self._continuous_view or self._showing_grep_results:
             return False
         if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
             return False
@@ -5052,7 +5052,7 @@ class Focus(Adw.Application):
         if not self._can_summarize_current_page():
             self._hide_summary_hover_preview(cancel=True)
             self._update_image_hover_zone_visible()
-            self._ai_transient_toast("Summarize Page only works when a single text page is visible.")
+            self._ai_transient_toast("Summarize Page only works when a single page is visible.")
             return
         page = self.pages[self.current_index]
         if self._summary_hover_page == page and (
@@ -6027,7 +6027,6 @@ class Focus(Adw.Application):
 
     def _set_show_image(self, enabled: bool, *, silent: bool = False) -> bool:
         if enabled:
-            self._hide_summary_hover_preview(cancel=True)
             if self._continuous_view:
                 if not silent:
                     self._transient_toast("Show Image is unavailable in continuous view.")
@@ -7487,7 +7486,7 @@ class Focus(Adw.Application):
 
     def _on_summarize_page_clicked(self, _button: Gtk.Button) -> None:
         if self._continuous_view or self._showing_grep_results:
-            self._ai_transient_toast("Summarize Page only works when a single text page is visible.")
+            self._ai_transient_toast("Summarize Page only works when a single page is visible.")
             return
         if not self.pages:
             self._ai_transient_toast("No page loaded to summarize.")
