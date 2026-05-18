@@ -194,6 +194,7 @@ DEFAULT_PRINT_FONT_FAMILY = "Century Schoolbook"
 DEFAULT_PRINT_FONT_SIZE_PT = 12
 DEFAULT_PRINT_MARGIN_IN = 1.0
 SIDEBAR_TREE_INDENT = 10
+SIDEBAR_ACTIVE_SCROLL_MARGIN = 24
 AI_OUTPUT_MIN_HEIGHT = 140
 AI_OUTPUT_MAX_HEIGHT = 480
 AI_OUTPUT_LINE_HEIGHT = 1.25
@@ -210,8 +211,8 @@ DETACHED_CASE_TOOLS_ICON_CHOICES = (
 )
 CONTINUOUS_PAGE_BATCH = 25
 CONTINUOUS_DIVIDER_GLYPH = "─"
-CONTINUOUS_PAGE_DIVIDER = CONTINUOUS_DIVIDER_GLYPH * 48
-CONTINUOUS_PAGE_DIVIDER_BG = "#e8e8e8"
+PAGE_MARKER_SIDE_WIDTH = 12
+PAGE_MARKER_FG_COLOR = "#667085"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 MONTH_NAME_TO_NUMBER = {
     "january": 1,
@@ -1315,12 +1316,25 @@ listbox.focus-sidebar-listview row {
   background-color: alpha(@window_fg_color, 0.08);
 }
 
+.focus-sidebar-row.focus-sidebar-category-active,
+.focus-sidebar-row.focus-sidebar-category-active:hover,
+.focus-sidebar-row.focus-sidebar-category-active.focus-sidebar-category-expanded {
+  background-color: alpha(@window_fg_color, 0.06);
+}
+
 .focus-sidebar-row.focus-sidebar-category .title,
 .focus-sidebar-row.focus-sidebar-category label,
 .focus-sidebar-row.focus-sidebar-bookmark .title,
 .focus-sidebar-row.focus-sidebar-bookmark label,
 .focus-sidebar-expand-button {
   color: alpha(@window_fg_color, 0.62);
+}
+
+.focus-sidebar-row.focus-sidebar-category-active .title,
+.focus-sidebar-row.focus-sidebar-category-active label,
+.focus-sidebar-row.focus-sidebar-category-active:hover .title,
+.focus-sidebar-row.focus-sidebar-category-active:hover label {
+  color: alpha(@window_fg_color, 0.82);
 }
 
 .focus-sidebar-row.focus-sidebar-bookmark {
@@ -1486,8 +1500,8 @@ button.focus-hover-zone label.focus-hover-label {
 }
 
 box.focus-hover-summary-card {
-  background-color: __PAGE_TEXT_BG__;
-  border: 1px solid rgba(95, 95, 95, 0.26);
+  background-color: mix(@window_bg_color, @window_fg_color, 0.08);
+  border: 1px solid alpha(@window_fg_color, 0.18);
   border-radius: 16px;
   padding: 12px;
 }
@@ -1707,6 +1721,12 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
 
 PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
+PAGE_MARKER_LINE_RE = re.compile(
+    rf"^(?P<left>{CONTINUOUS_DIVIDER_GLYPH}+[ \t]+)"
+    r"(?P<label>Page (?P<num>\d{4}))"
+    rf"(?P<right>[ \t]+{CONTINUOUS_DIVIDER_GLYPH}+)\n\n",
+    re.MULTILINE,
+)
 IMAGE_PAGE_SELECTION_RE = re.compile(r"^\s*(\d{1,4})(?:\s*-\s*(\d{1,4}))?\s*$")
 AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
 MARKDOWN_PAGE_LINK_RE = re.compile(
@@ -1714,6 +1734,7 @@ MARKDOWN_PAGE_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 MARKDOWN_EMPHASIS_RE = re.compile(r"\*\*(?!\s)([^*\n]+?)\*\*|\*(?!\s)([^*\n]+?)\*")
+MARKDOWN_BULLET_RE = re.compile(r"^[ \t]*\*(?=\s+\S)")
 SUMMARY_HEARING_ENTRY_RE = re.compile(
     r"^(?P<entry>"
     r"(?:january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|"
@@ -1842,6 +1863,10 @@ def _render_markdown_text(text: str) -> tuple[str, list[tuple[int, int, str]], l
         content_start = line_start + prefix_len
         content_end = line_start + len(content)
         line_content = text[content_start:content_end]
+        bullet_match = MARKDOWN_BULLET_RE.match(line_content)
+        if bullet_match:
+            bullet_index = bullet_match.end() - 1
+            line_content = f"{line_content[:bullet_index]}•{line_content[bullet_index + 1:]}"
         line_out, line_spans, line_map = _process_emphasis(line_content, clean_index)
         out.append(line_out)
         for idx in range(len(line_content) + 1):
@@ -2245,17 +2270,11 @@ class Focus(Adw.Application):
                     continue
         return names[0]
 
-    def _build_header_toggle_content(self, label: str, *icon_names: str) -> Gtk.Box:
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        content.set_valign(Gtk.Align.CENTER)
+    def _build_header_icon(self, *icon_names: str) -> Gtk.Image:
         icon = Gtk.Image.new_from_icon_name(self._choose_icon(*icon_names))
         icon.add_css_class("focus-toggle-icon")
         icon.set_valign(Gtk.Align.CENTER)
-        text = Gtk.Label(label=label)
-        text.set_valign(Gtk.Align.CENTER)
-        content.append(icon)
-        content.append(text)
-        return content
+        return icon
 
     def _scan_pages(self) -> None:
         self.page_to_path.clear()
@@ -2370,8 +2389,7 @@ class Focus(Adw.Application):
         left_box.set_valign(Gtk.Align.CENTER)
 
         self._toc_sidebar_button = Gtk.ToggleButton()
-        self._toc_sidebar_icon = Gtk.Image.new_from_icon_name("sidebar-show-symbolic")
-        self._toc_sidebar_icon.add_css_class("focus-toggle-icon")
+        self._toc_sidebar_icon = self._build_header_icon("sidebar-show-symbolic")
         self._toc_sidebar_button.set_child(self._toc_sidebar_icon)
         self._toc_sidebar_button.add_css_class("flat")
         self._toc_sidebar_button.set_tooltip_text("Toggle TOC sidebar (Ctrl+Shift+Z)")
@@ -2380,12 +2398,9 @@ class Focus(Adw.Application):
 
         self._ai_panel_toggle = Gtk.ToggleButton()
         self._ai_panel_toggle.add_css_class("flat")
-        self._ai_panel_toggle.add_css_class("no-bold")
         self._ai_panel_toggle.add_css_class("focus-view-toggle")
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
-        self._ai_panel_toggle.set_child(
-            self._build_header_toggle_content("Case Tools", *CASE_TOOLS_ICON_CHOICES)
-        )
+        self._ai_panel_toggle.set_child(self._build_header_icon(*CASE_TOOLS_ICON_CHOICES))
         self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
         self._set_ai_panel_visible(False)
@@ -2393,13 +2408,14 @@ class Focus(Adw.Application):
 
         self._ai_detach_button = Gtk.ToggleButton()
         self._ai_detach_button.add_css_class("flat")
-        self._ai_detach_button.add_css_class("no-bold")
         self._ai_detach_button.add_css_class("focus-view-toggle")
         self._ai_detach_button.set_valign(Gtk.Align.CENTER)
         self._ai_detach_button.set_child(
-            self._build_header_toggle_content("Detached", *DETACHED_CASE_TOOLS_ICON_CHOICES)
+            self._build_header_icon(*DETACHED_CASE_TOOLS_ICON_CHOICES)
         )
-        self._ai_detach_button.set_tooltip_text("Detach case tools into a separate window")
+        self._ai_detach_button.set_tooltip_text(
+            "Detach case tools into a separate window (Ctrl+Shift+S)"
+        )
         self._ai_detach_button.connect("toggled", self._on_ai_detach_button_toggled)
         left_box.append(self._ai_detach_button)
 
@@ -2477,7 +2493,9 @@ class Focus(Adw.Application):
         right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
         right_scroll_label.add_css_class("focus-right-scroll-label")
         right_scroll_label.set_halign(Gtk.Align.CENTER)
-        right_scroll_label.set_valign(Gtk.Align.CENTER)
+        right_scroll_label.set_valign(Gtk.Align.END)
+        right_scroll_label.set_vexpand(True)
+        right_scroll_label.set_margin_bottom(12)
         self._right_scroll_zone.set_child(right_scroll_label)
         self._right_scroll_zone.connect("clicked", self._on_right_scroll_zone_clicked)
 
@@ -2547,7 +2565,9 @@ class Focus(Adw.Application):
         image_right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
         image_right_scroll_label.add_css_class("focus-right-scroll-label")
         image_right_scroll_label.set_halign(Gtk.Align.CENTER)
-        image_right_scroll_label.set_valign(Gtk.Align.CENTER)
+        image_right_scroll_label.set_valign(Gtk.Align.END)
+        image_right_scroll_label.set_vexpand(True)
+        image_right_scroll_label.set_margin_bottom(12)
         self._image_right_scroll_zone.set_child(image_right_scroll_label)
         self._image_right_scroll_zone.connect("clicked", self._on_image_right_scroll_zone_clicked)
 
@@ -3044,26 +3064,7 @@ class Focus(Adw.Application):
         text_controls.set_valign(Gtk.Align.CENTER)
         text_controls.set_halign(Gtk.Align.FILL)
 
-        prev_icon_name = self._choose_icon("go-up-symbolic", "go-up")
-        next_icon_name = self._choose_icon("go-down-symbolic", "go-down")
-
-        paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-
-        self._page_back_one_button = Gtk.Button()
-        self._page_back_one_button.add_css_class("flat")
-        self._page_back_one_button.set_valign(Gtk.Align.CENTER)
-        self._page_back_one_button.set_tooltip_text("Previous page (Up)")
-        self._page_back_one_button.set_child(Gtk.Image.new_from_icon_name(prev_icon_name))
-        self._page_back_one_button.connect("clicked", self._on_page_back_one_clicked)
-        paginator.append(self._page_back_one_button)
-
-        self._page_forward_one_button = Gtk.Button()
-        self._page_forward_one_button.add_css_class("flat")
-        self._page_forward_one_button.set_valign(Gtk.Align.CENTER)
-        self._page_forward_one_button.set_tooltip_text("Next page (Down)")
-        self._page_forward_one_button.set_child(Gtk.Image.new_from_icon_name(next_icon_name))
-        self._page_forward_one_button.connect("clicked", self._on_page_forward_one_clicked)
-        paginator.append(self._page_forward_one_button)
+        paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
         self._page_number_entry = Gtk.Entry()
         self._page_number_entry.set_width_chars(5)
@@ -3071,7 +3072,7 @@ class Focus(Adw.Application):
         self._page_number_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
         self._page_number_entry.set_alignment(1.0)
         self._page_number_entry.set_valign(Gtk.Align.CENTER)
-        self._page_number_entry.set_tooltip_text("Type a page number and press Enter")
+        self._page_number_entry.set_tooltip_text("Type a page number and press Enter (Ctrl+E)")
         self._page_number_entry.connect("activate", self._on_page_number_activate)
         paginator.append(self._page_number_entry)
 
@@ -3081,12 +3082,11 @@ class Focus(Adw.Application):
         self._page_total_label.set_valign(Gtk.Align.CENTER)
         paginator.append(self._page_total_label)
 
-        text_controls.set_start_widget(paginator)
-
-        trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         trailing_controls.set_valign(Gtk.Align.CENTER)
         trailing_controls.set_halign(Gtk.Align.END)
         trailing_controls.set_margin_start(10)
+        trailing_controls.append(paginator)
 
         self._show_image_icon = Gtk.Image.new_from_icon_name(self._image_icon_name_off)
         self._show_image_icon.add_css_class("focus-toggle-icon")
@@ -3096,62 +3096,58 @@ class Focus(Adw.Application):
         self._show_image_button.set_valign(Gtk.Align.CENTER)
         self._show_image_button.set_tooltip_text("Enable image view (Ctrl+I)")
         self._show_image_button.connect("toggled", self._on_show_image_button_toggled)
-        trailing_controls.append(self._show_image_button)
 
-        self._continuous_icon = Gtk.Image.new_from_icon_name(self._continuous_icon_name_off)
-        self._continuous_icon.add_css_class("focus-toggle-icon")
-        self._continuous_toggle_button = Gtk.ToggleButton()
-        self._continuous_toggle_button.set_child(self._continuous_icon)
-        self._continuous_toggle_button.add_css_class("flat")
-        self._continuous_toggle_button.set_valign(Gtk.Align.CENTER)
-        self._continuous_toggle_button.set_tooltip_text("Enable continuous view (Ctrl+Shift+C)")
-        self._continuous_toggle_button.connect("toggled", self._on_continuous_button_toggled)
-        trailing_controls.append(self._continuous_toggle_button)
+        grep_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        grep_controls.set_valign(Gtk.Align.CENTER)
 
         self._grep_entry = Gtk.Entry()
         self._grep_entry.set_width_chars(32)
         self._grep_entry.set_max_width_chars(48)
         self._grep_entry.set_hexpand(True)
+        self._grep_entry.set_placeholder_text("Search record")
         self._grep_entry.connect("activate", self._on_grep_entry_activate)
-        trailing_controls.append(self._grep_entry)
+        grep_controls.append(self._grep_entry)
 
         self._grep_hit_label = Gtk.Label(label="")
         self._grep_hit_label.add_css_class("dim-label")
         self._grep_hit_label.set_valign(Gtk.Align.CENTER)
         self._grep_hit_label.set_xalign(0.0)
-        trailing_controls.append(self._grep_hit_label)
+        grep_controls.append(self._grep_hit_label)
 
         self._grep_prev_hit_button = Gtk.Button()
         self._grep_prev_hit_button.add_css_class("flat")
         self._grep_prev_hit_button.set_valign(Gtk.Align.CENTER)
         self._grep_prev_hit_button.set_tooltip_text("Previous grep hit (Ctrl+Shift+G)")
-        self._grep_prev_hit_button.set_child(Gtk.Image.new_from_icon_name(prev_icon_name))
+        self._grep_prev_hit_button.set_child(
+            Gtk.Image.new_from_icon_name(self._choose_icon("go-up-symbolic", "go-up"))
+        )
         self._grep_prev_hit_button.connect("clicked", self._on_grep_prev_hit_clicked)
-        trailing_controls.append(self._grep_prev_hit_button)
+        grep_controls.append(self._grep_prev_hit_button)
 
         self._grep_next_hit_button = Gtk.Button()
         self._grep_next_hit_button.add_css_class("flat")
         self._grep_next_hit_button.set_valign(Gtk.Align.CENTER)
         self._grep_next_hit_button.set_tooltip_text("Next grep hit (Ctrl+G)")
-        self._grep_next_hit_button.set_child(Gtk.Image.new_from_icon_name(next_icon_name))
+        self._grep_next_hit_button.set_child(
+            Gtk.Image.new_from_icon_name(self._choose_icon("go-down-symbolic", "go-down"))
+        )
         self._grep_next_hit_button.connect("clicked", self._on_grep_next_hit_clicked)
-        trailing_controls.append(self._grep_next_hit_button)
+        grep_controls.append(self._grep_next_hit_button)
 
-        grep_search_button = Gtk.Button(label="Search")
-        grep_search_button.add_css_class("flat")
-        grep_search_button.add_css_class("no-bold")
-        grep_search_button.add_css_class("focus-subdued")
-        grep_search_button.set_valign(Gtk.Align.CENTER)
-        grep_search_button.connect("clicked", self._on_grep_search_clicked)
-        trailing_controls.append(grep_search_button)
-
-        grep_highlighted_button = Gtk.Button(label="Search Highlighted")
+        grep_highlighted_button = Gtk.Button()
         grep_highlighted_button.add_css_class("flat")
-        grep_highlighted_button.add_css_class("no-bold")
         grep_highlighted_button.add_css_class("focus-subdued")
         grep_highlighted_button.set_valign(Gtk.Align.CENTER)
+        grep_highlighted_button.set_tooltip_text("Search highlighted text")
+        grep_highlighted_button.set_child(
+            Gtk.Image.new_from_icon_name(
+                self._choose_icon("edit-find-symbolic", "system-search-symbolic", "edit-find")
+            )
+        )
         grep_highlighted_button.connect("clicked", self._on_grep_search_highlighted_clicked)
-        trailing_controls.append(grep_highlighted_button)
+        grep_controls.append(grep_highlighted_button)
+        trailing_controls.append(grep_controls)
+        trailing_controls.append(self._show_image_button)
         text_controls.set_end_widget(trailing_controls)
 
         content_box.append(text_controls)
@@ -3414,9 +3410,9 @@ class Focus(Adw.Application):
             return
         detached = self._is_ai_panel_detached()
         tooltip = (
-            "Close the detached case tools window"
+            "Close the detached case tools window (Ctrl+Shift+S)"
             if detached
-            else "Detach case tools into a separate window"
+            else "Detach case tools into a separate window (Ctrl+Shift+S)"
         )
         self._ai_detach_button_guard = True
         try:
@@ -3604,6 +3600,7 @@ class Focus(Adw.Application):
         rendered_text, markdown_spans, orig_to_clean = _render_markdown_text(text)
         buf.set_text(rendered_text)
         self._apply_markdown_spans(buf, markdown_spans)
+        self._apply_page_marker_style(buf, rendered_text)
         self._apply_page_links(buf, rendered_text)
         if highlights:
             highlights = self._map_markdown_spans(highlights, orig_to_clean)
@@ -3622,7 +3619,6 @@ class Focus(Adw.Application):
                         end_iter = buf.get_iter_at_offset(line_end)
                         buf.apply_tag(tag, start_iter, end_iter)
         self._apply_keyword_highlights(buf, rendered_text)
-        self._apply_continuous_divider_style(buf, rendered_text)
         self._apply_rounded_grid_table_no_wrap(buf, rendered_text)
         if self.scroller:
             vadj = self.scroller.get_vadjustment()
@@ -3672,8 +3668,8 @@ class Focus(Adw.Application):
         start, _end = highlights[index]
         GLib.idle_add(self._scroll_textview_to_offset, start)
 
-    def _apply_continuous_divider_style(self, buf: Gtk.TextBuffer, text: str) -> None:
-        self._append_continuous_divider_style(buf, text, 0)
+    def _apply_page_marker_style(self, buf: Gtk.TextBuffer, text: str) -> None:
+        self._append_page_marker_style(buf, text, 0)
 
     def _apply_rounded_grid_table_no_wrap(self, buf: Gtk.TextBuffer, text: str) -> None:
         self._append_rounded_grid_table_style(buf, text, 0)
@@ -3714,7 +3710,7 @@ class Focus(Adw.Application):
             end_iter = buf.get_iter_at_offset(start_offset + end)
             buf.apply_tag(tag, start_iter, end_iter)
 
-    def _append_continuous_divider_style(
+    def _append_page_marker_style(
         self,
         buf: Gtk.TextBuffer,
         text: str,
@@ -3725,33 +3721,20 @@ class Focus(Adw.Application):
         table = buf.get_tag_table()
         if table is None:
             return
-        tag = table.lookup("continuous-divider")
+        tag = table.lookup("multi-page-marker")
         if tag is None:
             tag = buf.create_tag(
-                "continuous-divider",
-                background=CONTINUOUS_PAGE_DIVIDER_BG,
-                foreground=CONTINUOUS_PAGE_DIVIDER_BG,
-                pixels_above_lines=0,
-                pixels_below_lines=0,
+                "multi-page-marker",
+                foreground=PAGE_MARKER_FG_COLOR,
+                justification=Gtk.Justification.CENTER,
+                pixels_above_lines=12,
+                pixels_below_lines=10,
+                scale=0.88,
             )
-        offset = start_offset
-        for line in text.splitlines(keepends=True):
-            stripped = line.rstrip("\n")
-            if self._is_continuous_divider_line(stripped):
-                start_iter = buf.get_iter_at_offset(offset)
-                end_iter = buf.get_iter_at_offset(offset + len(stripped))
-                buf.apply_tag(tag, start_iter, end_iter)
-            offset += len(line)
-
-    def _is_continuous_divider_line(self, line: str) -> bool:
-        if not line:
-            return False
-        if len(line) < 8:
-            return False
-        return all(char == CONTINUOUS_DIVIDER_GLYPH for char in line)
-
-    def _continuous_divider_text(self) -> str:
-        return CONTINUOUS_PAGE_DIVIDER
+        for match in PAGE_MARKER_LINE_RE.finditer(text):
+            start_iter = buf.get_iter_at_offset(start_offset + match.start())
+            end_iter = buf.get_iter_at_offset(start_offset + match.end("right"))
+            buf.apply_tag(tag, start_iter, end_iter)
 
     def _apply_markdown_spans(
         self,
@@ -3908,6 +3891,7 @@ class Focus(Adw.Application):
         action_row.remove_css_class("focus-sidebar-category")
         action_row.remove_css_class("focus-sidebar-bookmark")
         action_row.remove_css_class("focus-sidebar-category-expanded")
+        action_row.remove_css_class("focus-sidebar-category-active")
         action_row.remove_css_class("focus-sidebar-top-level")
         if item.kind == "category":
             action_row.add_css_class("focus-sidebar-category")
@@ -3946,14 +3930,27 @@ class Focus(Adw.Application):
             return
         self._show_page_from_link(f"{item.page:04d}")
 
-    def _update_sidebar_row_active_state(self, list_row: Gtk.ListBoxRow) -> None:
+    def _sidebar_item_contains_page(self, item: FocusSidebarItem, page: int) -> bool:
+        if item.page == page:
+            return True
+        children = item.get_children_model()
+        if children is None:
+            return False
+        for index in range(children.get_n_items()):
+            child = children.get_item(index)
+            if isinstance(child, FocusSidebarItem) and child.page == page:
+                return True
+        return False
+
+    def _update_sidebar_row_active_state(self, list_row: Gtk.ListBoxRow) -> bool:
         action_row = getattr(list_row, "_focus_row", None)
         tree_row = getattr(list_row, "_focus_tree_row", None)
         if not isinstance(action_row, Adw.ActionRow) or not isinstance(tree_row, Gtk.TreeListRow):
-            return
+            return False
         action_row.remove_css_class("focus-sidebar-bookmark-active")
+        action_row.remove_css_class("focus-sidebar-category-active")
         if not self.pages or not (0 <= self.current_index < len(self.pages)):
-            return
+            return False
         current_page = self.pages[self.current_index]
         item = tree_row.get_item()
         if (
@@ -3962,15 +3959,50 @@ class Focus(Adw.Application):
             and item.page == current_page
         ):
             action_row.add_css_class("focus-sidebar-bookmark-active")
+            return True
+        if (
+            isinstance(item, FocusSidebarItem)
+            and item.kind == "category"
+            and self._sidebar_item_contains_page(item, current_page)
+        ):
+            action_row.add_css_class("focus-sidebar-category-active")
+        return False
 
-    def _sync_sidebar_active_page(self) -> None:
+    def _sync_sidebar_active_page(self, *, scroll: bool = False) -> None:
         if not self._toc_list_view:
             return
+        active_bookmark_row: Gtk.ListBoxRow | None = None
         child = self._toc_list_view.get_first_child()
         while child:
             if isinstance(child, Gtk.ListBoxRow):
-                self._update_sidebar_row_active_state(child)
+                if self._update_sidebar_row_active_state(child):
+                    active_bookmark_row = child
             child = child.get_next_sibling()
+        if scroll and active_bookmark_row is not None:
+            GLib.idle_add(self._scroll_sidebar_row_into_view, active_bookmark_row)
+
+    def _scroll_sidebar_row_into_view(self, row: Gtk.ListBoxRow) -> bool:
+        if not self._toc_sidebar_scroller or row.get_parent() is None:
+            return False
+        vadj = self._toc_sidebar_scroller.get_vadjustment()
+        allocation = row.get_allocation()
+        row_top = float(allocation.y)
+        row_bottom = row_top + float(allocation.height)
+        visible_top = vadj.get_value()
+        visible_bottom = visible_top + vadj.get_page_size()
+        margin = float(SIDEBAR_ACTIVE_SCROLL_MARGIN)
+
+        if row_top < visible_top + margin:
+            target = row_top - margin
+        elif row_bottom > visible_bottom - margin:
+            target = row_bottom + margin - vadj.get_page_size()
+        else:
+            return False
+
+        lower = vadj.get_lower()
+        upper = max(lower, vadj.get_upper() - vadj.get_page_size())
+        vadj.set_value(max(lower, min(target, upper)))
+        return False
 
     def _update_sidebar_placeholder(self, has_items: bool) -> None:
         self._toc_sidebar_has_items = has_items
@@ -4083,14 +4115,13 @@ class Focus(Adw.Application):
         return self.pages[self.current_index :] + self.pages[: self.current_index]
 
     def _render_continuous_chunk(self, ordered: list[int]) -> str:
-        divider = self._continuous_divider_text()
         parts: list[str] = []
         for idx, page in enumerate(ordered):
             content, _, _ = self._read_page_text(page)
-            rendered, _ = self._render_page_display(page, content, None)
+            rendered, _ = self._render_multi_page_display(page, content, None)
+            if idx:
+                parts.append("\n\n")
             parts.append(rendered)
-            if idx != len(ordered) - 1:
-                parts.append(f"\n\n{divider}\n\n")
         return "".join(parts)
 
     def _connect_continuous_scroll_watch(self) -> None:
@@ -4174,8 +4205,8 @@ class Focus(Adw.Application):
             self._continuous_text = (self._continuous_text or "") + prefix + chunk
             chunk_offset = start_offset + len(prefix)
             self._apply_markdown_spans(buf, markdown_spans, chunk_offset)
+            self._append_page_marker_style(buf, rendered_chunk, chunk_offset)
             self._append_page_links(buf, rendered_chunk, chunk_offset)
-            self._append_continuous_divider_style(buf, rendered_chunk, chunk_offset)
             self._append_rounded_grid_table_style(buf, rendered_chunk, chunk_offset)
         finally:
             self._continuous_loading = False
@@ -4354,7 +4385,7 @@ class Focus(Adw.Application):
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
             "}"
             "textview.focus-hover-summary-view { "
-            f"color: {PAGE_TEXT_FG_COLOR}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
+            f"color: @window_fg_color; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
             "}"
             "textview.ai-output-view.rag-audit-view { "
             f"font-size: {DEFAULT_RAG_AUDIT_FONT_SIZE_PT}pt; "
@@ -4456,14 +4487,20 @@ class Focus(Adw.Application):
         table = buf.get_tag_table()
         if table is None:
             return
+        link_spans: list[tuple[int, int, str]] = []
         for match in PAGE_HEADER_LINE_RE.finditer(text):
             page_str = match.group("num")
             if not page_str:
                 continue
-            start = start_offset + match.start("num")
-            end = start_offset + match.end("num")
-            start_iter = buf.get_iter_at_offset(start)
-            end_iter = buf.get_iter_at_offset(end)
+            link_spans.append((match.start("num"), match.end("num"), page_str))
+        for match in PAGE_MARKER_LINE_RE.finditer(text):
+            page_str = match.group("num")
+            if not page_str:
+                continue
+            link_spans.append((match.start("label"), match.end("label"), page_str))
+        for start, end, page_str in sorted(link_spans):
+            start_iter = buf.get_iter_at_offset(start_offset + start)
+            end_iter = buf.get_iter_at_offset(start_offset + end)
             page_tag = buf.create_tag(
                 None,
                 foreground=PAGE_LINK_COLOR,
@@ -6210,6 +6247,29 @@ class Focus(Adw.Application):
             content = f"Error reading {path.name}: {exc}"
         return content.replace("\r\n", "\n").replace("\r", "\n")
 
+    def _multi_page_marker_text(self, page: int) -> str:
+        side = CONTINUOUS_DIVIDER_GLYPH * PAGE_MARKER_SIDE_WIDTH
+        return f"{side} Page {page:04d} {side}"
+
+    def _multi_page_header_text(self, page: int) -> str:
+        return f"{self._multi_page_marker_text(page)}\n\n"
+
+    def _render_multi_page_display(
+        self,
+        page: int,
+        content: str,
+        highlights: list[tuple[int, int]] | None,
+    ) -> tuple[str, list[tuple[int, int]] | None]:
+        header = self._multi_page_header_text(page)
+        adjusted: list[tuple[int, int]] = []
+        if highlights:
+            offset = len(header)
+            for start, end in highlights:
+                if end <= start:
+                    continue
+                adjusted.append((start + offset, end + offset))
+        return header + content, adjusted if adjusted else None
+
     def _render_page_display(
         self,
         page: int,
@@ -6244,6 +6304,7 @@ class Focus(Adw.Application):
             self._set_text(display_text, highlight_spans)
             self._set_show_image(False, silent=True)
             self._update_header()
+            self._sync_sidebar_active_page(scroll=True)
             return
         content, _, _ = self._read_page_text(page)
         highlights = self._grep_hits.get(page)
@@ -6257,7 +6318,7 @@ class Focus(Adw.Application):
         else:
             self._show_image_update_visible()
         self._update_header()
-        self._sync_sidebar_active_page()
+        self._sync_sidebar_active_page(scroll=True)
         if self._grep_hits.get(page):
             self._scroll_to_current_grep_match()
 
@@ -6336,7 +6397,6 @@ class Focus(Adw.Application):
     ) -> None:
         local_hits: dict[int, list[tuple[int, int]]] = {}
         local_contents: dict[int, str] = {}
-        separator = f"\n\n{CONTINUOUS_PAGE_DIVIDER}\n\n"
         phrase_source = self._grep_phrase_raw or ""
         phrase_prepared = preprocess_phrase(phrase_source)
         candidate_pages = self._find_grep_candidate_pages(
@@ -6402,22 +6462,23 @@ class Focus(Adw.Application):
             for idx, page in enumerate(matching_pages):
                 if cancel_event.is_set():
                     return
+                if idx:
+                    separator = "\n\n"
+                    parts.append(separator)
+                    offset += len(separator)
                 content = local_contents.get(page)
                 if content is None:
                     path = page_to_path.get(page)
                     content = self._read_text_file(path) if path else ""
-                header = f"{page:04d}\n\n"
+                header = self._multi_page_header_text(page)
                 parts.append(header)
                 parts.append(content)
                 header_len = len(header)
                 for start, end in local_hits.get(page, []):
-                    combined_highlights.append((offset + header_len + start, offset + header_len + end))
-                if idx != len(matching_pages) - 1:
-                    parts.append(separator)
-                    offset += header_len + len(content) + len(separator)
-                else:
-                    parts.append("\n\n")
-                    offset += header_len + len(content) + 2
+                    combined_highlights.append(
+                        (offset + header_len + start, offset + header_len + end)
+                    )
+                offset += header_len + len(content)
             combined_text = "".join(parts) if parts else None
 
         GLib.idle_add(
@@ -6676,15 +6737,6 @@ class Focus(Adw.Application):
         self.add_action(toggle_sidebar)
         self._toc_sidebar_action = toggle_sidebar
 
-        continuous_action = Gio.SimpleAction.new_stateful(
-            "toggle_continuous_view",
-            None,
-            GLib.Variant.new_boolean(self._continuous_view),
-        )
-        continuous_action.connect("change-state", self._on_toggle_continuous_view)
-        self.add_action(continuous_action)
-        self._continuous_action = continuous_action
-
         show_image_action = Gio.SimpleAction.new_stateful(
             "toggle_show_image",
             None,
@@ -6697,6 +6749,10 @@ class Focus(Adw.Application):
         focus_rag_question = Gio.SimpleAction.new("focus_rag_question", None)
         focus_rag_question.connect("activate", lambda _a, _p: self._focus_rag_question_entry())
         self.add_action(focus_rag_question)
+
+        focus_page_number = Gio.SimpleAction.new("focus_page_number", None)
+        focus_page_number.connect("activate", lambda _a, _p: self._focus_page_number_entry())
+        self.add_action(focus_page_number)
 
         toggle_ai_panel_detached = Gio.SimpleAction.new("toggle_ai_panel_detached", None)
         toggle_ai_panel_detached.connect("activate", lambda _a, _p: self._toggle_ai_panel_detached())
@@ -6717,9 +6773,10 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.first", ["Home"])
         self.set_accels_for_action("app.last", ["End"])
         self.set_accels_for_action("app.toggle_toc_sidebar", ["<Primary><Shift>z"])
-        self.set_accels_for_action("app.toggle_continuous_view", ["<Primary><Shift>c"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
+        self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
+        self.set_accels_for_action("app.toggle_ai_panel_detached", ["<Primary><Shift>s"])
         self.set_accels_for_action("app.show_shortcuts", ["F1"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
@@ -6742,10 +6799,10 @@ class Focus(Adw.Application):
         navigation_group.append(Gtk.ShortcutsShortcut(title="First page", accelerator="Home"))
         navigation_group.append(Gtk.ShortcutsShortcut(title="Last page", accelerator="End"))
         navigation_group.append(
-            Gtk.ShortcutsShortcut(title="Toggle TOC sidebar", accelerator="<Primary><Shift>Z")
+            Gtk.ShortcutsShortcut(title="Focus page number field", accelerator="<Primary>E")
         )
         navigation_group.append(
-            Gtk.ShortcutsShortcut(title="Toggle continuous view", accelerator="<Primary><Shift>C")
+            Gtk.ShortcutsShortcut(title="Toggle TOC sidebar", accelerator="<Primary><Shift>Z")
         )
         navigation_group.append(
             Gtk.ShortcutsShortcut(title="Toggle image view", accelerator="<Primary>I")
@@ -6769,6 +6826,12 @@ class Focus(Adw.Application):
             Gtk.ShortcutsShortcut(
                 title="Toggle case tools and focus question box",
                 accelerator="<Primary><Shift>A",
+            )
+        )
+        tools_group.append(
+            Gtk.ShortcutsShortcut(
+                title="Toggle detached Case Tools",
+                accelerator="<Primary><Shift>S",
             )
         )
         tools_group.append(
@@ -7148,6 +7211,8 @@ class Focus(Adw.Application):
             self._go_first(); return True
         if key == "End":
             self._go_last(); return True
+        if key in ("e", "E") and (state & Gdk.ModifierType.CONTROL_MASK):
+            self._focus_page_number_entry(); return True
         if key == "f" and (state & Gdk.ModifierType.CONTROL_MASK):
             self._focus_grep_entry(); return True
         if key in ("A", "a") and (state & Gdk.ModifierType.CONTROL_MASK) and (state & Gdk.ModifierType.SHIFT_MASK):
@@ -7161,6 +7226,13 @@ class Focus(Adw.Application):
             self._set_ai_panel_visible(new_visible)
             if new_visible:
                 self._focus_rag_question_entry()
+            return True
+        if (
+            key in ("S", "s")
+            and (state & Gdk.ModifierType.CONTROL_MASK)
+            and (state & Gdk.ModifierType.SHIFT_MASK)
+        ):
+            self._toggle_ai_panel_detached()
             return True
         return False
 
@@ -7242,6 +7314,14 @@ class Focus(Adw.Application):
         if self._grep_entry:
             self._grep_entry.grab_focus()
             self._grep_entry.select_region(0, -1)
+
+    def _focus_page_number_entry(self) -> None:
+        if not self._page_number_entry or not self.pages:
+            return
+        if 0 <= self.current_index < len(self.pages):
+            self._page_number_entry.set_text(str(self.pages[self.current_index]))
+        self._page_number_entry.grab_focus()
+        self._page_number_entry.select_region(0, -1)
 
     def _focus_rag_question_entry(self) -> None:
         self._ensure_ai_panel_visible()
