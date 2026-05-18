@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import threading
@@ -60,6 +61,7 @@ from gi.repository import PangoCairo  # type: ignore
 # =====================
 APPLICATION_ID = "com.mcglaw.Focus"
 APPLICATION_NAME = "Focus"
+ACTION_OBJECT_PATH = "/" + APPLICATION_ID.replace(".", "/")
 
 GLib.set_application_name(APPLICATION_NAME)
 
@@ -211,6 +213,176 @@ DETACHED_CASE_TOOLS_ICON_CHOICES = (
     "open-in-new-symbolic",
     "external-link-symbolic",
 )
+
+
+@dataclass(frozen=True)
+class FocusCommand:
+    group: str
+    title: str
+    action_name: str
+    accelerator: str
+    description: str
+
+
+FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
+    (
+        "Transcript",
+        (
+            FocusCommand(
+                "Transcript",
+                "Previous page",
+                "prev",
+                "Up",
+                "Show the previous transcript page.",
+            ),
+            FocusCommand(
+                "Transcript",
+                "Next page",
+                "next",
+                "Down",
+                "Show the next transcript page.",
+            ),
+            FocusCommand(
+                "Transcript",
+                "First page",
+                "first",
+                "Home",
+                "Show the first transcript page.",
+            ),
+            FocusCommand(
+                "Transcript",
+                "Last page",
+                "last",
+                "End",
+                "Show the last transcript page.",
+            ),
+            FocusCommand(
+                "Transcript",
+                "Focus page number field",
+                "focus_page_number",
+                "<Primary>E",
+                "Focus the page number field.",
+            ),
+            FocusCommand(
+                "Transcript",
+                "Toggle TOC sidebar",
+                "toggle_toc_sidebar",
+                "<Primary><Shift>Z",
+                "Show or hide the TOC sidebar.",
+            ),
+            FocusCommand(
+                "Transcript",
+                "Toggle image view",
+                "toggle_show_image",
+                "<Primary>I",
+                "Show or hide the scanned page image.",
+            ),
+        ),
+    ),
+    (
+        "Grep",
+        (
+            FocusCommand(
+                "Grep",
+                "Focus grep search field",
+                "focus_grep",
+                "<Primary>F",
+                "Focus the record search field.",
+            ),
+            FocusCommand(
+                "Grep",
+                "Next grep result",
+                "grep_next_hit",
+                "<Primary>G",
+                "Move to the next grep match.",
+            ),
+            FocusCommand(
+                "Grep",
+                "Previous grep result",
+                "grep_prev_hit",
+                "<Primary><Shift>G",
+                "Move to the previous grep match.",
+            ),
+        ),
+    ),
+    (
+        "AI Panel",
+        (
+            FocusCommand(
+                "AI Panel",
+                "Toggle detached Case Tools",
+                "toggle_ai_panel_detached",
+                "<Primary><Shift>A",
+                "Show or hide detached case tools.",
+            ),
+            FocusCommand(
+                "AI Panel",
+                "Summarize current page",
+                "summarize_current_page",
+                "<Primary><Shift>S",
+                "Summarize the current page.",
+            ),
+            FocusCommand(
+                "AI Panel",
+                "Toggle case tools and focus question box",
+                "toggle_ai_panel",
+                "<Primary><Shift>Q",
+                "Show case tools and focus the question box.",
+            ),
+            FocusCommand(
+                "AI Panel",
+                "Focus RAG question box",
+                "focus_rag_question",
+                "<Primary>Q",
+                "Focus the RAG question box.",
+            ),
+        ),
+    ),
+    (
+        "Reference",
+        (
+            FocusCommand(
+                "Reference",
+                "Show keyboard shortcuts",
+                "show_shortcuts",
+                "F1",
+                "Open the keyboard shortcuts window.",
+            ),
+        ),
+    ),
+)
+
+
+def focus_command_items() -> tuple[FocusCommand, ...]:
+    return tuple(
+        command for _group, commands in FOCUS_COMMAND_GROUPS for command in commands
+    )
+
+
+def _action_command(
+    action_name: str,
+    param: str | None = None,
+    object_path: str = ACTION_OBJECT_PATH,
+) -> str:
+    params = "[]" if param is None else f"[{param}]"
+    return shlex.join(
+        [
+            "gdbus",
+            "call",
+            "--session",
+            "--dest",
+            APPLICATION_ID,
+            "--object-path",
+            object_path,
+            "--method",
+            "org.gtk.Actions.Activate",
+            action_name,
+            params,
+            "{}",
+        ]
+    )
+
+
 CONTINUOUS_PAGE_BATCH = 25
 CONTINUOUS_DIVIDER_GLYPH = "─"
 PAGE_MARKER_SIDE_WIDTH = 12
@@ -2044,6 +2216,7 @@ class Focus(Adw.Application):
         self.win: Adw.ApplicationWindow | None = None
         self._ai_panel_window: Adw.ApplicationWindow | None = None
         self._shortcuts_window: Gtk.ShortcutsWindow | None = None
+        self._commands_window: FocusCommandsWindow | None = None
         self._input_dir_dialog: Gtk.FileDialog | None = None
         self.textview: Gtk.TextView | None = None
         self.scroller: Gtk.ScrolledWindow | None = None
@@ -2426,6 +2599,7 @@ class Focus(Adw.Application):
         menu_model = Gio.Menu()
         menu_model.append("Print Images", "app.print_images")
         menu_model.append("Input Directory", "app.choose_input")
+        menu_model.append("D-Bus Commands", "app.show_dbus_commands")
         menu_model.append("Settings", "app.open_ai_settings")
         menu_model.append("Keyboard Shortcuts", "app.show_shortcuts")
 
@@ -4303,6 +4477,16 @@ class Focus(Adw.Application):
         if self._sidebar_button_guard:
             return
         self._set_sidebar_visible(button.get_active())
+
+    def _on_stateful_toggle_activate(
+        self,
+        action: Gio.SimpleAction,
+        _param: GLib.Variant | None,
+    ) -> None:
+        state = action.get_state()
+        if state is None or not state.is_of_type(GLib.VariantType.new("b")):
+            return
+        action.change_state(GLib.Variant.new_boolean(not state.get_boolean()))
 
     def _on_toggle_toc_sidebar(
         self,
@@ -6636,6 +6820,10 @@ class Focus(Adw.Application):
         show_shortcuts.connect("activate", self._on_show_shortcuts)
         self.add_action(show_shortcuts)
 
+        show_dbus_commands = Gio.SimpleAction.new("show_dbus_commands", None)
+        show_dbus_commands.connect("activate", self._on_show_dbus_commands)
+        self.add_action(show_dbus_commands)
+
         print_images = Gio.SimpleAction.new("print_images", None)
         print_images.connect("activate", self._on_print_images_action)
         self.add_action(print_images)
@@ -6645,6 +6833,7 @@ class Focus(Adw.Application):
             None,
             GLib.Variant.new_boolean(self._toc_sidebar_visible),
         )
+        toggle_sidebar.connect("activate", self._on_stateful_toggle_activate)
         toggle_sidebar.connect("change-state", self._on_toggle_toc_sidebar)
         self.add_action(toggle_sidebar)
         self._toc_sidebar_action = toggle_sidebar
@@ -6654,6 +6843,7 @@ class Focus(Adw.Application):
             None,
             GLib.Variant.new_boolean(self._show_image),
         )
+        show_image_action.connect("activate", self._on_stateful_toggle_activate)
         show_image_action.connect("change-state", self._on_toggle_show_image)
         self.add_action(show_image_action)
         self._show_image_action = show_image_action
@@ -6684,6 +6874,18 @@ class Focus(Adw.Application):
         toggle_ai_panel_detached.connect("activate", lambda _a, _p: self._toggle_ai_panel_detached())
         self.add_action(toggle_ai_panel_detached)
 
+        focus_grep = Gio.SimpleAction.new("focus_grep", None)
+        focus_grep.connect("activate", lambda _a, _p: self._focus_grep_entry())
+        self.add_action(focus_grep)
+
+        grep_next_hit = Gio.SimpleAction.new("grep_next_hit", None)
+        grep_next_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(1))
+        self.add_action(grep_next_hit)
+
+        grep_prev_hit = Gio.SimpleAction.new("grep_prev_hit", None)
+        grep_prev_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(-1))
+        self.add_action(grep_prev_hit)
+
         for name, cb in {
             "next": self._go_next,
             "prev": self._go_prev,
@@ -6700,6 +6902,9 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.last", ["End"])
         self.set_accels_for_action("app.toggle_toc_sidebar", ["<Primary><Shift>z"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
+        self.set_accels_for_action("app.focus_grep", ["<Primary>f"])
+        self.set_accels_for_action("app.grep_next_hit", ["<Primary>g"])
+        self.set_accels_for_action("app.grep_prev_hit", ["<Primary><Shift>g"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.summarize_current_page", ["<Primary><Shift>s"])
@@ -6786,6 +6991,20 @@ class Focus(Adw.Application):
         if self.win:
             window.set_transient_for(self.win)
         window.present()
+
+    def _on_show_dbus_commands(
+        self,
+        _action: Gio.SimpleAction,
+        _param: GLib.Variant | None,
+    ) -> None:
+        if not self._commands_window:
+            self._commands_window = FocusCommandsWindow(self)
+            self._commands_window.connect("close-request", self._on_dbus_commands_closed)
+        self._commands_window.present()
+
+    def _on_dbus_commands_closed(self, _window: Gtk.Window) -> bool:
+        self._commands_window = None
+        return False
 
     def _on_print_images_action(
         self, _action: Gio.SimpleAction, _param: GLib.Variant | None
@@ -9204,6 +9423,89 @@ class RagPromptWidgets:
     isaacus_key_row: Adw.EntryRow
     rag_chunk_row: Adw.SpinRow
     prompt_buffer: Gtk.TextBuffer
+
+
+class FocusCommandsWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Focus) -> None:
+        super().__init__(application=app, title="D-Bus Commands")
+        self.app = app
+        self.set_default_size(900, 660)
+        self.set_resizable(True)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.add_css_class("flat")
+        header.set_title_widget(
+            Adw.WindowTitle(title="D-Bus Commands", subtitle="Run or copy Focus actions")
+        )
+        view.add_top_bar(header)
+
+        page = Adw.PreferencesPage()
+        intro = Adw.PreferencesGroup(
+            title="How to use",
+            description=(
+                "Use Run to trigger actions inside the open Focus window. "
+                "Use Copy Command to place the GApplication call on your clipboard."
+            ),
+        )
+        page.add(intro)
+
+        for group_title, commands in FOCUS_COMMAND_GROUPS:
+            group = Adw.PreferencesGroup(title=group_title)
+            group.add_css_class("list-stack")
+            page.add(group)
+            for command in commands:
+                group.add(self._build_command_row(command))
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_child(page)
+        view.set_content(scroller)
+        self.set_content(view)
+
+    def _build_command_row(self, command: FocusCommand) -> Adw.ActionRow:
+        row = Adw.ActionRow(
+            title=command.title,
+            subtitle=f"{command.accelerator} - {command.description}",
+        )
+        row.set_activatable(False)
+
+        suffix = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+
+        run_btn = Gtk.Button(label="Run")
+        run_btn.add_css_class("suggested-action")
+        run_btn.add_css_class("flat")
+        run_btn.connect("clicked", self._on_run_clicked, command.action_name)
+        suffix.append(run_btn)
+
+        copy_btn = Gtk.Button(label="Copy Command")
+        copy_btn.add_css_class("flat")
+        copy_btn.add_css_class("link")
+        copy_btn.connect("clicked", self._on_copy_clicked, command.action_name)
+        suffix.append(copy_btn)
+
+        row.add_suffix(suffix)
+        return row
+
+    def _on_run_clicked(self, _button: Gtk.Button, action_name: str) -> None:
+        action = self.app.lookup_action(action_name)
+        if action is None:
+            self.app._transient_toast(f"Action not available: {action_name}", window=self)
+            return
+        self.app.activate_action(action_name, None)
+
+    def _on_copy_clicked(self, _button: Gtk.Button, action_name: str) -> None:
+        object_path = ACTION_OBJECT_PATH
+        app_path = self.app.get_dbus_object_path()
+        if app_path:
+            object_path = app_path
+        command = _action_command(action_name, object_path=object_path)
+        display = Gdk.Display.get_default()
+        if display:
+            display.get_clipboard().set(command)
+            self.app._transient_toast("Command copied to clipboard.", window=self)
 
 
 class AiSettingsWindow(Adw.ApplicationWindow):
