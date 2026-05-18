@@ -1204,6 +1204,11 @@ IMAGE_ICON_OFF_CHOICES = (
     "image-x-generic-symbolic",
     "image-missing",
 )
+PAGE_SUMMARY_ICON_CHOICES = (
+    "text-x-generic-symbolic",
+    "accessories-text-editor-symbolic",
+    "edit-select-all-symbolic",
+)
 @dataclass
 class TocBookmark:
     title: str
@@ -1473,10 +1478,6 @@ button.focus-image-hover-zone {
   background-color: rgba(128, 128, 128, 0.12);
 }
 
-button.focus-summary-hover-zone {
-  background-color: rgba(128, 128, 128, 0.12);
-}
-
 button.focus-hover-zone:hover,
 button.focus-hover-zone:active {
   background-image: none;
@@ -1485,11 +1486,6 @@ button.focus-hover-zone:active {
 
 button.focus-image-hover-zone:hover,
 button.focus-image-hover-zone:active {
-  background-color: rgba(128, 128, 128, 0.16);
-}
-
-button.focus-summary-hover-zone:hover,
-button.focus-summary-hover-zone:active {
   background-color: rgba(128, 128, 128, 0.16);
 }
 
@@ -2057,16 +2053,10 @@ class Focus(Adw.Application):
         self._image_hover_zone: Gtk.Button | None = None
         self._image_hover_motion_controller: Gtk.EventControllerMotion | None = None
         self._image_hover_peek_active = False
-        self._summary_hover_zone: Gtk.Button | None = None
-        self._summary_hover_motion_controller: Gtk.EventControllerMotion | None = None
         self._summary_hover_card: Gtk.Box | None = None
-        self._summary_hover_card_motion_controller: Gtk.EventControllerMotion | None = None
         self._summary_hover_scroller: Gtk.ScrolledWindow | None = None
         self._summary_hover_view: Gtk.TextView | None = None
         self._summary_hover_buffer: Gtk.TextBuffer | None = None
-        self._summary_hover_control_inside = False
-        self._summary_hover_card_inside = False
-        self._summary_hover_hide_source_id: int | None = None
         self._summary_hover_generation = 0
         self._summary_hover_page: int | None = None
         self._summary_hover_raw = ""
@@ -2199,6 +2189,7 @@ class Focus(Adw.Application):
         self._show_image_button: Gtk.ToggleButton | None = None
         self._show_image_icon: Gtk.Image | None = None
         self._show_image_button_guard = False
+        self._single_page_summary_button: Gtk.Button | None = None
         self._image_icon_name_on = IMAGE_ICON_ON_CHOICES[0]
         self._image_icon_name_off = self._image_icon_name_on
         self._toc_categories: list[TocCategory] = []
@@ -2620,29 +2611,6 @@ class Focus(Adw.Application):
         self._hover_control_bar.set_size_request(HOVER_CONTROL_BAR_WIDTH, HOVER_CONTROL_HEIGHT)
         self._hover_control_bar.set_visible(False)
 
-        self._summary_hover_zone = Gtk.Button()
-        self._summary_hover_zone.add_css_class("flat")
-        self._summary_hover_zone.add_css_class("focus-hover-zone")
-        self._summary_hover_zone.add_css_class("focus-summary-hover-zone")
-        self._summary_hover_zone.set_hexpand(True)
-        self._summary_hover_zone.set_vexpand(False)
-        self._summary_hover_zone.set_size_request(-1, HOVER_CONTROL_HEIGHT)
-        self._summary_hover_zone.set_can_target(True)
-        self._summary_hover_zone.set_focus_on_click(False)
-        summary_hover_label = Gtk.Label(label="Summarize Page")
-        summary_hover_label.add_css_class("focus-hover-label")
-        summary_hover_label.set_halign(Gtk.Align.CENTER)
-        summary_hover_label.set_valign(Gtk.Align.START)
-        summary_hover_label.set_vexpand(True)
-        summary_hover_label.set_margin_top(5)
-        self._summary_hover_zone.set_child(summary_hover_label)
-        self._summary_hover_motion_controller = Gtk.EventControllerMotion()
-        self._summary_hover_motion_controller.connect("enter", self._on_summary_hover_zone_enter)
-        self._summary_hover_motion_controller.connect("motion", self._on_summary_hover_zone_enter)
-        self._summary_hover_motion_controller.connect("leave", self._on_summary_hover_zone_leave)
-        self._summary_hover_zone.add_controller(self._summary_hover_motion_controller)
-        self._hover_control_bar.append(self._summary_hover_zone)
-
         self._image_hover_zone = Gtk.Button()
         self._image_hover_zone.add_css_class("flat")
         self._image_hover_zone.add_css_class("focus-hover-zone")
@@ -2697,11 +2665,6 @@ class Focus(Adw.Application):
         self._summary_hover_card.set_size_request(HOVER_SUMMARY_CARD_WIDTH, -1)
         self._summary_hover_card.set_visible(False)
         self._summary_hover_card.append(self._summary_hover_scroller)
-        self._summary_hover_card_motion_controller = Gtk.EventControllerMotion()
-        self._summary_hover_card_motion_controller.connect("enter", self._on_summary_hover_card_enter)
-        self._summary_hover_card_motion_controller.connect("motion", self._on_summary_hover_card_enter)
-        self._summary_hover_card_motion_controller.connect("leave", self._on_summary_hover_card_leave)
-        self._summary_hover_card.add_controller(self._summary_hover_card_motion_controller)
         self._content_overlay.add_overlay(self._summary_hover_card)
         if hasattr(self._content_overlay, "set_overlay_pass_through"):
             self._content_overlay.set_overlay_pass_through(self._summary_hover_card, False)
@@ -3097,6 +3060,15 @@ class Focus(Adw.Application):
         self._show_image_button.set_tooltip_text("Enable image view (Ctrl+I)")
         self._show_image_button.connect("toggled", self._on_show_image_button_toggled)
 
+        self._single_page_summary_button = Gtk.Button()
+        self._single_page_summary_button.add_css_class("flat")
+        self._single_page_summary_button.set_valign(Gtk.Align.CENTER)
+        self._single_page_summary_button.set_tooltip_text("Summarize current page")
+        self._single_page_summary_button.set_child(
+            self._build_header_icon(*PAGE_SUMMARY_ICON_CHOICES)
+        )
+        self._single_page_summary_button.connect("clicked", self._on_single_page_summary_clicked)
+
         grep_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         grep_controls.set_valign(Gtk.Align.CENTER)
 
@@ -3148,6 +3120,7 @@ class Focus(Adw.Application):
         grep_controls.append(grep_highlighted_button)
         trailing_controls.append(grep_controls)
         trailing_controls.append(self._show_image_button)
+        trailing_controls.append(self._single_page_summary_button)
         text_controls.set_end_widget(trailing_controls)
 
         content_box.append(text_controls)
@@ -3654,8 +3627,7 @@ class Focus(Adw.Application):
         hits = self._grep_hits.get(page, [])
         if not hits:
             return []
-        header_offset = len(f"{page:04d}\n\n")
-        return [(start + header_offset, end + header_offset) for start, end in hits if end > start]
+        return [(start, end) for start, end in hits if end > start]
 
     def _scroll_to_current_grep_match(self) -> None:
         highlights = self._current_grep_highlights()
@@ -4990,7 +4962,7 @@ class Focus(Adw.Application):
             return False
         return (self.images_dir / f"{page:04d}.png").exists()
 
-    def _can_show_summary_hover_preview(self) -> bool:
+    def _can_summarize_current_page(self) -> bool:
         if self._show_image or self._continuous_view or self._showing_grep_results:
             return False
         if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
@@ -5003,22 +4975,10 @@ class Focus(Adw.Application):
         if not self._hover_control_bar:
             return
         image_visible = self._image_hover_peek_active or self._can_show_image_hover_peek()
-        summary_visible = (
-            self._image_hover_peek_active
-            or
-            self._summary_hover_control_inside
-            or self._summary_hover_card_inside
-            or self._can_show_summary_hover_preview()
-        )
         if self._image_hover_zone:
             self._image_hover_zone.set_visible(image_visible)
             self._image_hover_zone.set_sensitive(image_visible)
-        if self._summary_hover_zone:
-            self._summary_hover_zone.set_visible(summary_visible)
-            self._summary_hover_zone.set_sensitive(summary_visible)
-        self._hover_control_bar.set_visible(image_visible or summary_visible)
-        if not summary_visible:
-            self._hide_summary_hover_preview(cancel=True)
+        self._hover_control_bar.set_visible(image_visible)
 
     def _on_image_hover_zone_enter(
         self,
@@ -5051,53 +5011,10 @@ class Focus(Adw.Application):
         else:
             self._update_image_hover_zone_visible()
 
-    def _on_summary_hover_zone_enter(
-        self,
-        _controller: Gtk.EventControllerMotion,
-        _x: float,
-        _y: float,
-    ) -> None:
-        self._summary_hover_control_inside = True
-        self._cancel_summary_hover_hide_timer()
+    def _on_single_page_summary_clicked(self, _button: Gtk.Button) -> None:
         self._start_summary_hover_preview()
 
-    def _on_summary_hover_zone_leave(self, _controller: Gtk.EventControllerMotion) -> None:
-        self._summary_hover_control_inside = False
-        self._schedule_summary_hover_hide()
-
-    def _on_summary_hover_card_enter(
-        self,
-        _controller: Gtk.EventControllerMotion,
-        _x: float,
-        _y: float,
-    ) -> None:
-        self._summary_hover_card_inside = True
-        self._cancel_summary_hover_hide_timer()
-
-    def _on_summary_hover_card_leave(self, _controller: Gtk.EventControllerMotion) -> None:
-        self._summary_hover_card_inside = False
-        self._schedule_summary_hover_hide()
-
-    def _cancel_summary_hover_hide_timer(self) -> None:
-        if self._summary_hover_hide_source_id is None:
-            return
-        GLib.source_remove(self._summary_hover_hide_source_id)
-        self._summary_hover_hide_source_id = None
-
-    def _schedule_summary_hover_hide(self) -> None:
-        self._cancel_summary_hover_hide_timer()
-        self._summary_hover_hide_source_id = GLib.timeout_add(120, self._maybe_hide_summary_hover)
-
-    def _maybe_hide_summary_hover(self) -> bool:
-        self._summary_hover_hide_source_id = None
-        if not self._summary_hover_control_inside and not self._summary_hover_card_inside:
-            self._hide_summary_hover_preview(cancel=True)
-        return False
-
     def _hide_summary_hover_preview(self, *, cancel: bool) -> None:
-        self._cancel_summary_hover_hide_timer()
-        self._summary_hover_control_inside = False
-        self._summary_hover_card_inside = False
         if cancel:
             self._cancel_summary_hover_stream()
         self._summary_hover_page = None
@@ -5130,9 +5047,10 @@ class Focus(Adw.Application):
             self._summary_hover_scroller.queue_resize()
 
     def _start_summary_hover_preview(self) -> None:
-        if not self._can_show_summary_hover_preview():
+        if not self._can_summarize_current_page():
             self._hide_summary_hover_preview(cancel=True)
             self._update_image_hover_zone_visible()
+            self._ai_transient_toast("Summarize Page only works when a single text page is visible.")
             return
         page = self.pages[self.current_index]
         if self._summary_hover_page == page and (
@@ -6272,19 +6190,12 @@ class Focus(Adw.Application):
 
     def _render_page_display(
         self,
-        page: int,
+        _page: int,
         content: str,
         highlights: list[tuple[int, int]] | None,
     ) -> tuple[str, list[tuple[int, int]] | None]:
-        header = f"{page:04d}\n\n"
-        adjusted: list[tuple[int, int]] = []
-        if highlights:
-            offset = len(header)
-            for start, end in highlights:
-                if end <= start:
-                    continue
-                adjusted.append((start + offset, end + offset))
-        return header + content, adjusted if adjusted else None
+        adjusted = [(start, end) for start, end in highlights or [] if end > start]
+        return content, adjusted if adjusted else None
 
     def _load_current(self) -> None:
         self._hide_summary_hover_preview(cancel=True)
