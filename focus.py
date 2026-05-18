@@ -5149,6 +5149,21 @@ class Focus(Adw.Application):
         self._sync_right_scroll_zone_geometry(self.textview.get_width(), self.textview.get_height())
         return False
 
+    def _current_text_right_scroll_zone_width(self) -> int:
+        if not self._right_scroll_zone:
+            return 0
+        allocated_width = self._right_scroll_zone.get_width()
+        if allocated_width > 0:
+            return allocated_width
+        try:
+            minimum_width, natural_width, _, _ = self._right_scroll_zone.measure(
+                Gtk.Orientation.HORIZONTAL,
+                -1,
+            )
+        except Exception:
+            return 0
+        return max(0, natural_width, minimum_width)
+
     def _on_textview_leave(self, _controller: Gtk.EventControllerMotion) -> None:
         if self.textview:
             self.textview.set_cursor_from_name(None)
@@ -5330,14 +5345,18 @@ class Focus(Adw.Application):
     def _sync_image_right_scroll_zone_geometry(
         self, width: int, height: int
     ) -> tuple[float, float, float, float]:
-        coverage = min(1.0, max(0.0, float(RIGHT_SCROLL_ZONE_COVERAGE_RATIO)))
         right = max(0.0, float(width))
-        left = max(0.0, right * (1.0 - coverage))
+        zone_width = self._current_text_right_scroll_zone_width()
+        if zone_width <= 0:
+            coverage = min(1.0, max(0.0, float(RIGHT_SCROLL_ZONE_COVERAGE_RATIO)))
+            left = max(0.0, right * (1.0 - coverage))
+            zone_width = max(1, int(round(right - left)))
+        else:
+            left = max(0.0, right - zone_width)
         top = 0.0
         bottom = max(0.0, float(height))
 
         if self._image_right_scroll_zone:
-            zone_width = max(1, int(round(right - left)))
             self._image_right_scroll_zone.set_size_request(zone_width, -1)
             self._image_right_scroll_zone.set_margin_start(0)
             self._image_right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
