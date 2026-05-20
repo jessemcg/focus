@@ -3381,7 +3381,7 @@ class Focus(Adw.Application):
         self._rag_question_entry.connect("activate", self._on_rag_question_activate)
         qa_controls.append(self._rag_question_entry)
 
-        ask_button = Gtk.Button(label="1:")
+        ask_button = Gtk.Button(label="1")
         ask_button.add_css_class("flat")
         ask_button.add_css_class("no-bold")
         ask_button.set_valign(Gtk.Align.CENTER)
@@ -3390,7 +3390,7 @@ class Focus(Adw.Application):
         ask_button.connect("clicked", self._on_rag_question_button_clicked)
         qa_controls.append(ask_button)
 
-        deep_ask_button = Gtk.Button(label="2:")
+        deep_ask_button = Gtk.Button(label="2")
         deep_ask_button.add_css_class("flat")
         deep_ask_button.add_css_class("no-bold")
         deep_ask_button.set_valign(Gtk.Align.CENTER)
