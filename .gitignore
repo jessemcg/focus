@@ -3,4 +3,5 @@
 /uv.lock
 /.venv/
 /legacy_versions/
+/tests/
 config.json
