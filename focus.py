@@ -13,6 +13,7 @@ Features
 - Ctrl+Shift+Q opens case tools and focuses the RAG question box.
 - Ctrl+Shift+A opens detached case tools.
 - Ctrl+Shift+S summarizes the current page.
+- Ctrl+P prints the current page image.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
 
@@ -104,6 +105,8 @@ CONFIG_KEY_RAG_DISABLE_REASONING = "rag_disable_reasoning"
 CONFIG_KEY_RAG_DEEP_DISABLE_REASONING = "rag_deep_disable_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
+CONFIG_KEY_MODEL_PROFILES = "model_profiles"
+CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_TABLE_FONT_SIZE_PT = "table_font_size_pt"
@@ -150,6 +153,26 @@ RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX = "## Record Excerpt"
 RAG_PROVIDER_VOYAGE = "voyage"
 RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
+UNSET_PROFILE_LABEL = "Legacy credentials"
+MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3", "profile4")
+DEFAULT_MODEL_PROFILE_NICKNAMES = {
+    "profile1": "Profile 1",
+    "profile2": "Profile 2",
+    "profile3": "Profile 3",
+    "profile4": "Profile 4",
+}
+TASK_PROFILE_PAGE = "page"
+TASK_PROFILE_RANGE = "range"
+TASK_PROFILE_EXTRACT = "extract"
+TASK_PROFILE_RAG = "rag"
+TASK_PROFILE_RAG_DEEP = "rag-deep"
+TASK_PROFILE_KEYS = (
+    TASK_PROFILE_PAGE,
+    TASK_PROFILE_RANGE,
+    TASK_PROFILE_EXTRACT,
+    TASK_PROFILE_RAG,
+    TASK_PROFILE_RAG_DEEP,
+)
 SUMMARY_DIR_NAME = "summaries"
 HEARING_SUMMARY_CANDIDATES = (
     "summarized_hearings_consolidated.txt",
@@ -996,6 +1019,38 @@ def save_font_preferences(
 
 
 @dataclass
+class ModelProfile:
+    key: str
+    nickname: str
+    abbreviation: str
+    api_url: str
+    model_id: str
+    api_key: str
+    disable_reasoning: bool
+
+    def display_name(self) -> str:
+        return self.nickname.strip() or _default_profile_nickname(self.key)
+
+    def short_name(self) -> str:
+        return self.abbreviation.strip() or self.display_name()
+
+    def is_configured(self) -> bool:
+        return bool(self.api_url.strip() and self.model_id.strip() and self.api_key.strip())
+
+
+@dataclass
+class LlmCredentials:
+    api_url: str
+    model_id: str
+    api_key: str
+    disable_reasoning: bool
+    profile: ModelProfile | None = None
+
+    def is_configured(self) -> bool:
+        return bool(self.api_url.strip() and self.model_id.strip() and self.api_key.strip())
+
+
+@dataclass
 class AiSettings:
     api_url: str
     model_id: str
@@ -1035,41 +1090,119 @@ class AiSettings:
     grep_highlight_color: str
     phrase_highlight_color: str
     summary_emphasis_color: str
+    model_profiles: list[ModelProfile] = field(default_factory=list)
+    task_profile_defaults: dict[str, str | None] = field(default_factory=dict)
+
+    def profile_by_key(self, profile_key: str | None) -> ModelProfile | None:
+        normalized = (profile_key or "").strip()
+        if not normalized:
+            return None
+        for profile in self.model_profiles:
+            if profile.key == normalized:
+                return profile
+        return None
+
+    def profile_for_task(self, task_key: str, profile_key: str | None = None) -> ModelProfile | None:
+        selected_key = profile_key if profile_key is not None else self.task_profile_defaults.get(task_key)
+        return self.profile_by_key(selected_key)
+
+    def credentials_for_task(
+        self,
+        task_key: str,
+        legacy_api_url: str,
+        legacy_model_id: str,
+        legacy_api_key: str,
+        legacy_disable_reasoning: bool,
+        *,
+        profile_key: str | None = None,
+    ) -> LlmCredentials:
+        profile = self.profile_for_task(task_key, profile_key)
+        if profile is not None:
+            return LlmCredentials(
+                api_url=profile.api_url.strip(),
+                model_id=profile.model_id.strip(),
+                api_key=profile.api_key.strip(),
+                disable_reasoning=bool(profile.disable_reasoning),
+                profile=profile,
+            )
+        return LlmCredentials(
+            api_url=legacy_api_url.strip(),
+            model_id=legacy_model_id.strip(),
+            api_key=legacy_api_key.strip(),
+            disable_reasoning=legacy_disable_reasoning,
+        )
 
     def page_credentials(self) -> tuple[str, str, str]:
-        return (
+        credentials = self.page_llm_credentials()
+        return (credentials.api_url, credentials.model_id, credentials.api_key)
+
+    def page_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
+        return self.credentials_for_task(
+            TASK_PROFILE_PAGE,
             self.page_api_url.strip() or self.api_url.strip(),
             self.page_model_id.strip() or self.model_id.strip(),
             self.page_api_key.strip() or self.api_key.strip(),
+            bool(self.page_disable_reasoning),
+            profile_key=profile_key,
         )
 
     def range_credentials(self) -> tuple[str, str, str]:
-        return (
+        credentials = self.range_llm_credentials()
+        return (credentials.api_url, credentials.model_id, credentials.api_key)
+
+    def range_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
+        return self.credentials_for_task(
+            TASK_PROFILE_RANGE,
             self.range_api_url.strip() or self.api_url.strip(),
             self.range_model_id.strip() or self.model_id.strip(),
             self.range_api_key.strip() or self.api_key.strip(),
+            bool(self.range_disable_reasoning),
+            profile_key=profile_key,
         )
 
     def extract_credentials(self) -> tuple[str, str, str]:
-        range_api_url, range_model_id, range_api_key = self.range_credentials()
-        return (
-            self.extract_api_url.strip() or range_api_url,
-            self.extract_model_id.strip() or range_model_id,
-            self.extract_api_key.strip() or range_api_key,
+        credentials = self.extract_llm_credentials()
+        return (credentials.api_url, credentials.model_id, credentials.api_key)
+
+    def extract_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
+        range_credentials = self.range_llm_credentials()
+        return self.credentials_for_task(
+            TASK_PROFILE_EXTRACT,
+            self.extract_api_url.strip() or range_credentials.api_url,
+            self.extract_model_id.strip() or range_credentials.model_id,
+            self.extract_api_key.strip() or range_credentials.api_key,
+            bool(self.extract_disable_reasoning),
+            profile_key=profile_key,
         )
 
     def rag_credentials(self) -> tuple[str, str]:
-        page_api_url, _, page_api_key = self.page_credentials()
-        return (
-            self.rag_api_url.strip() or page_api_url,
-            self.rag_api_key.strip() or page_api_key,
+        credentials = self.rag_llm_credentials()
+        return (credentials.api_url, credentials.api_key)
+
+    def rag_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
+        page_credentials = self.page_llm_credentials()
+        return self.credentials_for_task(
+            TASK_PROFILE_RAG,
+            self.rag_api_url.strip() or page_credentials.api_url,
+            self.rag_llm_model.strip() or page_credentials.model_id,
+            self.rag_api_key.strip() or page_credentials.api_key,
+            bool(self.rag_disable_reasoning),
+            profile_key=profile_key,
         )
 
     def rag_deep_credentials(self) -> tuple[str, str]:
-        rag_api_url, rag_api_key = self.rag_credentials()
-        return (
-            self.rag_deep_api_url.strip() or rag_api_url,
-            self.rag_deep_api_key.strip() or rag_api_key,
+        credentials = self.rag_deep_llm_credentials()
+        return (credentials.api_url, credentials.api_key)
+
+    def rag_deep_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
+        rag_credentials = self.rag_llm_credentials()
+        return self.credentials_for_task(
+            TASK_PROFILE_RAG_DEEP,
+            self.rag_deep_api_url.strip() or rag_credentials.api_url,
+            self.rag_deep_llm_model.strip() or rag_credentials.model_id,
+            self.rag_deep_api_key.strip() or rag_credentials.api_key,
+            bool(self.rag_deep_disable_reasoning),
+            profile_key=profile_key,
         )
 
     def is_configured(self) -> bool:
@@ -1117,6 +1250,192 @@ class AiSettings:
                 rag_api_key,
             )
         ) and has_embeddings
+
+
+def _default_profile_nickname(profile_key: str) -> str:
+    fallback = DEFAULT_MODEL_PROFILE_NICKNAMES.get(profile_key)
+    if fallback:
+        return fallback
+    match = re.fullmatch(r"profile(\d+)", profile_key or "")
+    if match:
+        return f"Profile {match.group(1)}"
+    return profile_key.title()
+
+
+def _credential_signature(
+    api_url: str,
+    model_id: str,
+    api_key: str,
+) -> tuple[str, str, str] | None:
+    cleaned_api_url = api_url.strip()
+    cleaned_model_id = model_id.strip()
+    cleaned_api_key = api_key.strip()
+    if not cleaned_api_url or not cleaned_model_id or not cleaned_api_key:
+        return None
+    return cleaned_api_url, cleaned_model_id, cleaned_api_key
+
+
+def _sanitize_model_profile(raw: Any, key: str, fallback_nickname: str) -> ModelProfile:
+    data = raw if isinstance(raw, dict) else {}
+    nickname = str(data.get("nickname", fallback_nickname) or "").strip() or fallback_nickname
+    return ModelProfile(
+        key=key,
+        nickname=nickname,
+        abbreviation=str(data.get("abbreviation", "") or "").strip(),
+        api_url=str(data.get("api_url", "") or "").strip(),
+        model_id=str(data.get("model_id", "") or "").strip(),
+        api_key=str(data.get("api_key", "") or "").strip(),
+        disable_reasoning=_coerce_bool_config(data.get("disable_reasoning"), DEFAULT_DISABLE_REASONING),
+    )
+
+
+def _legacy_profile(
+    key: str,
+    nickname: str,
+    api_url: str,
+    model_id: str,
+    api_key: str,
+    disable_reasoning: bool,
+) -> ModelProfile:
+    return ModelProfile(
+        key=key,
+        nickname=nickname,
+        abbreviation="",
+        api_url=api_url.strip(),
+        model_id=model_id.strip(),
+        api_key=api_key.strip(),
+        disable_reasoning=bool(disable_reasoning),
+    )
+
+
+def _load_model_profiles_from_config(config: dict[str, Any]) -> list[ModelProfile]:
+    raw_profiles = config.get(CONFIG_KEY_MODEL_PROFILES)
+    if isinstance(raw_profiles, list) and raw_profiles:
+        profiles: list[ModelProfile] = []
+        for index, key in enumerate(MODEL_PROFILE_IDS):
+            fallback = DEFAULT_MODEL_PROFILE_NICKNAMES[key]
+            entry = raw_profiles[index] if index < len(raw_profiles) else {}
+            profiles.append(_sanitize_model_profile(entry, key, fallback))
+        return profiles
+
+    api_url = str(config.get(CONFIG_KEY_API_URL, "") or "").strip()
+    model_id = str(config.get(CONFIG_KEY_MODEL_ID, "") or "").strip()
+    api_key = str(config.get(CONFIG_KEY_API_KEY, "") or "").strip()
+    page_api_url = str(config.get(CONFIG_KEY_PAGE_API_URL, "") or "").strip() or api_url
+    page_model_id = str(config.get(CONFIG_KEY_PAGE_MODEL_ID, "") or "").strip() or model_id
+    page_api_key = str(config.get(CONFIG_KEY_PAGE_API_KEY, "") or "").strip() or api_key
+    range_api_url = str(config.get(CONFIG_KEY_RANGE_API_URL, "") or "").strip() or api_url
+    range_model_id = str(config.get(CONFIG_KEY_RANGE_MODEL_ID, "") or "").strip() or model_id
+    range_api_key = str(config.get(CONFIG_KEY_RANGE_API_KEY, "") or "").strip() or api_key
+    extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip() or range_api_url
+    extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip() or range_model_id
+    extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip() or range_api_key
+    rag_api_url = str(config.get(CONFIG_KEY_RAG_API_URL, "") or "").strip() or page_api_url
+    rag_model_id = str(config.get(CONFIG_KEY_RAG_MODEL, "") or "").strip() or page_model_id
+    rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip() or page_api_key
+    return [
+        _legacy_profile(
+            "profile1",
+            "Single Page",
+            page_api_url,
+            page_model_id,
+            page_api_key,
+            _coerce_bool_config(config.get(CONFIG_KEY_PAGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
+        ),
+        _legacy_profile(
+            "profile2",
+            "Page Range",
+            range_api_url,
+            range_model_id,
+            range_api_key,
+            _coerce_bool_config(config.get(CONFIG_KEY_RANGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
+        ),
+        _legacy_profile(
+            "profile3",
+            "Extract",
+            extract_api_url,
+            extract_model_id,
+            extract_api_key,
+            _coerce_bool_config(config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
+        ),
+        _legacy_profile(
+            "profile4",
+            "RAG",
+            rag_api_url,
+            rag_model_id,
+            rag_api_key,
+            _coerce_bool_config(config.get(CONFIG_KEY_RAG_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
+        ),
+    ]
+
+
+def _match_profile_key_for_credentials(
+    profiles: list[ModelProfile],
+    api_url: str,
+    model_id: str,
+    api_key: str,
+) -> str | None:
+    signature = _credential_signature(api_url, model_id, api_key)
+    if signature is None:
+        return None
+    for profile in profiles:
+        if _credential_signature(profile.api_url, profile.model_id, profile.api_key) == signature:
+            return profile.key
+    return None
+
+
+def _sanitize_task_profile_defaults(raw: Any) -> dict[str, str | None]:
+    source = raw if isinstance(raw, dict) else {}
+    defaults: dict[str, str | None] = {}
+    for key in TASK_PROFILE_KEYS:
+        candidate = str(source.get(key, "") or "").strip()
+        defaults[key] = candidate if candidate in MODEL_PROFILE_IDS else None
+    return defaults
+
+
+def _load_task_profile_defaults_from_config(
+    config: dict[str, Any],
+    profiles: list[ModelProfile],
+) -> dict[str, str | None]:
+    defaults = _sanitize_task_profile_defaults(config.get(CONFIG_KEY_TASK_DEFAULT_PROFILES))
+    if any(value is not None for value in defaults.values()):
+        return defaults
+
+    api_url = str(config.get(CONFIG_KEY_API_URL, "") or "").strip()
+    model_id = str(config.get(CONFIG_KEY_MODEL_ID, "") or "").strip()
+    api_key = str(config.get(CONFIG_KEY_API_KEY, "") or "").strip()
+    page_api_url = str(config.get(CONFIG_KEY_PAGE_API_URL, "") or "").strip() or api_url
+    page_model_id = str(config.get(CONFIG_KEY_PAGE_MODEL_ID, "") or "").strip() or model_id
+    page_api_key = str(config.get(CONFIG_KEY_PAGE_API_KEY, "") or "").strip() or api_key
+    range_api_url = str(config.get(CONFIG_KEY_RANGE_API_URL, "") or "").strip() or api_url
+    range_model_id = str(config.get(CONFIG_KEY_RANGE_MODEL_ID, "") or "").strip() or model_id
+    range_api_key = str(config.get(CONFIG_KEY_RANGE_API_KEY, "") or "").strip() or api_key
+    extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip() or range_api_url
+    extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip() or range_model_id
+    extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip() or range_api_key
+    rag_api_url = str(config.get(CONFIG_KEY_RAG_API_URL, "") or "").strip() or page_api_url
+    rag_model_id = str(config.get(CONFIG_KEY_RAG_MODEL, "") or "").strip() or page_model_id
+    rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip() or page_api_key
+    rag_deep_api_url = str(config.get(CONFIG_KEY_RAG_DEEP_API_URL, "") or "").strip() or rag_api_url
+    rag_deep_model_id = str(config.get(CONFIG_KEY_RAG_DEEP_MODEL, "") or "").strip() or rag_model_id
+    rag_deep_api_key = str(config.get(CONFIG_KEY_RAG_DEEP_API_KEY, "") or "").strip() or rag_api_key
+
+    defaults[TASK_PROFILE_PAGE] = _match_profile_key_for_credentials(
+        profiles, page_api_url, page_model_id, page_api_key
+    )
+    defaults[TASK_PROFILE_RANGE] = _match_profile_key_for_credentials(
+        profiles, range_api_url, range_model_id, range_api_key
+    )
+    defaults[TASK_PROFILE_EXTRACT] = _match_profile_key_for_credentials(
+        profiles, extract_api_url, extract_model_id, extract_api_key
+    )
+    defaults[TASK_PROFILE_RAG] = _match_profile_key_for_credentials(
+        profiles, rag_api_url, rag_model_id, rag_api_key
+    )
+    defaults[TASK_PROFILE_RAG_DEEP] = _match_profile_key_for_credentials(
+        profiles, rag_deep_api_url, rag_deep_model_id, rag_deep_api_key
+    )
+    return defaults
 
 
 @dataclass
@@ -1178,6 +1497,8 @@ class FocusViewState:
 
 def load_ai_settings() -> AiSettings:
     config = _read_config()
+    model_profiles = _load_model_profiles_from_config(config)
+    task_profile_defaults = _load_task_profile_defaults_from_config(config, model_profiles)
     api_url = str(config.get(CONFIG_KEY_API_URL, "") or "").strip()
     model_id = str(config.get(CONFIG_KEY_MODEL_ID, "") or "").strip()
     api_key = str(config.get(CONFIG_KEY_API_KEY, "") or "").strip()
@@ -1190,14 +1511,14 @@ def load_ai_settings() -> AiSettings:
     extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip()
     extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip()
     extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip()
-    page_disable_reasoning = bool(
-        config.get(CONFIG_KEY_PAGE_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    page_disable_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_PAGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
     )
-    range_disable_reasoning = bool(
-        config.get(CONFIG_KEY_RANGE_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    range_disable_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_RANGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
     )
-    extract_disable_reasoning = bool(
-        config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    extract_disable_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
     )
     fallback_prompt = str(config.get(CONFIG_KEY_SUMMARIZATION_PROMPT, DEFAULT_SUMMARIZATION_PROMPT) or "").strip()
     page_prompt = str(config.get(CONFIG_KEY_PAGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
@@ -1228,11 +1549,11 @@ def load_ai_settings() -> AiSettings:
     rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip()
     rag_deep_api_url = str(config.get(CONFIG_KEY_RAG_DEEP_API_URL, "") or "").strip()
     rag_deep_api_key = str(config.get(CONFIG_KEY_RAG_DEEP_API_KEY, "") or "").strip()
-    rag_disable_reasoning = bool(
-        config.get(CONFIG_KEY_RAG_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    rag_disable_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_RAG_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
     )
-    rag_deep_disable_reasoning = bool(
-        config.get(CONFIG_KEY_RAG_DEEP_DISABLE_REASONING, DEFAULT_DISABLE_REASONING)
+    rag_deep_disable_reasoning = _coerce_bool_config(
+        config.get(CONFIG_KEY_RAG_DEEP_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
     )
     rag_chunk_count = _coerce_rag_chunk_count(
         config.get(CONFIG_KEY_RAG_CHUNK_COUNT),
@@ -1291,26 +1612,50 @@ def load_ai_settings() -> AiSettings:
         grep_highlight_color=grep_highlight_color,
         phrase_highlight_color=phrase_highlight_color,
         summary_emphasis_color=summary_emphasis_color,
+        model_profiles=model_profiles,
+        task_profile_defaults=task_profile_defaults,
     )
 
 
 def save_ai_settings(settings: AiSettings) -> None:
     config = _read_config()
-    config[CONFIG_KEY_API_URL] = settings.api_url
-    config[CONFIG_KEY_MODEL_ID] = settings.model_id
-    config[CONFIG_KEY_API_KEY] = settings.api_key
-    config[CONFIG_KEY_PAGE_API_URL] = settings.page_api_url
-    config[CONFIG_KEY_PAGE_MODEL_ID] = settings.page_model_id
-    config[CONFIG_KEY_PAGE_API_KEY] = settings.page_api_key
-    config[CONFIG_KEY_RANGE_API_URL] = settings.range_api_url
-    config[CONFIG_KEY_RANGE_MODEL_ID] = settings.range_model_id
-    config[CONFIG_KEY_RANGE_API_KEY] = settings.range_api_key
-    config[CONFIG_KEY_EXTRACT_API_URL] = settings.extract_api_url
-    config[CONFIG_KEY_EXTRACT_MODEL_ID] = settings.extract_model_id
-    config[CONFIG_KEY_EXTRACT_API_KEY] = settings.extract_api_key
-    config[CONFIG_KEY_PAGE_DISABLE_REASONING] = bool(settings.page_disable_reasoning)
-    config[CONFIG_KEY_RANGE_DISABLE_REASONING] = bool(settings.range_disable_reasoning)
-    config[CONFIG_KEY_EXTRACT_DISABLE_REASONING] = bool(settings.extract_disable_reasoning)
+    page_credentials = settings.page_llm_credentials()
+    range_credentials = settings.range_llm_credentials()
+    extract_credentials = settings.extract_llm_credentials()
+    rag_credentials = settings.rag_llm_credentials()
+    rag_deep_credentials = settings.rag_deep_llm_credentials()
+
+    config[CONFIG_KEY_MODEL_PROFILES] = [
+        {
+            "nickname": profile.display_name(),
+            "abbreviation": profile.abbreviation.strip(),
+            "api_url": profile.api_url,
+            "model_id": profile.model_id,
+            "api_key": profile.api_key,
+            "disable_reasoning": bool(profile.disable_reasoning),
+        }
+        for profile in settings.model_profiles[: len(MODEL_PROFILE_IDS)]
+    ]
+    config[CONFIG_KEY_TASK_DEFAULT_PROFILES] = {
+        key: value
+        for key, value in _sanitize_task_profile_defaults(settings.task_profile_defaults).items()
+        if value in MODEL_PROFILE_IDS
+    }
+    config[CONFIG_KEY_API_URL] = page_credentials.api_url
+    config[CONFIG_KEY_MODEL_ID] = page_credentials.model_id
+    config[CONFIG_KEY_API_KEY] = page_credentials.api_key
+    config[CONFIG_KEY_PAGE_API_URL] = page_credentials.api_url
+    config[CONFIG_KEY_PAGE_MODEL_ID] = page_credentials.model_id
+    config[CONFIG_KEY_PAGE_API_KEY] = page_credentials.api_key
+    config[CONFIG_KEY_RANGE_API_URL] = range_credentials.api_url
+    config[CONFIG_KEY_RANGE_MODEL_ID] = range_credentials.model_id
+    config[CONFIG_KEY_RANGE_API_KEY] = range_credentials.api_key
+    config[CONFIG_KEY_EXTRACT_API_URL] = extract_credentials.api_url
+    config[CONFIG_KEY_EXTRACT_MODEL_ID] = extract_credentials.model_id
+    config[CONFIG_KEY_EXTRACT_API_KEY] = extract_credentials.api_key
+    config[CONFIG_KEY_PAGE_DISABLE_REASONING] = bool(page_credentials.disable_reasoning)
+    config[CONFIG_KEY_RANGE_DISABLE_REASONING] = bool(range_credentials.disable_reasoning)
+    config[CONFIG_KEY_EXTRACT_DISABLE_REASONING] = bool(extract_credentials.disable_reasoning)
     config[CONFIG_KEY_SUMMARIZATION_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_PAGE_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_RANGE_PROMPT] = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
@@ -1322,15 +1667,15 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_RAG_VOYAGE_MODEL] = settings.voyage_model or DEFAULT_RAG_VOYAGE_MODEL
     config[CONFIG_KEY_RAG_ISAACUS_API_KEY] = settings.isaacus_api_key
     config[CONFIG_KEY_RAG_ISAACUS_MODEL] = settings.isaacus_model or DEFAULT_RAG_ISAACUS_MODEL
-    config[CONFIG_KEY_RAG_MODEL] = settings.rag_llm_model
-    config[CONFIG_KEY_RAG_DEEP_MODEL] = settings.rag_deep_llm_model
+    config[CONFIG_KEY_RAG_MODEL] = rag_credentials.model_id
+    config[CONFIG_KEY_RAG_DEEP_MODEL] = rag_deep_credentials.model_id
     config[CONFIG_KEY_RAG_PROMPT] = settings.rag_prompt or DEFAULT_RAG_PROMPT
-    config[CONFIG_KEY_RAG_API_URL] = settings.rag_api_url
-    config[CONFIG_KEY_RAG_API_KEY] = settings.rag_api_key
-    config[CONFIG_KEY_RAG_DEEP_API_URL] = settings.rag_deep_api_url
-    config[CONFIG_KEY_RAG_DEEP_API_KEY] = settings.rag_deep_api_key
-    config[CONFIG_KEY_RAG_DISABLE_REASONING] = bool(settings.rag_disable_reasoning)
-    config[CONFIG_KEY_RAG_DEEP_DISABLE_REASONING] = bool(settings.rag_deep_disable_reasoning)
+    config[CONFIG_KEY_RAG_API_URL] = rag_credentials.api_url
+    config[CONFIG_KEY_RAG_API_KEY] = rag_credentials.api_key
+    config[CONFIG_KEY_RAG_DEEP_API_URL] = rag_deep_credentials.api_url
+    config[CONFIG_KEY_RAG_DEEP_API_KEY] = rag_deep_credentials.api_key
+    config[CONFIG_KEY_RAG_DISABLE_REASONING] = bool(rag_credentials.disable_reasoning)
+    config[CONFIG_KEY_RAG_DEEP_DISABLE_REASONING] = bool(rag_deep_credentials.disable_reasoning)
     config[CONFIG_KEY_RAG_CHUNK_COUNT] = _coerce_rag_chunk_count(
         settings.rag_chunk_count,
         DEFAULT_RAG_CHUNK_COUNT,
@@ -2401,6 +2746,7 @@ class Focus(Adw.Application):
         self._ai_spinner: Gtk.Spinner | None = None
         self._ai_range_entry: Gtk.Entry | None = None
         self._extract_range_entry: Gtk.Entry | None = None
+        self._ai_profile_dropdowns: dict[str, Gtk.DropDown] = {}
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
         self._ai_panel_toggle_guard = False
         self._ai_detach_button: Gtk.ToggleButton | None = None
@@ -2954,12 +3300,26 @@ class Focus(Adw.Application):
         summarize_btn.connect("clicked", self._on_summarize_page_clicked)
         summarize_controls.append(summarize_btn)
 
+        summarize_controls.append(
+            self._build_ai_profile_dropdown(
+                TASK_PROFILE_PAGE,
+                "Model profile for current-page summaries.",
+            )
+        )
+
         self._ai_range_entry = Gtk.Entry()
         self._ai_range_entry.set_placeholder_text("Page Range")
         self._ai_range_entry.set_max_length(9)
         self._ai_range_entry.set_hexpand(True)
         self._ai_range_entry.connect("activate", self._on_summarize_range_activate)
         summarize_controls.append(self._ai_range_entry)
+
+        summarize_controls.append(
+            self._build_ai_profile_dropdown(
+                TASK_PROFILE_RANGE,
+                "Model profile for page-range summaries.",
+            )
+        )
 
         summarize_range_btn = Gtk.Button(label="Submit")
         summarize_range_btn.add_css_class("flat")
@@ -2985,6 +3345,13 @@ class Focus(Adw.Application):
         extract_btn.set_halign(Gtk.Align.START)
         extract_btn.connect("clicked", self._on_extract_page_clicked)
         extract_controls.append(extract_btn)
+
+        extract_controls.append(
+            self._build_ai_profile_dropdown(
+                TASK_PROFILE_EXTRACT,
+                "Model profile for information extraction.",
+            )
+        )
 
         self._extract_range_entry = Gtk.Entry()
         self._extract_range_entry.set_placeholder_text("Page Range")
@@ -3014,21 +3381,21 @@ class Focus(Adw.Application):
         self._rag_question_entry.connect("activate", self._on_rag_question_activate)
         qa_controls.append(self._rag_question_entry)
 
-        ask_button = Gtk.Button(label="A:")
+        ask_button = Gtk.Button(label="1:")
         ask_button.add_css_class("flat")
         ask_button.add_css_class("no-bold")
         ask_button.set_valign(Gtk.Align.CENTER)
         ask_button.set_hexpand(False)
-        ask_button.set_tooltip_text("Quick answer.")
+        ask_button.set_tooltip_text("Answer with model 1.")
         ask_button.connect("clicked", self._on_rag_question_button_clicked)
         qa_controls.append(ask_button)
 
-        deep_ask_button = Gtk.Button(label="R:")
+        deep_ask_button = Gtk.Button(label="2:")
         deep_ask_button.add_css_class("flat")
         deep_ask_button.add_css_class("no-bold")
         deep_ask_button.set_valign(Gtk.Align.CENTER)
         deep_ask_button.set_hexpand(False)
-        deep_ask_button.set_tooltip_text("Deeper answer using a reasoning model.")
+        deep_ask_button.set_tooltip_text("Answer with model 2.")
         deep_ask_button.connect("clicked", self._on_rag_deep_question_button_clicked)
         qa_controls.append(deep_ask_button)
 
@@ -4730,6 +5097,74 @@ class Focus(Adw.Application):
         self._summary_source_buttons[source] = button
         return button
 
+    def _profile_dropdown_labels(
+        self,
+        *,
+        include_legacy: bool = True,
+        abbreviated: bool = False,
+    ) -> list[str]:
+        labels = [
+            profile.short_name() if abbreviated else profile.display_name()
+            for profile in self._ai_settings.model_profiles
+        ]
+        if include_legacy:
+            legacy_label = "Legacy" if abbreviated else UNSET_PROFILE_LABEL
+            return [legacy_label, *labels]
+        return labels
+
+    def _build_profile_dropdown_model(
+        self,
+        *,
+        include_legacy: bool = True,
+        abbreviated: bool = False,
+    ) -> Gtk.StringList:
+        return Gtk.StringList.new(
+            self._profile_dropdown_labels(
+                include_legacy=include_legacy,
+                abbreviated=abbreviated,
+            )
+        )
+
+    def _selected_profile_index(self, task_key: str, *, include_legacy: bool = True) -> int:
+        selected_key = self._ai_settings.task_profile_defaults.get(task_key)
+        if selected_key in MODEL_PROFILE_IDS:
+            index = MODEL_PROFILE_IDS.index(selected_key)
+            return index + 1 if include_legacy else index
+        return 0
+
+    def _profile_key_from_dropdown(
+        self,
+        dropdown: Gtk.DropDown | None,
+        *,
+        include_legacy: bool = True,
+    ) -> str | None:
+        if dropdown is None:
+            return None
+        selected = int(dropdown.get_selected())
+        if include_legacy:
+            selected -= 1
+        if 0 <= selected < len(MODEL_PROFILE_IDS):
+            return MODEL_PROFILE_IDS[selected]
+        return None
+
+    def _build_ai_profile_dropdown(self, task_key: str, tooltip: str) -> Gtk.DropDown:
+        dropdown = Gtk.DropDown(model=self._build_profile_dropdown_model(abbreviated=True))
+        dropdown.set_selected(self._selected_profile_index(task_key))
+        dropdown.set_tooltip_text(tooltip)
+        dropdown.set_valign(Gtk.Align.CENTER)
+        dropdown.set_hexpand(False)
+        self._ai_profile_dropdowns[task_key] = dropdown
+        return dropdown
+
+    def _selected_ai_profile_key(self, task_key: str) -> str | None:
+        return self._profile_key_from_dropdown(self._ai_profile_dropdowns.get(task_key))
+
+    def _refresh_ai_profile_dropdowns(self) -> None:
+        model = self._build_profile_dropdown_model(abbreviated=True)
+        for task_key, dropdown in self._ai_profile_dropdowns.items():
+            dropdown.set_model(model)
+            dropdown.set_selected(self._selected_profile_index(task_key))
+
     def _build_wrapping_controls_box(self) -> Gtk.FlowBox:
         box = Gtk.FlowBox()
         box.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -5285,18 +5720,12 @@ class Focus(Adw.Application):
         self._set_summary_hover_text(f"Summarizing page {page:04d}...")
 
         settings = load_ai_settings()
-        api_url, model_id, api_key = settings.page_credentials()
-        if not all(
-            value.strip()
-            for value in (
-                api_url,
-                model_id,
-                api_key,
-                settings.page_prompt,
-            )
-        ):
+        profile_key = self._selected_ai_profile_key(TASK_PROFILE_PAGE)
+        credentials = settings.page_llm_credentials(profile_key)
+        error = self._llm_credentials_error(credentials, "page summary")
+        if error or not settings.page_prompt.strip():
             self._set_summary_hover_text(
-                "Configure page API URL, model, API key, and prompt in Settings."
+                error or "Configure the single-page summarization prompt in Settings."
             )
             return
 
@@ -5324,10 +5753,10 @@ class Focus(Adw.Application):
                 prompt,
             ),
             kwargs={
-                "model_id": model_id,
-                "api_url": api_url,
-                "api_key": api_key,
-                "disable_reasoning": settings.page_disable_reasoning,
+                "model_id": credentials.model_id,
+                "api_url": credentials.api_url,
+                "api_key": credentials.api_key,
+                "disable_reasoning": credentials.disable_reasoning,
             },
             daemon=True,
         )
@@ -6863,6 +7292,10 @@ class Focus(Adw.Application):
         print_images.connect("activate", self._on_print_images_action)
         self.add_action(print_images)
 
+        print_current_image = Gio.SimpleAction.new("print_current_image", None)
+        print_current_image.connect("activate", self._on_print_current_image_action)
+        self.add_action(print_current_image)
+
         toggle_sidebar = Gio.SimpleAction.new_stateful(
             "toggle_toc_sidebar",
             None,
@@ -6949,6 +7382,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.grep_prev_hit", ["<Primary><Shift>g"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
+        self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
         self.set_accels_for_action("app.summarize_current_page", ["<Primary><Shift>s"])
         self.set_accels_for_action("app.toggle_ai_panel_detached", ["<Primary><Shift>a"])
         self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>q"])
@@ -6981,6 +7415,9 @@ class Focus(Adw.Application):
         )
         navigation_group.append(
             Gtk.ShortcutsShortcut(title="Toggle image view", accelerator="<Primary>I")
+        )
+        navigation_group.append(
+            Gtk.ShortcutsShortcut(title="Print current page image", accelerator="<Primary>P")
         )
         navigation_section.append(navigation_group)
 
@@ -7061,6 +7498,11 @@ class Focus(Adw.Application):
             self._image_print_entry.grab_focus()
             self._image_print_entry.select_region(0, -1)
         window.present()
+
+    def _on_print_current_image_action(
+        self, _action: Gio.SimpleAction, _param: GLib.Variant | None
+    ) -> None:
+        self._print_current_image_page()
 
     def _ensure_image_print_window(self) -> Adw.ApplicationWindow:
         if self._image_print_window:
@@ -7177,7 +7619,36 @@ class Focus(Adw.Application):
         if missing_images:
             skipped_parts.append(f"{missing_images} missing image(s)")
         skipped_message = "Skipped " + " and ".join(skipped_parts) + "." if skipped_parts else ""
+        self._run_image_print_operation(
+            printable_pages,
+            Gtk.PrintOperationAction.PRINT_DIALOG,
+            skipped_message=skipped_message,
+        )
 
+    def _print_current_image_page(self) -> None:
+        if not self.pages:
+            self._transient_toast("No pages available to print.")
+            return
+        if self.current_index < 0 or self.current_index >= len(self.pages):
+            self._transient_toast("No current page available to print.")
+            return
+        page = self.pages[self.current_index]
+        printable_pages, _missing_pages, missing_images = self._collect_printable_image_pages([page])
+        if not printable_pages:
+            if missing_images:
+                self._transient_toast(f"No image found for page {page:04d}.")
+            else:
+                self._transient_toast("No printable image found for the current page.")
+            return
+        self._run_image_print_operation(printable_pages, Gtk.PrintOperationAction.PRINT)
+
+    def _run_image_print_operation(
+        self,
+        printable_pages: list[int],
+        action: Gtk.PrintOperationAction,
+        *,
+        skipped_message: str = "",
+    ) -> None:
         self._image_print_pages = printable_pages
         operation = Gtk.PrintOperation()
         operation.set_use_full_page(True)
@@ -7189,10 +7660,7 @@ class Focus(Adw.Application):
         if skipped_message:
             self._transient_toast(skipped_message)
         try:
-            operation.run(
-                Gtk.PrintOperationAction.PRINT_DIALOG,
-                self.win,
-            )
+            operation.run(action, self.win)
         except GLib.Error as exc:
             self._transient_toast(f"Print failed: {exc.message}")
 
@@ -7336,6 +7804,7 @@ class Focus(Adw.Application):
             self._ai_settings.range_prompt = DEFAULT_SUMMARIZATION_PROMPT
         if not self._ai_settings.rag_prompt.strip():
             self._ai_settings.rag_prompt = DEFAULT_RAG_PROMPT
+        self._refresh_ai_profile_dropdowns()
         self._refresh_ai_quote_colors()
         self._kickoff_rag_background_load()
         if self.textview:
@@ -7410,6 +7879,8 @@ class Focus(Adw.Application):
             self._focus_page_number_entry(); return True
         if key == "f" and (state & Gdk.ModifierType.CONTROL_MASK):
             self._focus_grep_entry(); return True
+        if key in ("p", "P") and (state & Gdk.ModifierType.CONTROL_MASK):
+            self._print_current_image_page(); return True
         if (
             key in ("A", "a")
             and (state & Gdk.ModifierType.CONTROL_MASK)
@@ -7760,6 +8231,7 @@ class Focus(Adw.Application):
             label=f"page {page:04d}",
             content=payload,
             prompt_kind="page",
+            profile_key=self._selected_ai_profile_key(TASK_PROFILE_PAGE),
         )
 
     def _on_summarize_range_activate(self, _entry: Gtk.Entry) -> None:
@@ -7791,7 +8263,12 @@ class Focus(Adw.Application):
             parts.append(f"{page:04d}\n\n{content}\n\n")
         combined = "".join(parts)
         label = f"pages {start_page:04d}-{end_page:04d}"
-        self._start_ai_stream(label=label, content=combined, prompt_kind="range")
+        self._start_ai_stream(
+            label=label,
+            content=combined,
+            prompt_kind="range",
+            profile_key=self._selected_ai_profile_key(TASK_PROFILE_RANGE),
+        )
         self._ai_range_entry.set_text("")
 
     def _parse_page_range(self, raw: str) -> tuple[int, int] | None:
@@ -7821,6 +8298,7 @@ class Focus(Adw.Application):
             label=f"page {page:04d}",
             content=payload,
             prompt_kind="extract",
+            profile_key=self._selected_ai_profile_key(TASK_PROFILE_EXTRACT),
         )
 
     def _on_extract_range_activate(self, _entry: Gtk.Entry) -> None:
@@ -7852,7 +8330,12 @@ class Focus(Adw.Application):
             parts.append(f"Page {page:04d}\n\n{content}\n\n")
         combined = "".join(parts)
         label = f"pages {start_page:04d}-{end_page:04d}"
-        self._start_ai_stream(label=label, content=combined, prompt_kind="extract")
+        self._start_ai_stream(
+            label=label,
+            content=combined,
+            prompt_kind="extract",
+            profile_key=self._selected_ai_profile_key(TASK_PROFILE_EXTRACT),
+        )
         self._extract_range_entry.set_text("")
 
     def _on_rag_question_activate(self, _entry: Gtk.Entry) -> None:
@@ -8289,29 +8772,24 @@ class Focus(Adw.Application):
         state = self._current_view_state()
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
-        question_mode = "deep" if deep else "ask"
+        question_mode = "answer-2" if deep else "answer-1"
         if deep:
-            rag_api_url, rag_api_key = settings.rag_deep_credentials()
-            rag_model = settings.rag_deep_llm_model.strip()
-            if not rag_api_key:
-                self._ai_transient_toast("Configure the Deep Ask API key in Settings.")
+            credentials = settings.rag_deep_llm_credentials()
+            error = self._llm_credentials_error(credentials, "RAG answer 2")
+            if error:
                 self._ensure_ai_panel_visible()
-                return
-            if not rag_model:
-                self._ai_transient_toast("Set the Deep Ask model in Settings.")
-                self._ensure_ai_panel_visible()
+                self._ai_transient_toast(error)
                 return
         else:
-            rag_api_url, rag_api_key = settings.rag_credentials()
-            rag_model = settings.rag_llm_model.strip()
-            if not rag_api_key:
-                self._ai_transient_toast("Configure the RAG API key in Settings.")
+            credentials = settings.rag_llm_credentials()
+            error = self._llm_credentials_error(credentials, "RAG answer")
+            if error:
                 self._ensure_ai_panel_visible()
+                self._ai_transient_toast(error)
                 return
-            if not rag_model:
-                self._ai_transient_toast("Set the RAG answer model in Settings.")
-                self._ensure_ai_panel_visible()
-                return
+        rag_api_url = credentials.api_url
+        rag_api_key = credentials.api_key
+        rag_model = credentials.model_id
         provider = _normalize_rag_provider(settings.rag_provider)
         if provider == RAG_PROVIDER_ISAACUS:
             if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
@@ -8346,7 +8824,7 @@ class Focus(Adw.Application):
 
         cancel_event = state.ai_cancel_event
         question_text = question.strip()
-        question_label = "deep question" if deep else "question"
+        question_label = "question 2" if deep else "question 1"
         label = f"{question_label}: {question_text[:48]}{'…' if len(question_text) > 48 else ''}"
 
         def worker() -> None:
@@ -8383,10 +8861,8 @@ class Focus(Adw.Application):
             GLib.idle_add(self._set_rag_filter_chip_idle, chip_text)
             system_prompt = settings.rag_prompt or DEFAULT_RAG_PROMPT
             user_payload = self._compose_rag_payload(case_details, context_text, question_text)
-            request_model_id = rag_model or settings.page_credentials()[1]
-            disable_reasoning = (
-                settings.rag_deep_disable_reasoning if deep else settings.rag_disable_reasoning
-            )
+            request_model_id = rag_model
+            disable_reasoning = credentials.disable_reasoning
             llm_request = {
                 "model": request_model_id,
                 "stream": True,
@@ -8424,7 +8900,7 @@ class Focus(Adw.Application):
                 AI_VIEW_RAG_AUDIT,
                 False,
             )
-            answer_status = "Answering deep question…" if deep else "Answering question…"
+            answer_status = "Answering with model 2…" if deep else "Answering with model 1…"
             GLib.idle_add(self._update_ai_status, answer_status, True)
             self._stream_chat_worker(
                 settings,
@@ -8942,36 +9418,60 @@ class Focus(Adw.Application):
             f"{normalized_context}"
         )
 
-    def _start_ai_stream(self, *, label: str, content: str, prompt_kind: str) -> None:
+    def _llm_credentials_error(self, credentials: LlmCredentials, label: str) -> str | None:
+        if credentials.is_configured():
+            return None
+        if credentials.profile is not None:
+            return f'Configure the "{credentials.profile.display_name()}" model profile in Settings.'
+        return f"Configure {label} API URL, model, API key, and prompt in Settings."
+
+    def _start_ai_stream(
+        self,
+        *,
+        label: str,
+        content: str,
+        prompt_kind: str,
+        profile_key: str | None = None,
+    ) -> None:
         state = self._current_view_state()
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
         target_view = AI_VIEW_EXTRACT if prompt_kind == "extract" else AI_VIEW_SUMMARIZE
         action_label = "Extracting" if prompt_kind == "extract" else "Summarizing"
         if prompt_kind == "extract":
-            if not settings.is_extract_configured():
-                self._ai_transient_toast("Configure extract API URL, model, API key, and prompt in Settings.")
+            credentials = settings.extract_llm_credentials(profile_key)
+            error = self._llm_credentials_error(credentials, "extract")
+            if error or not (settings.extract_prompt or DEFAULT_EXTRACT_PROMPT).strip():
+                self._ai_transient_toast(error or "Configure the extract prompt in Settings.")
                 self._ensure_ai_panel_visible()
                 return
-        elif not settings.is_configured():
-            self._ai_transient_toast("Configure API URL, model, API key, and prompt in Settings.")
-            self._ensure_ai_panel_visible()
-            return
+        elif prompt_kind == "range":
+            credentials = settings.range_llm_credentials(profile_key)
+            error = self._llm_credentials_error(credentials, "range summary")
+            if error or not (settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT).strip():
+                self._ai_transient_toast(error or "Configure the range summarization prompt in Settings.")
+                self._ensure_ai_panel_visible()
+                return
+        else:
+            credentials = settings.page_llm_credentials(profile_key)
+            error = self._llm_credentials_error(credentials, "page summary")
+            if error or not (settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT).strip():
+                self._ai_transient_toast(error or "Configure the single-page summarization prompt in Settings.")
+                self._ensure_ai_panel_visible()
+                return
         if not content.strip():
             self._ai_transient_toast(f"Nothing to {action_label.lower()} for the requested selection.")
             return
         if prompt_kind == "extract":
             prompt = compose_extract_information_prompt(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
-            api_url, model_id, api_key = settings.extract_credentials()
-            disable_reasoning = settings.extract_disable_reasoning
         elif prompt_kind == "range":
             prompt = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
-            api_url, model_id, api_key = settings.range_credentials()
-            disable_reasoning = settings.range_disable_reasoning
         else:
             prompt = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
-            api_url, model_id, api_key = settings.page_credentials()
-            disable_reasoning = settings.page_disable_reasoning
+        api_url = credentials.api_url
+        model_id = credentials.model_id
+        api_key = credentials.api_key
+        disable_reasoning = credentials.disable_reasoning
 
         self._stop_ai_stream_if_running()
         state.ai_cancel_event = threading.Event()
@@ -9470,23 +9970,14 @@ class Focus(Adw.Application):
 
 @dataclass
 class SummarizationPromptWidgets:
-    api_url_row: Adw.EntryRow
-    model_row: Adw.EntryRow
-    api_key_row: Adw.EntryRow
-    disable_reasoning_row: Adw.SwitchRow
+    profile_dropdown: Gtk.DropDown
     prompt_buffer: Gtk.TextBuffer
 
 
 @dataclass
 class RagPromptWidgets:
-    api_url_row: Adw.EntryRow
-    model_row: Adw.EntryRow
-    api_key_row: Adw.EntryRow
-    disable_reasoning_row: Adw.SwitchRow
-    deep_api_url_row: Adw.EntryRow
-    deep_model_row: Adw.EntryRow
-    deep_api_key_row: Adw.EntryRow
-    deep_disable_reasoning_row: Adw.SwitchRow
+    profile_dropdown: Gtk.DropDown
+    deep_profile_dropdown: Gtk.DropDown
     provider_row: Adw.ComboRow
     provider_values: list[str]
     voyage_model_row: Adw.EntryRow
@@ -9496,6 +9987,16 @@ class RagPromptWidgets:
     rag_chunk_row: Adw.SpinRow
     speech_rag_source_row: Adw.EntryRow
     prompt_buffer: Gtk.TextBuffer
+
+
+@dataclass
+class ModelProfileEditorWidgets:
+    nickname_row: Adw.EntryRow
+    abbreviation_row: Adw.EntryRow
+    api_url_row: Adw.EntryRow
+    model_row: Adw.EntryRow
+    api_key_row: Adw.EntryRow
+    disable_reasoning_row: Adw.SwitchRow
 
 
 class FocusCommandsWindow(Adw.ApplicationWindow):
@@ -9597,6 +10098,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._summary_emphasis_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._prompt_editors: dict[str, SummarizationPromptWidgets | RagPromptWidgets] = {}
+        self._model_profiles: list[ModelProfile] = list(app._ai_settings.model_profiles)
+        self._model_profile_editors: dict[str, ModelProfileEditorWidgets] = {}
         self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
         self._prompt_list: Gtk.ListBox | None = None
         self._prompt_stack: Gtk.Stack | None = None
@@ -9753,6 +10256,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._prompt_stack = prompt_stack
 
         prompt_definitions = [
+            ("profiles", "Model Profiles", self._build_model_profiles_page),
             ("page", "Single Page Summarization", self._build_summarization_prompt_page),
             ("range", "Page Range Summarization", self._build_summarization_prompt_page),
             ("extract", "Extract Information", self._build_summarization_prompt_page),
@@ -9839,6 +10343,115 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if hasattr(row, "set_hexpand"):
             row.set_hexpand(True)
         return row
+
+    def _profile_dropdown_model(self, *, include_legacy: bool = True) -> Gtk.StringList:
+        labels = [profile.display_name() for profile in self._model_profiles]
+        if include_legacy:
+            labels = [UNSET_PROFILE_LABEL, *labels]
+        return Gtk.StringList.new(labels)
+
+    def _profile_dropdown_selected_index(
+        self,
+        settings: AiSettings,
+        task_key: str,
+        *,
+        include_legacy: bool = True,
+    ) -> int:
+        selected_key = settings.task_profile_defaults.get(task_key)
+        if selected_key in MODEL_PROFILE_IDS:
+            selected_index = MODEL_PROFILE_IDS.index(selected_key)
+            return selected_index + 1 if include_legacy else selected_index
+        return 0
+
+    def _profile_key_from_dropdown(
+        self,
+        dropdown: Gtk.DropDown,
+        *,
+        include_legacy: bool = True,
+    ) -> str | None:
+        selected = int(dropdown.get_selected())
+        if include_legacy:
+            selected -= 1
+        if 0 <= selected < len(MODEL_PROFILE_IDS):
+            return MODEL_PROFILE_IDS[selected]
+        return None
+
+    def _build_profile_dropdown(self, settings: AiSettings, task_key: str) -> Gtk.DropDown:
+        dropdown = Gtk.DropDown(model=self._profile_dropdown_model())
+        dropdown.set_selected(self._profile_dropdown_selected_index(settings, task_key))
+        dropdown.set_hexpand(False)
+        return dropdown
+
+    def _build_model_profiles_page(self, _key: str, title: str) -> Gtk.Widget:
+        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        page_box.set_margin_top(12)
+        page_box.set_margin_bottom(12)
+        page_box.set_margin_start(12)
+        page_box.set_margin_end(12)
+        page_box.set_vexpand(True)
+
+        title_label = Gtk.Label(label=title, xalign=0)
+        title_label.add_css_class("title-3")
+        page_box.append(title_label)
+
+        info_label = Gtk.Label(
+            label=(
+                "Set up four shared LLM profiles. Prompt pages choose one of these profiles "
+                "as their default model."
+            ),
+            xalign=0,
+        )
+        info_label.add_css_class("dim-label")
+        info_label.set_wrap(True)
+        info_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        page_box.append(info_label)
+
+        self._model_profile_editors = {}
+        for profile in self._model_profiles:
+            group = Adw.PreferencesGroup(title=profile.display_name())
+            group.add_css_class("list-stack")
+            group.set_hexpand(True)
+
+            nickname_row = Adw.EntryRow(title="Nickname")
+            nickname_row.set_text(profile.display_name())
+            group.add(nickname_row)
+
+            abbreviation_row = Adw.EntryRow(title="Abbreviation (optional)")
+            abbreviation_row.set_text(profile.abbreviation)
+            group.add(abbreviation_row)
+
+            api_url_row = Adw.EntryRow(title="API URL")
+            api_url_row.set_text(profile.api_url)
+            group.add(api_url_row)
+
+            model_row = Adw.EntryRow(title="Model ID")
+            model_row.set_text(profile.model_id)
+            group.add(model_row)
+
+            api_key_row = self._build_password_row("API Key")
+            api_key_row.set_text(profile.api_key)
+            group.add(api_key_row)
+
+            disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
+            disable_reasoning_row.set_active(bool(profile.disable_reasoning))
+            group.add(disable_reasoning_row)
+
+            self._model_profile_editors[profile.key] = ModelProfileEditorWidgets(
+                nickname_row=nickname_row,
+                abbreviation_row=abbreviation_row,
+                api_url_row=api_url_row,
+                model_row=model_row,
+                api_key_row=api_key_row,
+                disable_reasoning_row=disable_reasoning_row,
+            )
+            page_box.append(group)
+
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        page.set_hexpand(True)
+        page.set_vexpand(True)
+        page.set_child(page_box)
+        return page
 
     def _build_color_row(self, title: str, default: str) -> tuple[Gtk.Widget, Gtk.Widget]:
         color_dialog_cls = getattr(Gtk, "ColorDialog", None)
@@ -9928,25 +10541,22 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         title_label.add_css_class("title-3")
         page_box.append(title_label)
 
-        credentials_group = Adw.PreferencesGroup(title="Credentials")
-        credentials_group.add_css_class("list-stack")
-        credentials_group.set_hexpand(True)
-        page_box.append(credentials_group)
+        settings = load_ai_settings()
+        profile_group = Adw.PreferencesGroup(title="Default Model Profile")
+        profile_group.add_css_class("list-stack")
+        profile_group.set_hexpand(True)
+        page_box.append(profile_group)
 
-        api_url_row = Adw.EntryRow(title="API URL")
-        api_url_row.set_hexpand(True)
-        credentials_group.add(api_url_row)
-
-        model_row = Adw.EntryRow(title="Model ID")
-        model_row.set_hexpand(True)
-        credentials_group.add(model_row)
-
-        api_key_row = self._build_password_row("API Key")
-        credentials_group.add(api_key_row)
-
-        disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
-        disable_reasoning_row.set_active(DEFAULT_DISABLE_REASONING)
-        credentials_group.add(disable_reasoning_row)
+        profile_row = Adw.ActionRow(
+            title="Profile",
+            subtitle="Uses the selected profile's API URL, model, API key, and reasoning setting.",
+        )
+        profile_row.set_activatable(False)
+        task_key = key if key in TASK_PROFILE_KEYS else TASK_PROFILE_PAGE
+        profile_dropdown = self._build_profile_dropdown(settings, task_key)
+        profile_row.add_suffix(profile_dropdown)
+        profile_row.set_activatable_widget(profile_dropdown)
+        profile_group.add(profile_row)
 
         prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         prompt_section.set_hexpand(True)
@@ -9966,10 +10576,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page.set_child(page_box)
 
         self._prompt_editors[key] = SummarizationPromptWidgets(
-            api_url_row=api_url_row,
-            model_row=model_row,
-            api_key_row=api_key_row,
-            disable_reasoning_row=disable_reasoning_row,
+            profile_dropdown=profile_dropdown,
             prompt_buffer=buffer,
         )
         return page
@@ -9986,45 +10593,31 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         title_label.add_css_class("title-3")
         page_box.append(title_label)
 
-        rag_group = Adw.PreferencesGroup(title="RAG Credentials")
+        settings = load_ai_settings()
+        rag_group = Adw.PreferencesGroup(title="Default Model Profiles")
         rag_group.add_css_class("list-stack")
         rag_group.set_hexpand(True)
         page_box.append(rag_group)
 
-        rag_api_url_row = Adw.EntryRow(title="RAG API URL")
-        rag_api_url_row.set_hexpand(True)
-        rag_group.add(rag_api_url_row)
+        rag_profile_row = Adw.ActionRow(
+            title="Answer 1",
+            subtitle="Uses the selected profile for the 1: RAG answer.",
+        )
+        rag_profile_row.set_activatable(False)
+        rag_profile_dropdown = self._build_profile_dropdown(settings, TASK_PROFILE_RAG)
+        rag_profile_row.add_suffix(rag_profile_dropdown)
+        rag_profile_row.set_activatable_widget(rag_profile_dropdown)
+        rag_group.add(rag_profile_row)
 
-        rag_api_key_row = self._build_password_row("RAG API Key")
-        rag_group.add(rag_api_key_row)
-
-        rag_model_row = Adw.EntryRow(title="RAG Answer Model")
-        rag_model_row.set_hexpand(True)
-        rag_group.add(rag_model_row)
-
-        rag_disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
-        rag_disable_reasoning_row.set_active(DEFAULT_DISABLE_REASONING)
-        rag_group.add(rag_disable_reasoning_row)
-
-        deep_rag_group = Adw.PreferencesGroup(title="Deep Ask Credentials")
-        deep_rag_group.add_css_class("list-stack")
-        deep_rag_group.set_hexpand(True)
-        page_box.append(deep_rag_group)
-
-        deep_rag_api_url_row = Adw.EntryRow(title="Deep Ask API URL")
-        deep_rag_api_url_row.set_hexpand(True)
-        deep_rag_group.add(deep_rag_api_url_row)
-
-        deep_rag_api_key_row = self._build_password_row("Deep Ask API Key")
-        deep_rag_group.add(deep_rag_api_key_row)
-
-        deep_rag_model_row = Adw.EntryRow(title="Deep Ask Model")
-        deep_rag_model_row.set_hexpand(True)
-        deep_rag_group.add(deep_rag_model_row)
-
-        deep_rag_disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
-        deep_rag_disable_reasoning_row.set_active(DEFAULT_DISABLE_REASONING)
-        deep_rag_group.add(deep_rag_disable_reasoning_row)
+        deep_rag_profile_row = Adw.ActionRow(
+            title="Answer 2",
+            subtitle="Uses the selected profile for the 2: RAG answer.",
+        )
+        deep_rag_profile_row.set_activatable(False)
+        deep_rag_profile_dropdown = self._build_profile_dropdown(settings, TASK_PROFILE_RAG_DEEP)
+        deep_rag_profile_row.add_suffix(deep_rag_profile_dropdown)
+        deep_rag_profile_row.set_activatable_widget(deep_rag_profile_dropdown)
+        rag_group.add(deep_rag_profile_row)
 
         provider_group = Adw.PreferencesGroup(title="Embedding Provider")
         provider_group.add_css_class("list-stack")
@@ -10109,14 +10702,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page.set_child(page_box)
 
         self._prompt_editors[key] = RagPromptWidgets(
-            api_url_row=rag_api_url_row,
-            model_row=rag_model_row,
-            api_key_row=rag_api_key_row,
-            disable_reasoning_row=rag_disable_reasoning_row,
-            deep_api_url_row=deep_rag_api_url_row,
-            deep_model_row=deep_rag_model_row,
-            deep_api_key_row=deep_rag_api_key_row,
-            deep_disable_reasoning_row=deep_rag_disable_reasoning_row,
+            profile_dropdown=rag_profile_dropdown,
+            deep_profile_dropdown=deep_rag_profile_dropdown,
             provider_row=provider_row,
             provider_values=provider_values,
             voyage_model_row=voyage_model_row,
@@ -10191,52 +10778,34 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         rag_widgets = self._prompt_editors.get("rag")
 
         if isinstance(page_widgets, SummarizationPromptWidgets):
-            page_widgets.api_url_row.set_text(settings.page_api_url or settings.api_url)
-            page_widgets.model_row.set_text(settings.page_model_id or settings.model_id)
-            page_widgets.api_key_row.set_text(settings.page_api_key or settings.api_key)
-            page_widgets.disable_reasoning_row.set_active(
-                bool(settings.page_disable_reasoning)
+            page_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
+            page_widgets.profile_dropdown.set_selected(
+                self._profile_dropdown_selected_index(settings, TASK_PROFILE_PAGE)
             )
             page_widgets.prompt_buffer.set_text(settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT)
 
         if isinstance(range_widgets, SummarizationPromptWidgets):
-            range_widgets.api_url_row.set_text(settings.range_api_url or settings.api_url)
-            range_widgets.model_row.set_text(settings.range_model_id or settings.model_id)
-            range_widgets.api_key_row.set_text(settings.range_api_key or settings.api_key)
-            range_widgets.disable_reasoning_row.set_active(
-                bool(settings.range_disable_reasoning)
+            range_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
+            range_widgets.profile_dropdown.set_selected(
+                self._profile_dropdown_selected_index(settings, TASK_PROFILE_RANGE)
             )
             range_widgets.prompt_buffer.set_text(settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT)
 
         if isinstance(extract_widgets, SummarizationPromptWidgets):
-            extract_widgets.api_url_row.set_text(settings.extract_api_url or settings.range_api_url or settings.api_url)
-            extract_widgets.model_row.set_text(settings.extract_model_id or settings.range_model_id or settings.model_id)
-            extract_widgets.api_key_row.set_text(settings.extract_api_key or settings.range_api_key or settings.api_key)
-            extract_widgets.disable_reasoning_row.set_active(
-                bool(settings.extract_disable_reasoning)
+            extract_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
+            extract_widgets.profile_dropdown.set_selected(
+                self._profile_dropdown_selected_index(settings, TASK_PROFILE_EXTRACT)
             )
             extract_widgets.prompt_buffer.set_text(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
 
         if isinstance(rag_widgets, RagPromptWidgets):
-            rag_widgets.api_url_row.set_text(
-                settings.rag_api_url or settings.page_api_url or settings.api_url
+            rag_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
+            rag_widgets.profile_dropdown.set_selected(
+                self._profile_dropdown_selected_index(settings, TASK_PROFILE_RAG)
             )
-            rag_widgets.api_key_row.set_text(
-                settings.rag_api_key or settings.page_api_key or settings.api_key
-            )
-            rag_widgets.model_row.set_text(settings.rag_llm_model)
-            rag_widgets.disable_reasoning_row.set_active(
-                bool(settings.rag_disable_reasoning)
-            )
-            rag_widgets.deep_api_url_row.set_text(
-                settings.rag_deep_api_url or settings.rag_api_url or settings.page_api_url or settings.api_url
-            )
-            rag_widgets.deep_api_key_row.set_text(
-                settings.rag_deep_api_key or settings.rag_api_key or settings.page_api_key or settings.api_key
-            )
-            rag_widgets.deep_model_row.set_text(settings.rag_deep_llm_model)
-            rag_widgets.deep_disable_reasoning_row.set_active(
-                bool(settings.rag_deep_disable_reasoning)
+            rag_widgets.deep_profile_dropdown.set_model(self._profile_dropdown_model())
+            rag_widgets.deep_profile_dropdown.set_selected(
+                self._profile_dropdown_selected_index(settings, TASK_PROFILE_RAG_DEEP)
             )
             provider = _normalize_rag_provider(settings.rag_provider)
             if provider in rag_widgets.provider_values:
@@ -10307,28 +10876,36 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if not isinstance(rag_widgets, RagPromptWidgets):
             return
 
-        page_api_url = page_widgets.api_url_row.get_text().strip()
-        page_model_id = page_widgets.model_row.get_text().strip()
-        page_api_key = page_widgets.api_key_row.get_text().strip()
-        page_disable_reasoning = bool(page_widgets.disable_reasoning_row.get_active())
-        range_api_url = range_widgets.api_url_row.get_text().strip()
-        range_model_id = range_widgets.model_row.get_text().strip()
-        range_api_key = range_widgets.api_key_row.get_text().strip()
-        range_disable_reasoning = bool(range_widgets.disable_reasoning_row.get_active())
-        extract_api_url = extract_widgets.api_url_row.get_text().strip()
-        extract_model_id = extract_widgets.model_row.get_text().strip()
-        extract_api_key = extract_widgets.api_key_row.get_text().strip()
-        extract_disable_reasoning = bool(extract_widgets.disable_reasoning_row.get_active())
-        rag_api_url = rag_widgets.api_url_row.get_text().strip()
-        rag_api_key = rag_widgets.api_key_row.get_text().strip()
-        rag_model = rag_widgets.model_row.get_text().strip()
-        rag_disable_reasoning = bool(rag_widgets.disable_reasoning_row.get_active())
-        rag_deep_api_url = rag_widgets.deep_api_url_row.get_text().strip()
-        rag_deep_api_key = rag_widgets.deep_api_key_row.get_text().strip()
-        rag_deep_model = rag_widgets.deep_model_row.get_text().strip()
-        rag_deep_disable_reasoning = bool(
-            rag_widgets.deep_disable_reasoning_row.get_active()
-        )
+        current_settings = load_ai_settings()
+        model_profiles: list[ModelProfile] = []
+        for profile_key in MODEL_PROFILE_IDS:
+            widgets = self._model_profile_editors.get(profile_key)
+            if widgets is None:
+                existing = current_settings.profile_by_key(profile_key)
+                if existing is not None:
+                    model_profiles.append(existing)
+                continue
+            model_profiles.append(
+                ModelProfile(
+                    key=profile_key,
+                    nickname=(
+                        widgets.nickname_row.get_text().strip()
+                        or DEFAULT_MODEL_PROFILE_NICKNAMES[profile_key]
+                    ),
+                    abbreviation=widgets.abbreviation_row.get_text().strip(),
+                    api_url=widgets.api_url_row.get_text().strip(),
+                    model_id=widgets.model_row.get_text().strip(),
+                    api_key=widgets.api_key_row.get_text().strip(),
+                    disable_reasoning=bool(widgets.disable_reasoning_row.get_active()),
+                )
+            )
+        task_profile_defaults = {
+            TASK_PROFILE_PAGE: self._profile_key_from_dropdown(page_widgets.profile_dropdown),
+            TASK_PROFILE_RANGE: self._profile_key_from_dropdown(range_widgets.profile_dropdown),
+            TASK_PROFILE_EXTRACT: self._profile_key_from_dropdown(extract_widgets.profile_dropdown),
+            TASK_PROFILE_RAG: self._profile_key_from_dropdown(rag_widgets.profile_dropdown),
+            TASK_PROFILE_RAG_DEEP: self._profile_key_from_dropdown(rag_widgets.deep_profile_dropdown),
+        }
         provider_index = int(rag_widgets.provider_row.get_selected())
         if 0 <= provider_index < len(rag_widgets.provider_values):
             rag_provider = rag_widgets.provider_values[provider_index]
@@ -10391,21 +10968,21 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         else:
             record_font_family_name = self.app.get_record_font_family_name()
         settings = AiSettings(
-            api_url=page_api_url,
-            model_id=page_model_id,
-            api_key=page_api_key,
-            page_api_url=page_api_url,
-            page_model_id=page_model_id,
-            page_api_key=page_api_key,
-            range_api_url=range_api_url,
-            range_model_id=range_model_id,
-            range_api_key=range_api_key,
-            extract_api_url=extract_api_url,
-            extract_model_id=extract_model_id,
-            extract_api_key=extract_api_key,
-            page_disable_reasoning=page_disable_reasoning,
-            range_disable_reasoning=range_disable_reasoning,
-            extract_disable_reasoning=extract_disable_reasoning,
+            api_url=current_settings.api_url,
+            model_id=current_settings.model_id,
+            api_key=current_settings.api_key,
+            page_api_url=current_settings.page_api_url,
+            page_model_id=current_settings.page_model_id,
+            page_api_key=current_settings.page_api_key,
+            range_api_url=current_settings.range_api_url,
+            range_model_id=current_settings.range_model_id,
+            range_api_key=current_settings.range_api_key,
+            extract_api_url=current_settings.extract_api_url,
+            extract_model_id=current_settings.extract_model_id,
+            extract_api_key=current_settings.extract_api_key,
+            page_disable_reasoning=current_settings.page_disable_reasoning,
+            range_disable_reasoning=current_settings.range_disable_reasoning,
+            extract_disable_reasoning=current_settings.extract_disable_reasoning,
             page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             extract_prompt=extract_prompt or DEFAULT_EXTRACT_PROMPT,
@@ -10414,21 +10991,23 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             voyage_model=voyage_model or DEFAULT_RAG_VOYAGE_MODEL,
             isaacus_api_key=isaacus_key,
             isaacus_model=isaacus_model or DEFAULT_RAG_ISAACUS_MODEL,
-            rag_llm_model=rag_model,
-            rag_deep_llm_model=rag_deep_model,
+            rag_llm_model=current_settings.rag_llm_model,
+            rag_deep_llm_model=current_settings.rag_deep_llm_model,
             rag_prompt=rag_prompt or DEFAULT_RAG_PROMPT,
-            rag_api_url=rag_api_url or page_api_url,
-            rag_api_key=rag_api_key or page_api_key,
-            rag_deep_api_url=rag_deep_api_url or rag_api_url or page_api_url,
-            rag_deep_api_key=rag_deep_api_key or rag_api_key or page_api_key,
-            rag_disable_reasoning=rag_disable_reasoning,
-            rag_deep_disable_reasoning=rag_deep_disable_reasoning,
+            rag_api_url=current_settings.rag_api_url,
+            rag_api_key=current_settings.rag_api_key,
+            rag_deep_api_url=current_settings.rag_deep_api_url,
+            rag_deep_api_key=current_settings.rag_deep_api_key,
+            rag_disable_reasoning=current_settings.rag_disable_reasoning,
+            rag_deep_disable_reasoning=current_settings.rag_deep_disable_reasoning,
             rag_chunk_count=rag_chunk_count,
             speech_rag_source_file=speech_rag_source_file,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
             summary_emphasis_color=summary_emphasis_color,
+            model_profiles=model_profiles,
+            task_profile_defaults=task_profile_defaults,
         )
         save_ai_settings(settings)
         self.app.update_font_sizes(
