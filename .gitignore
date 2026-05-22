@@ -1,7 +1,7 @@
 /prompts/
-/__pycache__/
+__pycache__/
+/.pytest_cache/
 /uv.lock
 /.venv/
 /legacy_versions/
-/tests/
 config.json

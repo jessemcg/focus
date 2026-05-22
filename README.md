@@ -35,6 +35,11 @@ uv sync
 uv run python focus.py
 ```
 
+## Test
+```bash
+uv run pytest
+```
+
 ## Data layout
 Example legacy transcript folder structure (set `input_dir` to the case root):
 ```
@@ -82,11 +87,11 @@ Defaults are defined in `focus.py` if a key is missing.
 - `config.json`: local settings (do not commit secrets)
 - `legacy_versions/`: historical backups (do not edit)
 - `prompts/`: prompt history and change notes
+- `tests/`: automated regression tests
 - `pyproject.toml`, `uv.lock`: dependency and runtime definitions
 
 ## Notes
 - RAG requires a populated `rag/vector_database` and a `rag/case_overview.txt` (or legacy case overview).
-- Automated tests are not set up yet.
 
 ## Keyboard shortcuts
 - Up/Down: previous/next page
