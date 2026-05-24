@@ -2,7 +2,7 @@
 
 <img src="focus.png" alt="Focus" width="128" align="left">
 
-Focus is a Libadwaita GTK4 app for browsing court transcript text files with fast paging, grep, images, and AI-assisted summaries/RAG. It is designed to work with a "case_bundle" created with [recordprep](https://github.com/jessemcg/recordprep).
+Focus is a Libadwaita GTK4 app for browsing court transcript text files with fast paging, grep, images, and AI-assisted summaries/RAG. It is designed to work with a "case_bundle" created with [recordprep](https://github.com/jessemcg/record-prep).
 
 ## Features
 - Displays one text page at a time, with optional continuous scroll mode
