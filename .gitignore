@@ -5,3 +5,4 @@ __pycache__/
 /.venv/
 /legacy_versions/
 config.json
+/local_current_case_focus.py
