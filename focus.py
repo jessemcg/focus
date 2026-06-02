@@ -46,7 +46,7 @@ import urllib.request
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 import gi
 
@@ -767,6 +767,30 @@ class RecordLayout:
     is_record_prep: bool
 
 
+@dataclass(frozen=True)
+class RecordRangeChoice:
+    source: str
+    label: str
+    start_page: int
+    end_page: int
+
+    @property
+    def page_count(self) -> int:
+        return max(0, self.end_page - self.start_page + 1)
+
+
+@dataclass(frozen=True)
+class SumRangeValidation:
+    start_page: int | None
+    end_page: int | None
+    targets: tuple[int, ...]
+    message: str
+
+    @property
+    def valid(self) -> bool:
+        return bool(self.targets)
+
+
 def _path_from_manifest(value: Any, root: Path) -> Path | None:
     if not isinstance(value, str):
         return None
@@ -804,6 +828,120 @@ def _read_manifest_file(path: Path) -> dict[str, Any] | None:
     if isinstance(data, dict):
         return data
     return None
+
+
+def _read_json_list_file(path: Path) -> list[Any]:
+    if not path.exists():
+        return []
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _coerce_record_page(value: Any) -> int | None:
+    if isinstance(value, int):
+        page = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        page = int(value.strip())
+    else:
+        return None
+    if page <= 0:
+        return None
+    return page
+
+
+def _boundary_path(
+    root: Path,
+    manifest: dict[str, Any],
+    file_key: str,
+    fallback_name: str,
+) -> Path:
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    return _path_from_manifest(files.get(file_key), root) or root / "artifacts" / fallback_name
+
+
+def load_record_range_choices(root: Path) -> list[RecordRangeChoice]:
+    manifest = _read_record_prep_manifest(root) or {}
+    specs = (
+        ("hearing", "Hearing", "hearing_boundaries", "hearing_boundaries.json"),
+        ("report", "Report", "report_boundaries", "report_boundaries.json"),
+        ("minute", "Minute Order", "minutes_boundaries", "minutes_boundaries.json"),
+    )
+    choices: list[RecordRangeChoice] = []
+    for source, title, file_key, fallback_name in specs:
+        path = _boundary_path(root, manifest, file_key, fallback_name)
+        for item in _read_json_list_file(path):
+            if not isinstance(item, dict):
+                continue
+            start_page = _coerce_record_page(item.get("start_page"))
+            end_page = _coerce_record_page(item.get("end_page"))
+            if start_page is None or end_page is None:
+                continue
+            if start_page > end_page:
+                start_page, end_page = end_page, start_page
+            if source == "report":
+                detail = str(
+                    item.get("report_label")
+                    or " - ".join(
+                        part
+                        for part in (
+                            str(item.get("report_date") or "").strip(),
+                            str(item.get("report_name") or "").strip(),
+                        )
+                        if part
+                    )
+                    or item.get("report_id")
+                    or ""
+                ).strip()
+            else:
+                detail = str(item.get("date") or "").strip()
+            label = f"{title} - {detail}" if detail else title
+            choices.append(
+                RecordRangeChoice(
+                    source=source,
+                    label=label,
+                    start_page=start_page,
+                    end_page=end_page,
+                )
+            )
+    choices.sort(key=lambda choice: (choice.start_page, choice.end_page, choice.label))
+    return choices
+
+
+def record_range_choice_for_page(
+    choices: Sequence[RecordRangeChoice],
+    page: int,
+) -> RecordRangeChoice | None:
+    containing = [choice for choice in choices if choice.start_page <= page <= choice.end_page]
+    if not containing:
+        return None
+    return min(containing, key=lambda choice: (choice.page_count, choice.start_page, choice.label))
+
+
+def validate_sum_page_fields(
+    start_text: str,
+    end_text: str,
+    pages: Sequence[int],
+) -> SumRangeValidation:
+    start_raw = start_text.strip()
+    end_raw = end_text.strip()
+    if not start_raw or not end_raw:
+        return SumRangeValidation(None, None, (), "Enter start and end pages.")
+    if not start_raw.isdigit() or not end_raw.isdigit():
+        return SumRangeValidation(None, None, (), "Use digits only.")
+    start_page = int(start_raw)
+    end_page = int(end_raw)
+    if start_page > end_page:
+        return SumRangeValidation(start_page, end_page, (), "Start must be before end.")
+    targets = tuple(page for page in pages if start_page <= page <= end_page)
+    if not targets:
+        return SumRangeValidation(start_page, end_page, (), "No matching pages.")
+    return SumRangeValidation(start_page, end_page, targets, f"{len(targets)} pages")
 
 
 def _looks_like_record_prep(root: Path) -> bool:
@@ -1486,7 +1624,9 @@ class FocusViewState:
     ai_in_flight: bool = False
     ai_cancel_event: threading.Event | None = None
     ai_stream_thread: threading.Thread | None = None
-    ai_range_text: str = ""
+    ai_range_start_text: str = ""
+    ai_range_end_text: str = ""
+    ai_range_autofilled: bool = True
     extract_range_text: str = ""
     rag_question_text: str = ""
     rag_filter_chip_text: str = ""
@@ -2744,7 +2884,15 @@ class Focus(Adw.Application):
         self._last_ai_panel_chrome_height = -1
         self._ai_status_label: Gtk.Label | None = None
         self._ai_spinner: Gtk.Spinner | None = None
-        self._ai_range_entry: Gtk.Entry | None = None
+        self._ai_range_start_entry: Gtk.Entry | None = None
+        self._ai_range_end_entry: Gtk.Entry | None = None
+        self._ai_range_status_label: Gtk.Label | None = None
+        self._ai_range_submit_button: Gtk.Button | None = None
+        self._ai_range_section_button: Gtk.MenuButton | None = None
+        self._ai_range_section_popover: Gtk.Popover | None = None
+        self._record_range_choices: list[RecordRangeChoice] = []
+        self._ai_range_autofilled = True
+        self._ai_range_update_guard = False
         self._extract_range_entry: Gtk.Entry | None = None
         self._ai_profile_dropdowns: dict[str, Gtk.DropDown] = {}
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
@@ -2810,6 +2958,7 @@ class Focus(Adw.Application):
         self._page_cache.clear()
         self._page_search_cache.clear()
         self._page_search_map_cache.clear()
+        self._record_range_choices = load_record_range_choices(self._record_layout.root)
         text_dir = self.text_dir
         if not text_dir.exists():
             return
@@ -2821,6 +2970,10 @@ class Focus(Adw.Application):
                 num = int(m.group("num"))
                 self.page_to_path[num] = p
         self.pages = sorted(self.page_to_path.keys())
+        if self._ai_range_section_button:
+            self._ai_range_autofilled = True
+            self._refresh_sum_range_section_menu()
+            self._maybe_prefill_sum_range_for_current_page()
 
     def _current_toc_path(self) -> Path:
         return self.toc_path
@@ -3252,6 +3405,13 @@ class Focus(Adw.Application):
         qa_mode_button = self._build_ai_mode_button("Q & A", AI_VIEW_QA, "Ask questions about the record")
         ai_mode_strip.append(qa_mode_button)
 
+        summarize_mode_button = self._build_ai_mode_button(
+            "Sum",
+            AI_VIEW_SUMMARIZE,
+            "Summarize a page range",
+        )
+        ai_mode_strip.append(summarize_mode_button)
+
         self._minutes_summary_button = self._build_summary_mode_button(
             "Min",
             SUMMARY_SOURCE_MINUTES,
@@ -3287,39 +3447,62 @@ class Focus(Adw.Application):
         summarize_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         summarize_view.set_hexpand(True)
         summarize_view.set_vexpand(True)
-        summarize_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        summarize_controls.set_hexpand(True)
-        summarize_controls.set_valign(Gtk.Align.CENTER)
+        summarize_controls = self._build_wrapping_controls_box()
 
-        summarize_btn = Gtk.Button(label="Current Page")
-        summarize_btn.add_css_class("flat")
-        summarize_btn.add_css_class("no-bold")
-        summarize_btn.set_valign(Gtk.Align.CENTER)
-        summarize_btn.set_hexpand(False)
-        summarize_btn.set_halign(Gtk.Align.START)
-        summarize_btn.connect("clicked", self._on_summarize_page_clicked)
-        summarize_controls.append(summarize_btn)
-
-        summarize_controls.append(
-            self._build_ai_profile_dropdown(
-                TASK_PROFILE_PAGE,
-                "Model profile for current-page summaries.",
+        self._ai_range_section_button = Gtk.MenuButton()
+        self._ai_range_section_button.add_css_class("flat")
+        self._ai_range_section_button.add_css_class("no-bold")
+        self._ai_range_section_button.set_valign(Gtk.Align.CENTER)
+        self._ai_range_section_button.set_tooltip_text("Choose a record section")
+        self._ai_range_section_button.set_child(
+            Gtk.Image.new_from_icon_name(
+                self._choose_icon("view-list-symbolic", "open-menu-symbolic")
             )
         )
+        summarize_controls.insert(self._ai_range_section_button, -1)
 
-        self._ai_range_entry = Gtk.Entry()
-        self._ai_range_entry.set_placeholder_text("Page Range")
-        self._ai_range_entry.set_max_length(9)
-        self._ai_range_entry.set_hexpand(True)
-        self._ai_range_entry.connect("activate", self._on_summarize_range_activate)
-        summarize_controls.append(self._ai_range_entry)
+        from_label = Gtk.Label(label="From")
+        from_label.add_css_class("dim-label")
+        from_label.set_valign(Gtk.Align.CENTER)
+        summarize_controls.insert(from_label, -1)
 
-        summarize_controls.append(
-            self._build_ai_profile_dropdown(
-                TASK_PROFILE_RANGE,
-                "Model profile for page-range summaries.",
-            )
-        )
+        self._ai_range_start_entry = Gtk.Entry()
+        self._ai_range_start_entry.set_width_chars(5)
+        self._ai_range_start_entry.set_max_width_chars(5)
+        self._ai_range_start_entry.set_max_length(4)
+        self._ai_range_start_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self._ai_range_start_entry.set_alignment(1.0)
+        self._ai_range_start_entry.set_valign(Gtk.Align.CENTER)
+        self._ai_range_start_entry.set_placeholder_text("0001")
+        self._ai_range_start_entry.connect("changed", self._on_sum_range_field_changed)
+        self._ai_range_start_entry.connect("activate", self._on_summarize_range_activate)
+        summarize_controls.insert(self._ai_range_start_entry, -1)
+
+        to_label = Gtk.Label(label="To")
+        to_label.add_css_class("dim-label")
+        to_label.set_valign(Gtk.Align.CENTER)
+        summarize_controls.insert(to_label, -1)
+
+        self._ai_range_end_entry = Gtk.Entry()
+        self._ai_range_end_entry.set_width_chars(5)
+        self._ai_range_end_entry.set_max_width_chars(5)
+        self._ai_range_end_entry.set_max_length(4)
+        self._ai_range_end_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self._ai_range_end_entry.set_alignment(1.0)
+        self._ai_range_end_entry.set_valign(Gtk.Align.CENTER)
+        self._ai_range_end_entry.set_placeholder_text("0001")
+        self._ai_range_end_entry.connect("changed", self._on_sum_range_field_changed)
+        self._ai_range_end_entry.connect("activate", self._on_summarize_range_activate)
+        summarize_controls.insert(self._ai_range_end_entry, -1)
+
+        self._ai_range_status_label = Gtk.Label(label="")
+        self._ai_range_status_label.add_css_class("dim-label")
+        self._ai_range_status_label.set_valign(Gtk.Align.CENTER)
+        self._ai_range_status_label.set_xalign(0.0)
+        self._ai_range_status_label.set_width_chars(12)
+        self._ai_range_status_label.set_max_width_chars(32)
+        self._ai_range_status_label.set_ellipsize(Pango.EllipsizeMode.END)
+        summarize_controls.insert(self._ai_range_status_label, -1)
 
         summarize_range_btn = Gtk.Button(label="Submit")
         summarize_range_btn.add_css_class("flat")
@@ -3328,7 +3511,10 @@ class Focus(Adw.Application):
         summarize_range_btn.set_hexpand(False)
         summarize_range_btn.set_halign(Gtk.Align.START)
         summarize_range_btn.connect("clicked", self._on_summarize_range_button_clicked)
-        summarize_controls.append(summarize_range_btn)
+        self._ai_range_submit_button = summarize_range_btn
+        summarize_controls.insert(summarize_range_btn, -1)
+        self._refresh_sum_range_section_menu()
+        self._maybe_prefill_sum_range_for_current_page()
 
         extract_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         extract_view.set_hexpand(True)
@@ -3449,16 +3635,6 @@ class Focus(Adw.Application):
         ai_overflow_box.set_margin_bottom(6)
         ai_overflow_box.set_margin_start(6)
         ai_overflow_box.set_margin_end(6)
-
-        summarize_mode_button = Gtk.Button(label="Summarize")
-        summarize_mode_button.add_css_class("flat")
-        summarize_mode_button.add_css_class("no-bold")
-        summarize_mode_button.set_halign(Gtk.Align.FILL)
-        summarize_mode_button.connect(
-            "clicked",
-            lambda _button: self._on_ai_overflow_mode_clicked(self._ai_overflow_popover, AI_VIEW_SUMMARIZE),
-        )
-        ai_overflow_box.append(summarize_mode_button)
 
         extract_mode_button = Gtk.Button(label="Extract Information")
         extract_mode_button.add_css_class("flat")
@@ -4089,8 +4265,11 @@ class Focus(Adw.Application):
         state.ai_cancel_event = self._ai_cancel_event
         state.ai_stream_thread = self._ai_stream_thread
         state.sidebar_expanded = self._get_sidebar_expanded_keys()
-        if self._ai_range_entry:
-            state.ai_range_text = self._ai_range_entry.get_text()
+        if self._ai_range_start_entry:
+            state.ai_range_start_text = self._ai_range_start_entry.get_text()
+        if self._ai_range_end_entry:
+            state.ai_range_end_text = self._ai_range_end_entry.get_text()
+        state.ai_range_autofilled = self._ai_range_autofilled
         if self._extract_range_entry:
             state.extract_range_text = self._extract_range_entry.get_text()
         if self._rag_question_entry:
@@ -5176,6 +5355,117 @@ class Focus(Adw.Application):
         box.set_row_spacing(6)
         box.set_column_spacing(6)
         return box
+
+    def _refresh_sum_range_section_menu(self) -> None:
+        if not self._ai_range_section_button:
+            return
+        popover = Gtk.Popover()
+        popover.set_has_arrow(False)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+        if self._record_range_choices:
+            for choice in self._record_range_choices:
+                label = f"{choice.label} ({choice.start_page:04d}-{choice.end_page:04d})"
+                button = Gtk.Button(label=label)
+                button.add_css_class("flat")
+                button.add_css_class("no-bold")
+                button.set_halign(Gtk.Align.FILL)
+                button.connect("clicked", self._on_sum_range_choice_clicked, choice, popover)
+                box.append(button)
+            self._ai_range_section_button.set_sensitive(True)
+        else:
+            label = Gtk.Label(label="No record sections")
+            label.add_css_class("dim-label")
+            label.set_margin_top(6)
+            label.set_margin_bottom(6)
+            label.set_margin_start(6)
+            label.set_margin_end(6)
+            box.append(label)
+            self._ai_range_section_button.set_sensitive(False)
+        popover.set_child(box)
+        self._ai_range_section_popover = popover
+        self._ai_range_section_button.set_popover(popover)
+
+    def _on_sum_range_choice_clicked(
+        self,
+        _button: Gtk.Button,
+        choice: RecordRangeChoice,
+        popover: Gtk.Popover,
+    ) -> None:
+        self._set_sum_range_fields(choice.start_page, choice.end_page, autofilled=False)
+        self._refresh_sum_range_state(status=choice.label)
+        popover.popdown()
+
+    def _set_sum_range_fields(self, start_page: int, end_page: int, *, autofilled: bool) -> None:
+        if not self._ai_range_start_entry or not self._ai_range_end_entry:
+            return
+        self._ai_range_update_guard = True
+        try:
+            self._ai_range_start_entry.set_text(f"{start_page:04d}")
+            self._ai_range_end_entry.set_text(f"{end_page:04d}")
+        finally:
+            self._ai_range_update_guard = False
+        self._ai_range_autofilled = autofilled
+        state = self._current_view_state()
+        state.ai_range_start_text = self._ai_range_start_entry.get_text()
+        state.ai_range_end_text = self._ai_range_end_entry.get_text()
+        state.ai_range_autofilled = autofilled
+
+    def _sum_range_fields_empty(self) -> bool:
+        start_text = self._ai_range_start_entry.get_text().strip() if self._ai_range_start_entry else ""
+        end_text = self._ai_range_end_entry.get_text().strip() if self._ai_range_end_entry else ""
+        return not start_text and not end_text
+
+    def _current_page_number(self) -> int | None:
+        if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
+            return None
+        return self.pages[self.current_index]
+
+    def _maybe_prefill_sum_range_for_current_page(self) -> None:
+        if not self._ai_range_start_entry or not self._ai_range_end_entry:
+            return
+        if not self.pages:
+            self._refresh_sum_range_state()
+            return
+        if not self._ai_range_autofilled and not self._sum_range_fields_empty():
+            self._refresh_sum_range_state()
+            return
+        current_page = self._current_page_number()
+        if current_page is None:
+            self._refresh_sum_range_state()
+            return
+        choice = record_range_choice_for_page(self._record_range_choices, current_page)
+        if choice:
+            self._set_sum_range_fields(choice.start_page, choice.end_page, autofilled=True)
+            self._refresh_sum_range_state(status=choice.label)
+            return
+        self._set_sum_range_fields(current_page, current_page, autofilled=True)
+        self._refresh_sum_range_state(status="Current page")
+
+    def _sum_range_validation(self) -> SumRangeValidation:
+        start_text = self._ai_range_start_entry.get_text() if self._ai_range_start_entry else ""
+        end_text = self._ai_range_end_entry.get_text() if self._ai_range_end_entry else ""
+        return validate_sum_page_fields(start_text, end_text, self.pages)
+
+    def _refresh_sum_range_state(self, *, status: str | None = None) -> None:
+        validation = self._sum_range_validation()
+        if self._ai_range_submit_button:
+            self._ai_range_submit_button.set_sensitive(validation.valid)
+        if self._ai_range_status_label:
+            if status and validation.valid:
+                text = f"{status} - {len(validation.targets)} pages"
+            else:
+                text = validation.message
+            self._ai_range_status_label.set_text(text)
+
+    def _on_sum_range_field_changed(self, _entry: Gtk.Entry) -> None:
+        if not self._ai_range_update_guard:
+            self._ai_range_autofilled = False
+            self._current_view_state().ai_range_autofilled = False
+        self._refresh_sum_range_state()
 
     def _build_ai_output_view(self, view_name: str) -> Gtk.ScrolledWindow:
         state = self._get_ai_output_state(view_name)
@@ -6879,6 +7169,8 @@ class Focus(Adw.Application):
             self._show_image_update_visible()
         self._update_header()
         self._sync_sidebar_active_page(scroll=True)
+        if self._ai_active_view == AI_VIEW_SUMMARIZE:
+            self._maybe_prefill_sum_range_for_current_page()
         if self._grep_hits.get(page):
             self._scroll_to_current_grep_match()
 
@@ -8159,6 +8451,8 @@ class Focus(Adw.Application):
         if target == AI_VIEW_FILE:
             self._restore_summary_scroll_position(self._summary_loaded_path)
             self._update_summary_progress_label()
+        elif target == AI_VIEW_SUMMARIZE:
+            self._maybe_prefill_sum_range_for_current_page()
 
     def _ensure_summary_for_active_view(self) -> None:
         state = self._current_view_state()
@@ -8244,18 +8538,16 @@ class Focus(Adw.Application):
         if not self.pages:
             self._ai_transient_toast("No pages available to summarize.")
             return
-        if not self._ai_range_entry:
+        if not self._ai_range_start_entry or not self._ai_range_end_entry:
             return
-        raw = self._ai_range_entry.get_text().strip()
-        page_range = self._parse_page_range(raw)
-        if page_range is None:
-            self._ai_transient_toast("Enter a page range like 10-25.")
+        validation = self._sum_range_validation()
+        self._refresh_sum_range_state()
+        if not validation.valid or validation.start_page is None or validation.end_page is None:
+            self._ai_transient_toast(validation.message)
             return
-        start_page, end_page = page_range
-        targets = [p for p in self.pages if start_page <= p <= end_page]
-        if not targets:
-            self._ai_transient_toast("No matching pages found in that range.")
-            return
+        start_page = validation.start_page
+        end_page = validation.end_page
+        targets = validation.targets
         self._set_ai_view(AI_VIEW_SUMMARIZE)
         parts: list[str] = []
         for page in targets:
@@ -8267,9 +8559,9 @@ class Focus(Adw.Application):
             label=label,
             content=combined,
             prompt_kind="range",
-            profile_key=self._selected_ai_profile_key(TASK_PROFILE_RANGE),
         )
-        self._ai_range_entry.set_text("")
+        self._ai_range_autofilled = True
+        self._current_view_state().ai_range_autofilled = True
 
     def _parse_page_range(self, raw: str) -> tuple[int, int] | None:
         if not raw:
