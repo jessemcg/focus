@@ -208,6 +208,11 @@ RECORD_FONT_FAMILY_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Georgia", 'Georgia, "Times New Roman", "Liberation Serif", serif'),
     ("Merriweather", '"Merriweather", "Noto Serif", "Liberation Serif", serif'),
     ("Source Sans 3", '"Source Sans 3", "Noto Sans", "Liberation Sans", sans-serif'),
+    (
+        "Century Schoolbook",
+        '"Century Schoolbook", "TeX Gyre Schola", "New Century Schoolbook", '
+        '"Century Schoolbook L", "URW Schoolbook L", serif',
+    ),
 )
 DEFAULT_RECORD_FONT_FAMILY_NAME = RECORD_FONT_FAMILY_OPTIONS[0][0]
 DEFAULT_FONT_SIZE_PT = 11
