@@ -417,9 +417,8 @@ def _action_command(
 
 
 CONTINUOUS_PAGE_BATCH = 25
-CONTINUOUS_DIVIDER_GLYPH = "─"
-PAGE_MARKER_SIDE_WIDTH = 12
-PAGE_MARKER_FG_COLOR = "#667085"
+PAGE_MARKER_BG_COLOR = "#eef2f7"
+PAGE_MARKER_FG_COLOR = "#1f2937"
 CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 MONTH_NAME_TO_NUMBER = {
     "january": 1,
@@ -2395,9 +2394,7 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
 PAGE_RE = re.compile(r"^(?P<num>\d{4})\.txt$")
 PAGE_HEADER_LINE_RE = re.compile(r"^(?P<num>\d{4})(?P<rest>[^\n]*)\n\n", re.MULTILINE)
 PAGE_MARKER_LINE_RE = re.compile(
-    rf"^(?P<left>{CONTINUOUS_DIVIDER_GLYPH}+[ \t]+)"
-    r"(?P<label>Page (?P<num>\d{4}))"
-    rf"(?P<right>[ \t]+{CONTINUOUS_DIVIDER_GLYPH}+)\n\n",
+    r"^(?P<label>(?P<num>\d{4}))\n\n",
     re.MULTILINE,
 )
 IMAGE_PAGE_SELECTION_RE = re.compile(r"^\s*(\d{1,4})(?:\s*-\s*(\d{1,4}))?\s*$")
@@ -4534,17 +4531,18 @@ class Focus(Adw.Application):
             return
         tag = table.lookup("multi-page-marker")
         if tag is None:
-            tag = buf.create_tag(
-                "multi-page-marker",
-                foreground=PAGE_MARKER_FG_COLOR,
-                justification=Gtk.Justification.CENTER,
-                pixels_above_lines=12,
-                pixels_below_lines=10,
-                scale=0.88,
-            )
+            tag = buf.create_tag("multi-page-marker")
+        tag.set_property("foreground", PAGE_MARKER_FG_COLOR)
+        tag.set_property("paragraph-background", PAGE_MARKER_BG_COLOR)
+        tag.set_property("justification", Gtk.Justification.LEFT)
+        tag.set_property("left-margin", 14)
+        tag.set_property("pixels-above-lines", 6)
+        tag.set_property("pixels-below-lines", 5)
+        tag.set_property("weight", Pango.Weight.NORMAL)
+        tag.set_property("scale", 0.92)
         for match in PAGE_MARKER_LINE_RE.finditer(text):
             start_iter = buf.get_iter_at_offset(start_offset + match.start())
-            end_iter = buf.get_iter_at_offset(start_offset + match.end("right"))
+            end_iter = buf.get_iter_at_offset(start_offset + match.end("label"))
             buf.apply_tag(tag, start_iter, end_iter)
 
     def _apply_markdown_spans(
@@ -7206,8 +7204,7 @@ class Focus(Adw.Application):
         return content.replace("\r\n", "\n").replace("\r", "\n")
 
     def _multi_page_marker_text(self, page: int) -> str:
-        side = CONTINUOUS_DIVIDER_GLYPH * PAGE_MARKER_SIDE_WIDTH
-        return f"{side} Page {page:04d} {side}"
+        return f"{page:04d}"
 
     def _multi_page_header_text(self, page: int) -> str:
         return f"{self._multi_page_marker_text(page)}\n\n"
