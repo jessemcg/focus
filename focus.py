@@ -225,6 +225,8 @@ SIDEBAR_TREE_INDENT = 10
 SIDEBAR_ACTIVE_SCROLL_MARGIN = 24
 AI_OUTPUT_MIN_HEIGHT = 140
 AI_OUTPUT_MAX_HEIGHT = 480
+AI_OUTPUT_COLLAPSED_HEIGHT = 0
+EMBEDDED_AI_OUTPUT_MIN_HEIGHT = 36
 AI_OUTPUT_LINE_HEIGHT = 1.25
 PAGE_LINK_COLOR = "#1a5fb4"
 AI_BLOCKQUOTE_LEFT_MARGIN = 24
@@ -2879,6 +2881,7 @@ class Focus(Adw.Application):
         self._ai_controls_stack: Gtk.Stack | None = None
         self._ai_output_scrollers: list[Gtk.ScrolledWindow] = []
         self._ai_panel_resize_tick_id: int | None = None
+        self._ai_panel_layout_idle_id: int | None = None
         self._last_ai_panel_host_height = -1
         self._last_ai_panel_target_height = -1
         self._last_ai_panel_chrome_height = -1
@@ -4025,10 +4028,17 @@ class Focus(Adw.Application):
 
     def _reset_ai_output_scroller_sizing(self) -> None:
         for scroller in self._ai_output_scrollers:
+            scroller.set_visible(True)
             scroller.set_size_request(-1, -1)
             scroller.set_propagate_natural_height(True)
             scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
             scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
+        if self._summary_scroller:
+            self._summary_scroller.set_visible(True)
+            self._summary_scroller.set_size_request(-1, -1)
+            self._summary_scroller.set_propagate_natural_height(True)
+            self._summary_scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
+            self._summary_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
 
     def _reset_embedded_ai_panel_sizing(self) -> None:
         if self._ai_panel_revealer:
@@ -4040,6 +4050,82 @@ class Focus(Adw.Application):
         self._reset_ai_output_scroller_sizing()
         self._last_ai_panel_target_height = -1
         self._last_ai_panel_chrome_height = -1
+
+    @staticmethod
+    def _widget_natural_height(widget: Gtk.Widget | None) -> int:
+        if widget is None:
+            return 0
+        allocated_width = max(0, int(widget.get_width()))
+        for_size = allocated_width if allocated_width > 0 else -1
+        try:
+            _minimum, natural, _min_baseline, _nat_baseline = widget.measure(
+                Gtk.Orientation.VERTICAL,
+                for_size,
+            )
+            return max(0, int(natural))
+        except Exception:
+            return max(0, int(widget.get_height()))
+
+    def _active_ai_output_scroller(self) -> tuple[Gtk.ScrolledWindow | None, bool]:
+        active_view = (
+            self._ai_view_stack.get_visible_child_name()
+            if self._ai_view_stack
+            else self._ai_active_view
+        )
+        if active_view == AI_VIEW_FILE:
+            return self._summary_scroller, bool(self._summary_raw.strip())
+        output_state = self._ai_outputs.get(active_view or "")
+        if output_state is None:
+            return None, False
+        return output_state.scroller, bool(output_state.raw.strip())
+
+    def _embedded_ai_output_min_height(self, max_height: int) -> int:
+        if max_height <= 0:
+            return 0
+        return min(EMBEDDED_AI_OUTPUT_MIN_HEIGHT, max_height)
+
+    def _sync_embedded_ai_output_scrollers(self, max_height: int) -> None:
+        active_scroller, has_output = self._active_ai_output_scroller()
+        for scroller in self._ai_output_scrollers:
+            is_active = scroller is active_scroller
+            show_output = bool(is_active and has_output)
+            scroller.set_visible(show_output)
+            scroller.set_propagate_natural_height(True)
+            scroller.set_size_request(-1, -1)
+            if show_output:
+                min_height = self._embedded_ai_output_min_height(max_height)
+                scroller.set_min_content_height(min_height)
+                scroller.set_max_content_height(max(min_height, max_height))
+            else:
+                scroller.set_min_content_height(AI_OUTPUT_COLLAPSED_HEIGHT)
+                scroller.set_max_content_height(AI_OUTPUT_COLLAPSED_HEIGHT)
+        if self._summary_scroller:
+            is_active = self._summary_scroller is active_scroller
+            show_output = bool(is_active and has_output)
+            self._summary_scroller.set_visible(show_output)
+            self._summary_scroller.set_propagate_natural_height(True)
+            self._summary_scroller.set_size_request(-1, -1)
+            if show_output:
+                min_height = self._embedded_ai_output_min_height(max_height)
+                self._summary_scroller.set_min_content_height(min_height)
+                self._summary_scroller.set_max_content_height(max(min_height, max_height))
+            else:
+                self._summary_scroller.set_min_content_height(AI_OUTPUT_COLLAPSED_HEIGHT)
+                self._summary_scroller.set_max_content_height(AI_OUTPUT_COLLAPSED_HEIGHT)
+
+    def _queue_embedded_ai_panel_height_update(self) -> None:
+        if self._is_ai_panel_detached():
+            return
+        if not self._ai_panel_revealer or not self._ai_panel_revealer.get_reveal_child():
+            return
+        if self._ai_panel_layout_idle_id is not None:
+            return
+        self._ai_panel_layout_idle_id = GLib.idle_add(self._update_embedded_ai_panel_height_idle)
+
+    def _update_embedded_ai_panel_height_idle(self) -> bool:
+        self._ai_panel_layout_idle_id = None
+        self._update_embedded_ai_panel_height(force=True)
+        return False
 
     def _current_ai_panel_chrome_height(self) -> int:
         if self._ai_panel_root and self._ai_view_stack:
@@ -4069,8 +4155,15 @@ class Focus(Adw.Application):
             return
         chrome_height = self._current_ai_panel_chrome_height()
         margins = self._ai_panel_root.get_margin_top() + self._ai_panel_root.get_margin_bottom()
-        target_panel_height = max(0, host_height // EMBEDDED_AI_PANEL_HEIGHT_DIVISOR)
-        target_root_height = max(0, target_panel_height - margins)
+        max_panel_height = max(0, host_height // EMBEDDED_AI_PANEL_HEIGHT_DIVISOR)
+        max_root_height = max(0, max_panel_height - margins)
+        max_stack_height = max(0, max_root_height - chrome_height)
+        self._ai_panel_root.set_size_request(-1, -1)
+        self._ai_view_stack.set_size_request(-1, -1)
+        self._sync_embedded_ai_output_scrollers(max_stack_height)
+        natural_root_height = self._widget_natural_height(self._ai_panel_root)
+        target_root_height = min(max_root_height, max(0, natural_root_height))
+        target_panel_height = min(max_panel_height, target_root_height + margins)
         target_stack_height = max(0, target_root_height - chrome_height)
         if (
             not force
@@ -4084,11 +4177,16 @@ class Focus(Adw.Application):
             self._ai_panel_revealer.set_size_request(-1, target_panel_height)
         self._ai_panel_root.set_size_request(-1, target_root_height)
         self._ai_view_stack.set_size_request(-1, target_stack_height)
-        for scroller in self._ai_output_scrollers:
-            scroller.set_propagate_natural_height(False)
-            scroller.set_min_content_height(0)
-            scroller.set_max_content_height(target_stack_height)
-            scroller.set_size_request(-1, target_stack_height)
+        active_scroller, has_output = self._active_ai_output_scroller()
+        if active_scroller and has_output:
+            min_output_height = self._embedded_ai_output_min_height(target_stack_height)
+            output_height = min(
+                max(0, target_stack_height),
+                max(min_output_height, self._widget_natural_height(active_scroller)),
+            )
+            active_scroller.set_size_request(-1, output_height)
+        self._ai_panel_root.queue_resize()
+        self._ai_view_stack.queue_resize()
 
     def _on_ai_panel_resize_tick(
         self,
@@ -4112,6 +4210,9 @@ class Focus(Adw.Application):
         if self.win and self._ai_panel_resize_tick_id is not None:
             self.win.remove_tick_callback(self._ai_panel_resize_tick_id)
         self._ai_panel_resize_tick_id = None
+        if self._ai_panel_layout_idle_id is not None:
+            GLib.source_remove(self._ai_panel_layout_idle_id)
+            self._ai_panel_layout_idle_id = None
 
     def _update_ai_detach_button(self) -> None:
         if not self._ai_detach_button:
@@ -8707,6 +8808,7 @@ class Focus(Adw.Application):
             return
         self._rag_filter_chip.set_label(normalized)
         self._rag_filter_chip.set_visible(bool(normalized))
+        self._queue_embedded_ai_panel_height_update()
 
     def _set_rag_filter_chip_idle(self, text: str | None) -> bool:
         self._set_rag_filter_chip(text)
@@ -8929,6 +9031,7 @@ class Focus(Adw.Application):
         self._refresh_summary_search(reset_active=True)
         self._refresh_summary_actions_state()
         self._show_summary_view(switch_view=switch_view)
+        self._queue_embedded_ai_panel_height_update()
 
     def _build_summary_print_font(self) -> Pango.FontDescription:
         font_desc = Pango.FontDescription()
@@ -9824,6 +9927,7 @@ class Focus(Adw.Application):
             self._set_ai_view(target)
         state.raw = text or ""
         self._apply_ai_output_links(state.raw, state)
+        self._queue_embedded_ai_panel_height_update()
 
     def _set_ai_output_text_idle(
         self,
@@ -9849,6 +9953,7 @@ class Focus(Adw.Application):
         state = self._get_ai_output_state(target)
         state.raw = new_raw
         self._apply_ai_output_links(state.raw, state)
+        self._queue_embedded_ai_panel_height_update()
         if target == AI_VIEW_QA:
             self._scroll_ai_output_to_bottom(target)
         self._update_ai_status("Streaming…", spinning=True)
