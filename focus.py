@@ -2151,7 +2151,7 @@ button.focus-hover-zone {
 }
 
 button.focus-image-hover-zone {
-  background-color: rgba(128, 128, 128, 0.12);
+  background-color: rgba(128, 128, 128, 0.00);
 }
 
 button.focus-hover-zone:hover,
@@ -2161,14 +2161,22 @@ button.focus-hover-zone:active {
 }
 
 button.focus-image-hover-zone:hover,
+button.focus-image-hover-zone.hover,
 button.focus-image-hover-zone:active {
-  background-color: rgba(128, 128, 128, 0.16);
+  background-color: rgba(128, 128, 128, 0.12);
 }
 
 button.focus-hover-zone label.focus-hover-label {
-  color: rgba(95, 95, 95, 0.62);
+  color: rgba(95, 95, 95, 0.00);
   font-size: 11px;
   font-weight: 500;
+  transition: color 120ms ease;
+}
+
+button.focus-hover-zone:hover label.focus-hover-label,
+button.focus-hover-zone.hover label.focus-hover-label,
+button.focus-hover-zone:active label.focus-hover-label {
+  color: rgba(95, 95, 95, 0.62);
 }
 
 box.focus-hover-summary-card {
@@ -3311,7 +3319,7 @@ class Focus(Adw.Application):
         self._image_hover_zone.set_size_request(-1, HOVER_CONTROL_HEIGHT)
         self._image_hover_zone.set_can_target(True)
         self._image_hover_zone.set_focus_on_click(False)
-        image_hover_label = Gtk.Label(label="Show Image")
+        image_hover_label = Gtk.Label(label="Image View")
         image_hover_label.add_css_class("focus-hover-label")
         image_hover_label.set_halign(Gtk.Align.CENTER)
         image_hover_label.set_valign(Gtk.Align.START)
@@ -6039,14 +6047,20 @@ class Focus(Adw.Application):
             self._update_image_hover_zone_visible()
             return
         self._image_hover_peek_active = True
+        if self._image_hover_zone:
+            self._image_hover_zone.add_css_class("hover")
         if not self._set_show_image(True, silent=True):
             self._image_hover_peek_active = False
+            if self._image_hover_zone:
+                self._image_hover_zone.remove_css_class("hover")
             self._update_image_hover_zone_visible()
 
     def _end_image_hover_peek(self) -> None:
         if not self._image_hover_peek_active:
             return
         self._image_hover_peek_active = False
+        if self._image_hover_zone:
+            self._image_hover_zone.remove_css_class("hover")
         if self._show_image:
             self._set_show_image(False, silent=True)
         else:
