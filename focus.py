@@ -1595,7 +1595,7 @@ class FocusViewState:
     current_index: int = 0
     show_image: bool = False
     sidebar_visible: bool = True
-    ai_panel_visible: bool = False
+    ai_panel_visible: bool = True
     continuous_view: bool = False
     continuous_text: str | None = None
     continuous_pages_order: list[int] = field(default_factory=list)
@@ -3092,7 +3092,7 @@ class Focus(Adw.Application):
         self._ai_panel_toggle.set_child(self._build_header_icon(*CASE_TOOLS_ICON_CHOICES))
         self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+Q)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
-        self._set_ai_panel_visible(False)
+        self._set_ai_panel_visible(self._current_view_state().ai_panel_visible)
         left_box.append(self._ai_panel_toggle)
 
         self._ai_detach_button = Gtk.ToggleButton()
@@ -3990,7 +3990,9 @@ class Focus(Adw.Application):
             return
         self._detach_widget_from_parent(self._ai_panel_root)
         self._ai_panel_revealer.set_child(self._ai_panel_root)
-        if self._current_view_state().ai_panel_visible:
+        visible = self._current_view_state().ai_panel_visible
+        self._ai_panel_revealer.set_reveal_child(visible)
+        if visible:
             self._update_embedded_ai_panel_height(force=True)
         else:
             self._reset_embedded_ai_panel_sizing()
