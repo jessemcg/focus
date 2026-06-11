@@ -768,9 +768,38 @@ class RecordLayout:
     text_dir: Path
     images_dir: Path
     toc_path: Path
+    transcript_page_numbers_path: Path
+    transcript_page_number_series_path: Path
     rag_vector_dir: Path | None
     rag_case_overview_path: Path | None
     is_record_prep: bool
+
+
+@dataclass(frozen=True)
+class TranscriptPageLabel:
+    file_page: int
+    transcript_page_number: int
+    citation_prefix: str
+    citation_label: str
+    citation_key: str
+    record_type: str
+    series_id: str
+    series_description: str
+    status: str
+
+
+@dataclass(frozen=True)
+class TranscriptPageJumpQuery:
+    kind: str
+    page_number: int
+    citation_prefix: str = ""
+
+
+@dataclass(frozen=True)
+class TranscriptPageIndex:
+    by_file_page: dict[int, TranscriptPageLabel]
+    by_transcript_number: dict[int, tuple[TranscriptPageLabel, ...]]
+    by_citation_key: dict[str, tuple[TranscriptPageLabel, ...]]
 
 
 @dataclass(frozen=True)
@@ -859,6 +888,181 @@ def _coerce_record_page(value: Any) -> int | None:
     if page <= 0:
         return None
     return page
+
+
+def _normalize_citation_prefix(value: Any) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", "", str(value).strip()).upper()
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if isinstance(value, int):
+        page = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        page = int(value.strip())
+    else:
+        return None
+    if page <= 0:
+        return None
+    return page
+
+
+def _citation_key(prefix: str, page_number: int) -> str:
+    normalized = _normalize_citation_prefix(prefix)
+    return f"{normalized}:{page_number}" if normalized else str(page_number)
+
+
+def _caption_for_transcript_series(series: dict[str, Any]) -> str:
+    for key in ("definition_draft", "prefix_reason", "description", "series_label"):
+        value = series.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _transcript_page_numbers_path(
+    root: Path,
+    manifest: dict[str, Any],
+) -> Path:
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    return (
+        _path_from_manifest(files.get("transcript_page_numbers"), root)
+        or root / "artifacts" / "transcript_page_numbers.json"
+    )
+
+
+def _transcript_page_number_series_path(
+    root: Path,
+    manifest: dict[str, Any],
+) -> Path:
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    return (
+        _path_from_manifest(files.get("transcript_page_number_series"), root)
+        or root / "artifacts" / "transcript_page_number_series.md"
+    )
+
+
+def load_transcript_page_index(path: Path) -> TranscriptPageIndex:
+    if not path.exists():
+        return TranscriptPageIndex({}, {}, {})
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return TranscriptPageIndex({}, {}, {})
+    if not isinstance(data, dict):
+        return TranscriptPageIndex({}, {}, {})
+
+    series_by_id: dict[str, dict[str, Any]] = {}
+    series_items = data.get("citation_series")
+    if not isinstance(series_items, list):
+        series_items = data.get("sequences")
+    if isinstance(series_items, list):
+        for item in series_items:
+            if not isinstance(item, dict):
+                continue
+            series_id = str(item.get("series_id") or item.get("sequence_id") or "").strip()
+            if series_id:
+                series_by_id[series_id] = item
+
+    by_file_page: dict[int, TranscriptPageLabel] = {}
+    by_transcript_number: dict[int, list[TranscriptPageLabel]] = {}
+    by_citation_key: dict[str, list[TranscriptPageLabel]] = {}
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return TranscriptPageIndex({}, {}, {})
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status") or "").strip().lower()
+        if status and status != "selected":
+            continue
+        file_page = _coerce_positive_int(entry.get("file_page"))
+        transcript_page_number = _coerce_positive_int(
+            entry.get("transcript_page_number")
+            or entry.get("page_number")
+            or entry.get("transcript_page_label")
+        )
+        if file_page is None or transcript_page_number is None:
+            continue
+        series_id = str(
+            entry.get("citation_series_id")
+            or entry.get("series_id")
+            or entry.get("sequence_id")
+            or ""
+        ).strip()
+        series = series_by_id.get(series_id, {})
+        record_type = _normalize_citation_prefix(
+            entry.get("record_type") or series.get("record_type")
+        )
+        citation_prefix = _normalize_citation_prefix(
+            entry.get("citation_prefix") or series.get("citation_prefix") or record_type
+        )
+        citation_key = str(entry.get("citation_key") or "").strip()
+        if not citation_key:
+            citation_key = _citation_key(citation_prefix, transcript_page_number)
+        else:
+            parts = citation_key.split(":", 1)
+            if len(parts) == 2 and parts[1].strip().isdigit():
+                citation_key = _citation_key(parts[0], int(parts[1].strip()))
+        citation_label = str(entry.get("citation_label") or "").strip()
+        if not citation_label:
+            citation_label = (
+                f"{citation_prefix} {transcript_page_number}"
+                if citation_prefix
+                else str(transcript_page_number)
+            )
+        label = TranscriptPageLabel(
+            file_page=file_page,
+            transcript_page_number=transcript_page_number,
+            citation_prefix=citation_prefix,
+            citation_label=citation_label,
+            citation_key=citation_key,
+            record_type=record_type,
+            series_id=series_id,
+            series_description=_caption_for_transcript_series(series),
+            status=status or "selected",
+        )
+        by_file_page[file_page] = label
+        by_transcript_number.setdefault(transcript_page_number, []).append(label)
+        by_citation_key.setdefault(citation_key, []).append(label)
+
+    by_transcript_tuple = {
+        page: tuple(sorted(labels, key=lambda item: item.file_page))
+        for page, labels in by_transcript_number.items()
+    }
+    by_key_tuple = {
+        key: tuple(sorted(labels, key=lambda item: item.file_page))
+        for key, labels in by_citation_key.items()
+    }
+    return TranscriptPageIndex(by_file_page, by_transcript_tuple, by_key_tuple)
+
+
+PAGE_JUMP_FILE_RE = re.compile(r"^(?:p|file)\s*:?\s*(\d{1,8})$", re.IGNORECASE)
+PAGE_JUMP_CITATION_RE = re.compile(
+    r"^([A-Za-z0-9]+(?:\s+[A-Za-z]+)?)\s*:?\s+(\d{1,8})$",
+    re.IGNORECASE,
+)
+
+
+def parse_transcript_page_jump_query(text: str) -> TranscriptPageJumpQuery | None:
+    target = text.strip()
+    if not target:
+        return None
+    file_match = PAGE_JUMP_FILE_RE.match(target)
+    if file_match:
+        return TranscriptPageJumpQuery("file", int(file_match.group(1)))
+    if target.isdigit():
+        return TranscriptPageJumpQuery("bare", int(target))
+    citation_match = PAGE_JUMP_CITATION_RE.match(target)
+    if citation_match:
+        return TranscriptPageJumpQuery(
+            "citation",
+            int(citation_match.group(2)),
+            _normalize_citation_prefix(citation_match.group(1)),
+        )
+    return None
 
 
 def _boundary_path(
@@ -967,6 +1171,8 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
     text_dir = _path_from_manifest(dirs.get("text_pages"), root) or root / "text_pages"
     images_dir = _path_from_manifest(dirs.get("image_pages"), root) or root / "image_pages"
     toc_path = _path_from_manifest(files.get("toc"), root) or root / "artifacts" / "toc.txt"
+    transcript_page_numbers_path = _transcript_page_numbers_path(root, manifest)
+    transcript_page_number_series_path = _transcript_page_number_series_path(root, manifest)
     rag_vector_dir = (
         _path_from_manifest(rag.get("vector_database"), root)
         or root / "rag" / "vector_database"
@@ -980,6 +1186,8 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
         text_dir=text_dir,
         images_dir=images_dir,
         toc_path=toc_path,
+        transcript_page_numbers_path=transcript_page_numbers_path,
+        transcript_page_number_series_path=transcript_page_number_series_path,
         rag_vector_dir=rag_vector_dir,
         rag_case_overview_path=rag_case_overview_path,
         is_record_prep=True,
@@ -1000,6 +1208,8 @@ def _resolve_record_layout(root: Path) -> RecordLayout:
         text_dir=text_dir,
         images_dir=images_dir,
         toc_path=toc_path,
+        transcript_page_numbers_path=root / "artifacts" / "transcript_page_numbers.json",
+        transcript_page_number_series_path=root / "artifacts" / "transcript_page_number_series.md",
         rag_vector_dir=None,
         rag_case_overview_path=None,
         is_record_prep=False,
@@ -2724,10 +2934,13 @@ class Focus(Adw.Application):
 
         self.pages: list[int] = []
         self.page_to_path: dict[int, Path] = {}
+        self._transcript_page_index = TranscriptPageIndex({}, {}, {})
         self.current_index: int = 0
 
         self.win: Adw.ApplicationWindow | None = None
         self._ai_panel_window: Adw.ApplicationWindow | None = None
+        self._transcript_breakdown_window: Adw.ApplicationWindow | None = None
+        self._transcript_breakdown_buffer: Gtk.TextBuffer | None = None
         self._shortcuts_window: Gtk.ShortcutsWindow | None = None
         self._commands_window: FocusCommandsWindow | None = None
         self._input_dir_dialog: Gtk.FileDialog | None = None
@@ -2789,7 +3002,9 @@ class Focus(Adw.Application):
         self._page_back_one_button: Gtk.Button | None = None
         self._page_forward_one_button: Gtk.Button | None = None
         self._page_number_entry: Gtk.Entry | None = None
+        self._page_jump_popover: Gtk.Popover | None = None
         self._page_total_label: Gtk.Label | None = None
+        self._transcript_breakdown_button: Gtk.Button | None = None
         self._grep_prev_hit_button: Gtk.Button | None = None
         self._grep_next_hit_button: Gtk.Button | None = None
         self._grep_hit_label: Gtk.Label | None = None
@@ -2945,6 +3160,10 @@ class Focus(Adw.Application):
     def toc_path(self) -> Path:
         return self._record_layout.toc_path
 
+    @property
+    def transcript_page_number_series_path(self) -> Path:
+        return self._record_layout.transcript_page_number_series_path
+
     def _choose_icon(self, *names: str) -> str:
         if not names:
             return ""
@@ -2972,6 +3191,9 @@ class Focus(Adw.Application):
         self._page_search_cache.clear()
         self._page_search_map_cache.clear()
         self._record_range_choices = load_record_range_choices(self._record_layout.root)
+        self._transcript_page_index = load_transcript_page_index(
+            self._record_layout.transcript_page_numbers_path
+        )
         text_dir = self.text_dir
         if not text_dir.exists():
             return
@@ -3778,12 +4000,14 @@ class Focus(Adw.Application):
         paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
         self._page_number_entry = Gtk.Entry()
-        self._page_number_entry.set_width_chars(5)
-        self._page_number_entry.set_max_width_chars(5)
-        self._page_number_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self._page_number_entry.set_width_chars(9)
+        self._page_number_entry.set_max_width_chars(12)
+        self._page_number_entry.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
         self._page_number_entry.set_alignment(1.0)
         self._page_number_entry.set_valign(Gtk.Align.CENTER)
-        self._page_number_entry.set_tooltip_text("Type a page number and press Enter (Ctrl+E)")
+        self._page_number_entry.set_tooltip_text(
+            "Type a record page, citation page, or file page and press Enter (Ctrl+E)"
+        )
         self._page_number_entry.connect("activate", self._on_page_number_activate)
         paginator.append(self._page_number_entry)
 
@@ -3792,6 +4016,23 @@ class Focus(Adw.Application):
         self._page_total_label.set_xalign(0.0)
         self._page_total_label.set_valign(Gtk.Align.CENTER)
         paginator.append(self._page_total_label)
+
+        self._transcript_breakdown_button = Gtk.Button()
+        self._transcript_breakdown_button.add_css_class("flat")
+        self._transcript_breakdown_button.set_valign(Gtk.Align.CENTER)
+        self._transcript_breakdown_button.set_child(
+            self._build_header_icon(
+                "dialog-information-symbolic",
+                "help-about-symbolic",
+                "help-browser-symbolic",
+            )
+        )
+        self._transcript_breakdown_button.set_tooltip_text("Show transcript page breakdown")
+        self._transcript_breakdown_button.connect(
+            "clicked", self._on_transcript_breakdown_clicked
+        )
+        paginator.append(self._transcript_breakdown_button)
+        self._refresh_transcript_breakdown_button()
 
         trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         trailing_controls.set_valign(Gtk.Align.CENTER)
@@ -5538,6 +5779,19 @@ class Focus(Adw.Application):
             return None
         return self.pages[self.current_index]
 
+    def _current_transcript_page_label(self) -> TranscriptPageLabel | None:
+        current_page = self._current_page_number()
+        if current_page is None:
+            return None
+        return self._transcript_page_index.by_file_page.get(current_page)
+
+    def _current_page_entry_text(self) -> str:
+        label = self._current_transcript_page_label()
+        if label:
+            return label.citation_label
+        current_page = self._current_page_number()
+        return str(current_page) if current_page is not None else ""
+
     def _maybe_prefill_sum_range_for_current_page(self) -> None:
         if not self._ai_range_start_entry or not self._ai_range_end_entry:
             return
@@ -7146,13 +7400,13 @@ class Focus(Adw.Application):
             self._page_forward_one_button.set_sensitive(enabled)
         if self._page_number_entry:
             self._page_number_entry.set_sensitive(bool(self.pages))
+        self._refresh_transcript_breakdown_button()
         if self._page_total_label and self._page_number_entry:
             if self.pages and 0 <= self.current_index < len(self.pages):
                 current_page = self.pages[self.current_index]
-                total_pages = len(self.pages)
                 if not self._page_number_entry.has_focus():
-                    self._page_number_entry.set_text(str(current_page))
-                self._page_total_label.set_text(f"/ {total_pages}")
+                    self._page_number_entry.set_text(self._current_page_entry_text())
+                self._page_total_label.set_text(f"/{current_page}.txt")
             else:
                 if not self._page_number_entry.has_focus():
                     self._page_number_entry.set_text("")
@@ -7223,6 +7477,81 @@ class Focus(Adw.Application):
         except Exception as exc:  # noqa: BLE001
             content = f"Error reading {path.name}: {exc}"
         return content.replace("\r\n", "\n").replace("\r", "\n")
+
+    def _transcript_breakdown_available(self) -> bool:
+        return self.transcript_page_number_series_path.is_file()
+
+    def _refresh_transcript_breakdown_button(self) -> None:
+        if not self._transcript_breakdown_button:
+            return
+        self._transcript_breakdown_button.set_visible(self._transcript_breakdown_available())
+
+    def _ensure_transcript_breakdown_window(self) -> Adw.ApplicationWindow:
+        if self._transcript_breakdown_window:
+            return self._transcript_breakdown_window
+
+        window = Adw.ApplicationWindow(application=self, title="Transcript Page Breakdown")
+        window.set_default_size(760, 560)
+        window.set_resizable(True)
+        if self.win:
+            window.set_transient_for(self.win)
+
+        view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.add_css_class("flat")
+        header.set_title_widget(Adw.WindowTitle(title="Transcript Page Breakdown"))
+        view.add_top_bar(header)
+
+        text_view = Gtk.TextView()
+        text_view.set_editable(False)
+        text_view.set_cursor_visible(False)
+        text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        text_view.set_top_margin(16)
+        text_view.set_bottom_margin(16)
+        text_view.set_left_margin(18)
+        text_view.set_right_margin(18)
+        self._transcript_breakdown_buffer = text_view.get_buffer()
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_hexpand(True)
+        scroller.set_vexpand(True)
+        scroller.set_child(text_view)
+        view.set_content(scroller)
+
+        window.set_content(view)
+        window.connect("close-request", self._on_transcript_breakdown_closed)
+        self._transcript_breakdown_window = window
+        return window
+
+    def _on_transcript_breakdown_closed(self, _window: Gtk.Window) -> bool:
+        self._transcript_breakdown_window = None
+        self._transcript_breakdown_buffer = None
+        return False
+
+    def _close_transcript_breakdown_window(self) -> None:
+        window = self._transcript_breakdown_window
+        self._transcript_breakdown_window = None
+        self._transcript_breakdown_buffer = None
+        if window:
+            window.close()
+
+    def _show_transcript_breakdown(self) -> None:
+        path = self.transcript_page_number_series_path
+        if not path.is_file():
+            self._refresh_transcript_breakdown_button()
+            self._transient_toast("Transcript page breakdown not available.")
+            return
+        content = self._read_text_file(path)
+        rendered_text, markdown_spans, _orig_to_clean = _render_markdown_text(content)
+        window = self._ensure_transcript_breakdown_window()
+        if self._transcript_breakdown_buffer:
+            self._transcript_breakdown_buffer.set_text(rendered_text)
+            self._apply_markdown_spans(self._transcript_breakdown_buffer, markdown_spans)
+        window.present()
+
+    def _on_transcript_breakdown_clicked(self, _button: Gtk.Button) -> None:
+        self._show_transcript_breakdown()
 
     def _multi_page_marker_text(self, page: int) -> str:
         return f"{page:04d}"
@@ -8200,6 +8529,10 @@ class Focus(Adw.Application):
         if self._image_print_window:
             self._image_print_window.destroy()
             self._image_print_window = None
+        if self._transcript_breakdown_window:
+            self._transcript_breakdown_window.destroy()
+            self._transcript_breakdown_window = None
+            self._transcript_breakdown_buffer = None
         return False
 
     def _on_ai_panel_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
@@ -8235,6 +8568,7 @@ class Focus(Adw.Application):
             return
         self._deactivate_continuous_view(reload=False)
         self._set_show_image(False, silent=True)
+        self._close_transcript_breakdown_window()
         self._reset_view_states()
         self.input_dir = normalized
         self._record_layout = _resolve_record_layout(self.input_dir)
@@ -8252,6 +8586,7 @@ class Focus(Adw.Application):
         self._grep_combined_highlights = []
         self._grep_current_match_index = -1
         self._scan_pages()
+        self._refresh_transcript_breakdown_button()
         self._load_toc_from_disk_async()
         self._kickoff_rag_background_load()
         if self.pages:
@@ -8332,11 +8667,101 @@ class Focus(Adw.Application):
         if not target:
             self._update_page_nav_buttons()
             return
-        if not target.isdigit():
-            self._transient_toast("Enter a numeric page value.")
+        query = parse_transcript_page_jump_query(target)
+        if query is None:
+            self._transient_toast("Enter a page, citation page, or file page.")
             self._update_page_nav_buttons()
             return
-        self._show_page_from_link(target)
+        self._show_page_from_query(query)
+        self._update_page_nav_buttons()
+
+    def _show_page_from_query(self, query: TranscriptPageJumpQuery) -> None:
+        if query.kind == "file":
+            self._show_page_from_link(str(query.page_number))
+            return
+        if query.kind == "citation":
+            matches = self._transcript_page_index.by_citation_key.get(
+                _citation_key(query.citation_prefix, query.page_number),
+                (),
+            )
+            if not matches:
+                self._transient_toast(
+                    f"{query.citation_prefix} {query.page_number} not available"
+                )
+                return
+            self._show_or_choose_transcript_page(matches)
+            return
+
+        matches = self._transcript_page_index.by_transcript_number.get(query.page_number, ())
+        if matches:
+            self._show_or_choose_transcript_page(matches)
+            return
+        self._show_page_from_link(str(query.page_number))
+
+    def _show_or_choose_transcript_page(
+        self,
+        matches: Sequence[TranscriptPageLabel],
+    ) -> None:
+        if not matches:
+            return
+        if len(matches) == 1:
+            self._show_transcript_page_label(matches[0])
+            return
+        self._show_transcript_page_chooser(matches)
+
+    def _show_transcript_page_label(self, label: TranscriptPageLabel) -> None:
+        self._show_page_from_link(str(label.file_page))
+
+    def _show_transcript_page_chooser(
+        self,
+        matches: Sequence[TranscriptPageLabel],
+    ) -> None:
+        if not self._page_number_entry:
+            return
+        if self._page_jump_popover:
+            self._page_jump_popover.popdown()
+            self._page_jump_popover = None
+
+        popover = Gtk.Popover()
+        popover.set_parent(self._page_number_entry)
+        popover.set_autohide(True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+
+        heading = Gtk.Label(label="Choose citation page")
+        heading.add_css_class("dim-label")
+        heading.set_xalign(0.0)
+        heading.set_margin_bottom(2)
+        box.append(heading)
+
+        for label in matches:
+            button_label = f"{label.citation_label}/{label.file_page}.txt"
+            button = Gtk.Button(label=button_label)
+            button.add_css_class("flat")
+            button.add_css_class("no-bold")
+            button.set_halign(Gtk.Align.FILL)
+            if label.series_description:
+                button.set_tooltip_text(label.series_description)
+            button.connect("clicked", self._on_transcript_page_choice_clicked, label, popover)
+            box.append(button)
+
+        popover.set_child(box)
+        self._page_jump_popover = popover
+        popover.popup()
+
+    def _on_transcript_page_choice_clicked(
+        self,
+        _button: Gtk.Button,
+        label: TranscriptPageLabel,
+        popover: Gtk.Popover,
+    ) -> None:
+        popover.popdown()
+        if self._page_jump_popover is popover:
+            self._page_jump_popover = None
+        self._show_transcript_page_label(label)
         self._update_page_nav_buttons()
 
     def _set_right_scroll_active(self, active: bool) -> None:
@@ -8398,7 +8823,7 @@ class Focus(Adw.Application):
         if not self._page_number_entry or not self.pages:
             return
         if 0 <= self.current_index < len(self.pages):
-            self._page_number_entry.set_text(str(self.pages[self.current_index]))
+            self._page_number_entry.set_text(self._current_page_entry_text())
         self._page_number_entry.grab_focus()
         self._page_number_entry.select_region(0, -1)
 
