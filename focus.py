@@ -10,8 +10,7 @@ Features
 - Mouse wheel scrolls within the current record; hold Ctrl and wheel to load the previous/next page.
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
 - Grep matches render in red and navigate hit-by-hit while one transcript page stays visible.
-- Ctrl+Shift+Q opens case tools and focuses the RAG question box.
-- Ctrl+Shift+A opens detached case tools.
+- Ctrl+Shift+A opens case tools and focuses the RAG question box.
 - Ctrl+Shift+S summarizes the current page.
 - Ctrl+P prints the current page image.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
@@ -241,11 +240,6 @@ AI_BLOCKQUOTE_RIGHT_MARGIN = 12
 AI_BLOCKQUOTE_INDENT = 0
 AI_BLOCKQUOTE_SPACING_PX = 4
 CASE_TOOLS_ICON_CHOICES = ("preferences-system-symbolic", "applications-system-symbolic")
-DETACHED_CASE_TOOLS_ICON_CHOICES = (
-    "window-new-symbolic",
-    "open-in-new-symbolic",
-    "external-link-symbolic",
-)
 
 
 @dataclass(frozen=True)
@@ -343,10 +337,10 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
         (
             FocusCommand(
                 "AI Panel",
-                "Toggle detached Case Tools",
-                "toggle_ai_panel_detached",
+                "Toggle case tools and focus question box",
+                "toggle_ai_panel",
                 "<Primary><Shift>A",
-                "Show or hide detached case tools.",
+                "Show case tools and focus the question box.",
             ),
             FocusCommand(
                 "AI Panel",
@@ -354,13 +348,6 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
                 "summarize_current_page",
                 "<Primary><Shift>S",
                 "Summarize the current page.",
-            ),
-            FocusCommand(
-                "AI Panel",
-                "Toggle case tools and focus question box",
-                "toggle_ai_panel",
-                "<Primary><Shift>Q",
-                "Show case tools and focus the question box.",
             ),
             FocusCommand(
                 "AI Panel",
@@ -2430,25 +2417,26 @@ textview.focus-hover-summary-view {
 }
 
 box.focus-pill-group > button.focus-pill-segment {
-  border-radius: 0;
-  border: 1px solid alpha(@window_fg_color, 0.16);
-  padding-left: 12px;
-  padding-right: 12px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px 8px;
   margin: 0;
+  border: none;
+  box-shadow: none;
+  background-image: none;
 }
 
-box.focus-pill-group > button.focus-pill-segment:not(:first-child) {
-  border-left-width: 0;
+button.focus-ai-view-active,
+button.focus-ai-view-active:hover,
+button.focus-ai-view-active:active {
+  background-color: alpha(@window_fg_color, 0.08);
+  color: @window_fg_color;
+  background-image: none;
+  box-shadow: none;
 }
 
-box.focus-pill-group > button.focus-pill-segment:first-child {
-  border-top-left-radius: 12px;
-  border-bottom-left-radius: 12px;
-}
-
-box.focus-pill-group > button.focus-pill-segment:last-child {
-  border-top-right-radius: 12px;
-  border-bottom-right-radius: 12px;
+button.focus-ai-view-active image {
+  color: @window_fg_color;
 }
 
 button.focus-filter-chip,
@@ -2965,7 +2953,6 @@ class Focus(Adw.Application):
         self.current_index: int = 0
 
         self.win: Adw.ApplicationWindow | None = None
-        self._ai_panel_window: Adw.ApplicationWindow | None = None
         self._transcript_breakdown_window: Adw.ApplicationWindow | None = None
         self._transcript_breakdown_buffer: Gtk.TextBuffer | None = None
         self._shortcuts_window: Gtk.ShortcutsWindow | None = None
@@ -3080,6 +3067,7 @@ class Focus(Adw.Application):
         self._summary_source_buttons: dict[str, Gtk.ToggleButton] = {}
         self._summary_progress_label: Gtk.Label | None = None
         self._ai_overflow_popover: Gtk.Popover | None = None
+        self._rag_profile_retry_section: Gtk.Widget | None = None
         self._summary_bookmark_action_button: Gtk.Button | None = None
         self._summary_return_bookmark_action_button: Gtk.Button | None = None
         self._summary_print_action_button: Gtk.Button | None = None
@@ -3129,7 +3117,6 @@ class Focus(Adw.Application):
         self._ai_range_start_entry: Gtk.Entry | None = None
         self._ai_range_end_entry: Gtk.Entry | None = None
         self._ai_range_status_label: Gtk.Label | None = None
-        self._ai_range_submit_button: Gtk.Button | None = None
         self._ai_range_section_button: Gtk.MenuButton | None = None
         self._ai_range_section_popover: Gtk.Popover | None = None
         self._record_range_choices: list[RecordRangeChoice] = []
@@ -3139,8 +3126,6 @@ class Focus(Adw.Application):
         self._ai_profile_dropdowns: dict[str, Gtk.DropDown] = {}
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
         self._ai_panel_toggle_guard = False
-        self._ai_detach_button: Gtk.ToggleButton | None = None
-        self._ai_detach_button_guard = False
         self._minutes_summary_button: Gtk.ToggleButton | None = None
         self._hearing_summary_button: Gtk.ToggleButton | None = None
         self._reports_summary_button: Gtk.ToggleButton | None = None
@@ -3331,23 +3316,10 @@ class Focus(Adw.Application):
         self._ai_panel_toggle.add_css_class("focus-view-toggle")
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
         self._ai_panel_toggle.set_child(self._build_header_icon(*CASE_TOOLS_ICON_CHOICES))
-        self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+Q)")
+        self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
         self._set_ai_panel_visible(self._current_view_state().ai_panel_visible)
         left_box.append(self._ai_panel_toggle)
-
-        self._ai_detach_button = Gtk.ToggleButton()
-        self._ai_detach_button.add_css_class("flat")
-        self._ai_detach_button.add_css_class("focus-view-toggle")
-        self._ai_detach_button.set_valign(Gtk.Align.CENTER)
-        self._ai_detach_button.set_child(
-            self._build_header_icon(*DETACHED_CASE_TOOLS_ICON_CHOICES)
-        )
-        self._ai_detach_button.set_tooltip_text(
-            "Detach case tools into a separate window (Ctrl+Shift+A)"
-        )
-        self._ai_detach_button.connect("toggled", self._on_ai_detach_button_toggled)
-        left_box.append(self._ai_detach_button)
 
         header.pack_start(left_box)
 
@@ -3644,12 +3616,16 @@ class Focus(Adw.Application):
         self._ai_view_stack.set_vexpand(True)
         self._ai_view_stack.connect("notify::visible-child-name", self._on_ai_view_changed)
 
-        ai_mode_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        ai_mode_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         ai_mode_strip.add_css_class("focus-pill-group")
         ai_mode_strip.set_valign(Gtk.Align.CENTER)
         ai_mode_strip.set_hexpand(False)
 
-        qa_mode_button = self._build_ai_mode_button("Q & A", AI_VIEW_QA, "Ask questions about the record")
+        qa_mode_button = self._build_ai_mode_button(
+            "Q & A",
+            AI_VIEW_QA,
+            "Ask questions about the record",
+        )
         ai_mode_strip.append(qa_mode_button)
 
         summarize_mode_button = self._build_ai_mode_button(
@@ -3662,21 +3638,21 @@ class Focus(Adw.Application):
         self._minutes_summary_button = self._build_summary_mode_button(
             "Min",
             SUMMARY_SOURCE_MINUTES,
-            "Minutes Summary",
+            "Minutes summary",
         )
         ai_mode_strip.append(self._minutes_summary_button)
 
         self._hearing_summary_button = self._build_summary_mode_button(
             "Hearings",
             SUMMARY_SOURCE_HEARING,
-            "Hearing Summary",
+            "Hearing summary",
         )
         ai_mode_strip.append(self._hearing_summary_button)
 
         self._reports_summary_button = self._build_summary_mode_button(
             "Reports",
             SUMMARY_SOURCE_REPORTS,
-            "Reports Summary",
+            "Reports summary",
         )
         ai_mode_strip.append(self._reports_summary_button)
         ai_header.append(ai_mode_strip)
@@ -3751,15 +3727,6 @@ class Focus(Adw.Application):
         self._ai_range_status_label.set_ellipsize(Pango.EllipsizeMode.END)
         summarize_controls.insert(self._ai_range_status_label, -1)
 
-        summarize_range_btn = Gtk.Button(label="Submit")
-        summarize_range_btn.add_css_class("flat")
-        summarize_range_btn.add_css_class("no-bold")
-        summarize_range_btn.set_valign(Gtk.Align.CENTER)
-        summarize_range_btn.set_hexpand(False)
-        summarize_range_btn.set_halign(Gtk.Align.START)
-        summarize_range_btn.connect("clicked", self._on_summarize_range_button_clicked)
-        self._ai_range_submit_button = summarize_range_btn
-        summarize_controls.insert(summarize_range_btn, -1)
         self._refresh_sum_range_section_menu()
         self._maybe_prefill_sum_range_for_current_page()
 
@@ -3814,24 +3781,6 @@ class Focus(Adw.Application):
         self._rag_question_entry.connect("activate", self._on_rag_question_activate)
         qa_controls.append(self._rag_question_entry)
 
-        ask_button = Gtk.Button(label="1")
-        ask_button.add_css_class("flat")
-        ask_button.add_css_class("no-bold")
-        ask_button.set_valign(Gtk.Align.CENTER)
-        ask_button.set_hexpand(False)
-        ask_button.set_tooltip_text("Answer with model 1.")
-        ask_button.connect("clicked", self._on_rag_question_button_clicked)
-        qa_controls.append(ask_button)
-
-        deep_ask_button = Gtk.Button(label="2")
-        deep_ask_button.add_css_class("flat")
-        deep_ask_button.add_css_class("no-bold")
-        deep_ask_button.set_valign(Gtk.Align.CENTER)
-        deep_ask_button.set_hexpand(False)
-        deep_ask_button.set_tooltip_text("Answer with model 2.")
-        deep_ask_button.connect("clicked", self._on_rag_deep_question_button_clicked)
-        qa_controls.append(deep_ask_button)
-
         self._rag_filter_chip = Gtk.Button()
         self._rag_filter_chip.add_css_class("flat")
         self._rag_filter_chip.add_css_class("no-bold")
@@ -3883,6 +3832,33 @@ class Focus(Adw.Application):
         ai_overflow_box.set_margin_start(6)
         ai_overflow_box.set_margin_end(6)
 
+        rag_profile_retry_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._rag_profile_retry_section = rag_profile_retry_section
+
+        profile_retry_heading = Gtk.Label(label="Same question")
+        profile_retry_heading.add_css_class("dim-label")
+        profile_retry_heading.set_xalign(0.0)
+        profile_retry_heading.set_halign(Gtk.Align.START)
+        profile_retry_heading.set_margin_bottom(2)
+        rag_profile_retry_section.append(profile_retry_heading)
+
+        for profile_key in MODEL_PROFILE_IDS:
+            profile_label = self._profile_action_label(profile_key)
+            profile_button = Gtk.Button(label=profile_label)
+            profile_button.add_css_class("flat")
+            profile_button.add_css_class("no-bold")
+            profile_button.set_halign(Gtk.Align.FILL)
+            profile_button.connect(
+                "clicked",
+                self._on_rag_profile_retry_clicked,
+                profile_key,
+                self._ai_overflow_popover,
+            )
+            rag_profile_retry_section.append(profile_button)
+
+        rag_profile_retry_section.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        ai_overflow_box.append(rag_profile_retry_section)
+
         extract_mode_button = Gtk.Button(label="Extract Information")
         extract_mode_button.add_css_class("flat")
         extract_mode_button.add_css_class("no-bold")
@@ -3932,12 +3908,13 @@ class Focus(Adw.Application):
         self._ai_overflow_popover.set_child(ai_overflow_box)
         ai_overflow_button.set_popover(self._ai_overflow_popover)
         ai_header.append(ai_overflow_button)
+        self._sync_rag_profile_retry_section()
         self._refresh_summary_actions_state()
 
         if self._ai_controls_stack:
-            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_SUMMARIZE)
+            self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_EXTRACT)
-            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_QA)
+            self._ai_controls_stack.add_named(qa_controls, AI_VIEW_QA)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_RAG_AUDIT)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
@@ -3975,11 +3952,9 @@ class Focus(Adw.Application):
         qa_scroller = self._build_ai_output_view(AI_VIEW_QA)
         rag_audit_scroller = self._build_ai_output_view(AI_VIEW_RAG_AUDIT)
 
-        summarize_view.append(summarize_controls)
         summarize_view.append(summarize_scroller)
         extract_view.append(extract_controls)
         extract_view.append(extract_scroller)
-        qa_view.append(qa_controls)
         if self._rag_filter_chip:
             qa_view.append(self._rag_filter_chip)
         qa_view.append(qa_scroller)
@@ -4214,14 +4189,8 @@ class Focus(Adw.Application):
 
         self._install_navigation_controllers()
         self._install_actions()
-        self._update_ai_detach_button()
-
-    def _is_ai_panel_detached(self) -> bool:
-        return self._ai_panel_window is not None and self._ai_panel_root is not None
 
     def _get_ai_host_window(self) -> Adw.ApplicationWindow | None:
-        if self._is_ai_panel_detached():
-            return self._ai_panel_window
         return self.win
 
     def _detach_widget_from_parent(self, widget: Gtk.Widget | None) -> None:
@@ -4254,42 +4223,6 @@ class Focus(Adw.Application):
             self._update_embedded_ai_panel_height(force=True)
         else:
             self._reset_embedded_ai_panel_sizing()
-
-    def _build_ai_panel_window(self) -> Adw.ApplicationWindow | None:
-        if self._ai_panel_window:
-            return self._ai_panel_window
-        if not self.win:
-            return None
-        window = Adw.ApplicationWindow(application=self, transient_for=self.win)
-        window.set_title(f"{APPLICATION_NAME} Case Tools")
-        window.set_default_size(760, 520)
-        window.connect("close-request", self._on_ai_panel_window_close_request)
-
-        view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        header.add_css_class("flat")
-
-        title = Gtk.Label(label="Case Tools")
-        title.add_css_class("heading")
-        header.set_title_widget(title)
-
-        view.add_top_bar(header)
-        window.set_content(view)
-        self._ai_panel_window = window
-        return window
-
-    def _attach_ai_panel_to_detached_host(self) -> None:
-        window = self._build_ai_panel_window()
-        if not window or not self._ai_panel_root:
-            return
-        content = window.get_content()
-        if isinstance(content, Adw.ToastOverlay):
-            content = content.get_child()
-        if not isinstance(content, Adw.ToolbarView):
-            return
-        self._detach_widget_from_parent(self._ai_panel_root)
-        self._reset_embedded_ai_panel_sizing()
-        content.set_content(self._ai_panel_root)
 
     def _reset_ai_output_scroller_sizing(self) -> None:
         for scroller in self._ai_output_scrollers:
@@ -4379,8 +4312,6 @@ class Focus(Adw.Application):
                 self._summary_scroller.set_max_content_height(AI_OUTPUT_COLLAPSED_HEIGHT)
 
     def _queue_embedded_ai_panel_height_update(self) -> None:
-        if self._is_ai_panel_detached():
-            return
         if not self._ai_panel_revealer or not self._ai_panel_revealer.get_reveal_child():
             return
         if self._ai_panel_layout_idle_id is not None:
@@ -4408,8 +4339,6 @@ class Focus(Adw.Application):
         return header_height + 36
 
     def _update_embedded_ai_panel_height(self, *, force: bool = False) -> None:
-        if self._is_ai_panel_detached():
-            return
         if not self.win or not self._ai_panel_root or not self._ai_view_stack:
             return
         if not self._ai_panel_revealer or not self._ai_panel_revealer.get_reveal_child():
@@ -4479,29 +4408,13 @@ class Focus(Adw.Application):
             GLib.source_remove(self._ai_panel_layout_idle_id)
             self._ai_panel_layout_idle_id = None
 
-    def _update_ai_detach_button(self) -> None:
-        if not self._ai_detach_button:
-            return
-        detached = self._is_ai_panel_detached()
-        tooltip = (
-            "Close the detached case tools window (Ctrl+Shift+A)"
-            if detached
-            else "Detach case tools into a separate window (Ctrl+Shift+A)"
-        )
-        self._ai_detach_button_guard = True
-        try:
-            self._ai_detach_button.set_active(detached)
-            self._ai_detach_button.set_tooltip_text(tooltip)
-        finally:
-            self._ai_detach_button_guard = False
-
     def _update_ai_panel_toggle(self, visible: bool) -> None:
         if not self._ai_panel_toggle:
             return
         tooltip = (
-            "Hide case tools (Ctrl+Shift+Q)"
+            "Hide case tools (Ctrl+Shift+A)"
             if visible
-            else "Show case tools (Ctrl+Shift+Q)"
+            else "Show case tools (Ctrl+Shift+A)"
         )
         self._ai_panel_toggle_guard = True
         try:
@@ -4509,44 +4422,6 @@ class Focus(Adw.Application):
             self._ai_panel_toggle.set_tooltip_text(tooltip)
         finally:
             self._ai_panel_toggle_guard = False
-
-    def _detach_ai_panel(self) -> None:
-        if self._is_ai_panel_detached():
-            if self._ai_panel_window:
-                self._set_ai_panel_visible(True)
-                self._ai_panel_window.present()
-            return
-        self._attach_ai_panel_to_detached_host()
-        self._update_ai_detach_button()
-        if self._ai_panel_revealer:
-            self._ai_panel_revealer.set_reveal_child(False)
-        self._set_ai_panel_visible(True)
-        if self._ai_panel_window:
-            self._ai_panel_window.present()
-
-    def _reattach_ai_panel(self, *, preserve_visibility: bool = True) -> None:
-        if not self._is_ai_panel_detached():
-            self._attach_ai_panel_to_embedded_host()
-            self._update_ai_detach_button()
-            return
-        visible = self._current_view_state().ai_panel_visible if preserve_visibility else True
-        if self._ai_panel_window:
-            self._detach_widget_from_parent(self._ai_panel_root)
-            self._ai_panel_window.hide()
-            self._ai_panel_window.destroy()
-            self._ai_panel_window = None
-        self._attach_ai_panel_to_embedded_host()
-        if self._ai_panel_revealer:
-            self._ai_panel_revealer.set_reveal_child(visible)
-        self._update_embedded_ai_panel_height(force=True)
-        self._update_ai_detach_button()
-
-    def _toggle_ai_panel_detached(self) -> None:
-        if self._is_ai_panel_detached():
-            self._set_ai_panel_visible(False)
-            self._reattach_ai_panel()
-        else:
-            self._detach_ai_panel()
 
     def _current_view_state(self) -> FocusViewState:
         return self._view_state
@@ -5508,6 +5383,12 @@ class Focus(Adw.Application):
     def _selected_ai_profile_key(self, task_key: str) -> str | None:
         return self._profile_key_from_dropdown(self._ai_profile_dropdowns.get(task_key))
 
+    def _profile_action_label(self, profile_key: str) -> str:
+        profile = self._ai_settings.profile_by_key(profile_key)
+        if profile is None:
+            return _default_profile_nickname(profile_key)
+        return profile.short_name()
+
     def _refresh_ai_profile_dropdowns(self) -> None:
         model = self._build_profile_dropdown_model(abbreviated=True)
         for task_key, dropdown in self._ai_profile_dropdowns.items():
@@ -5635,8 +5516,6 @@ class Focus(Adw.Application):
 
     def _refresh_sum_range_state(self, *, status: str | None = None) -> None:
         validation = self._sum_range_validation()
-        if self._ai_range_submit_button:
-            self._ai_range_submit_button.set_sensitive(validation.valid)
         if self._ai_range_status_label:
             if status and validation.valid:
                 text = f"{status} - {len(validation.targets)} pages"
@@ -7035,7 +6914,12 @@ class Focus(Adw.Application):
         self._summary_toggle_guard = True
         try:
             for button_source, button in self._summary_source_buttons.items():
-                button.set_active(source == button_source and self._ai_active_view == AI_VIEW_FILE)
+                active = source == button_source and self._ai_active_view == AI_VIEW_FILE
+                button.set_active(active)
+                if active:
+                    button.add_css_class("focus-ai-view-active")
+                else:
+                    button.remove_css_class("focus-ai-view-active")
         finally:
             self._summary_toggle_guard = False
 
@@ -7775,10 +7659,6 @@ class Focus(Adw.Application):
         )
         self.add_action(toggle_ai_panel)
 
-        toggle_ai_panel_detached = Gio.SimpleAction.new("toggle_ai_panel_detached", None)
-        toggle_ai_panel_detached.connect("activate", lambda _a, _p: self._toggle_ai_panel_detached())
-        self.add_action(toggle_ai_panel_detached)
-
         focus_grep = Gio.SimpleAction.new("focus_grep", None)
         focus_grep.connect("activate", lambda _a, _p: self._focus_grep_entry())
         self.add_action(focus_grep)
@@ -7814,8 +7694,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
         self.set_accels_for_action("app.summarize_current_page", ["<Primary><Shift>s"])
-        self.set_accels_for_action("app.toggle_ai_panel_detached", ["<Primary><Shift>a"])
-        self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>q"])
+        self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>a"])
         self.set_accels_for_action("app.show_shortcuts", ["F1"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
@@ -7866,7 +7745,7 @@ class Focus(Adw.Application):
         tools_group = Gtk.ShortcutsGroup(title="AI Panel")
         tools_group.append(
             Gtk.ShortcutsShortcut(
-                title="Toggle detached Case Tools",
+                title="Toggle case tools and focus question box",
                 accelerator="<Primary><Shift>A",
             )
         )
@@ -7874,12 +7753,6 @@ class Focus(Adw.Application):
             Gtk.ShortcutsShortcut(
                 title="Summarize current page",
                 accelerator="<Primary><Shift>S",
-            )
-        )
-        tools_group.append(
-            Gtk.ShortcutsShortcut(
-                title="Toggle case tools and focus question box",
-                accelerator="<Primary><Shift>Q",
             )
         )
         tools_group.append(
@@ -8177,17 +8050,6 @@ class Focus(Adw.Application):
         if self._input_dir_dialog is dialog:
             self._input_dir_dialog = None
 
-    def _on_ai_detach_button_toggled(self, button: Gtk.ToggleButton) -> None:
-        if self._ai_detach_button_guard:
-            return
-        if button.get_active():
-            if not self._is_ai_panel_detached():
-                self._detach_ai_panel()
-            return
-        if self._is_ai_panel_detached():
-            self._set_ai_panel_visible(False)
-            self._reattach_ai_panel()
-
     def _on_open_ai_settings(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         try:
             window = self._ensure_ai_settings_window()
@@ -8213,9 +8075,6 @@ class Focus(Adw.Application):
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
         self._stop_grep_search_if_running()
         self._stop_ai_panel_resize_tracking()
-        if self._ai_panel_window:
-            self._ai_panel_window.destroy()
-            self._ai_panel_window = None
         if self._image_print_window:
             self._image_print_window.destroy()
             self._image_print_window = None
@@ -8224,11 +8083,6 @@ class Focus(Adw.Application):
             self._transcript_breakdown_window = None
             self._transcript_breakdown_buffer = None
         return False
-
-    def _on_ai_panel_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
-        self._set_ai_panel_visible(False)
-        self._reattach_ai_panel()
-        return True
 
     def on_ai_settings_saved(self, settings: AiSettings) -> None:
         self._ai_settings = settings
@@ -8318,13 +8172,6 @@ class Focus(Adw.Application):
             self._print_current_image_page(); return True
         if (
             key in ("A", "a")
-            and (state & Gdk.ModifierType.CONTROL_MASK)
-            and (state & Gdk.ModifierType.SHIFT_MASK)
-        ):
-            self._toggle_ai_panel_detached()
-            return True
-        if (
-            key in ("Q", "q")
             and (state & Gdk.ModifierType.CONTROL_MASK)
             and (state & Gdk.ModifierType.SHIFT_MASK)
         ):
@@ -8631,24 +8478,15 @@ class Focus(Adw.Application):
     def _on_ai_panel_toggled(self, button: Gtk.ToggleButton) -> None:
         if self._ai_panel_toggle_guard:
             return
-        if self._is_ai_panel_detached():
-            # The embedded Case Tools toggle does not control the detached window.
-            self._update_ai_panel_toggle(True)
-            return
         self._set_ai_panel_visible(button.get_active())
 
     def _set_ai_panel_visible(self, visible: bool) -> None:
-        if self._ai_panel_revealer and not self._is_ai_panel_detached():
+        if self._ai_panel_revealer:
             self._ai_panel_revealer.set_reveal_child(visible)
             if visible:
                 self._update_embedded_ai_panel_height(force=True)
             else:
                 self._reset_embedded_ai_panel_sizing()
-        if self._is_ai_panel_detached() and self._ai_panel_window:
-            if visible:
-                self._ai_panel_window.present()
-            else:
-                self._ai_panel_window.hide()
         self._current_view_state().ai_panel_visible = visible
         self._update_ai_panel_toggle(visible)
 
@@ -8672,6 +8510,7 @@ class Focus(Adw.Application):
         ):
             self._ai_controls_stack.set_visible_child_name(target)
         self._sync_ai_view_toggles(target)
+        self._sync_rag_profile_retry_section()
         if self._ai_panel_revealer and self._ai_panel_revealer.get_reveal_child():
             self._update_embedded_ai_panel_height(force=True)
         if target == AI_VIEW_FILE:
@@ -8700,6 +8539,10 @@ class Focus(Adw.Application):
             return
         self._auto_load_summary_file()
 
+    def _sync_rag_profile_retry_section(self) -> None:
+        if self._rag_profile_retry_section:
+            self._rag_profile_retry_section.set_visible(self._ai_active_view == AI_VIEW_QA)
+
     def _sync_ai_view_toggles(self, target: str) -> None:
         if not self._ai_view_buttons and not self._summary_source_buttons:
             return
@@ -8707,9 +8550,19 @@ class Focus(Adw.Application):
         self._summary_toggle_guard = True
         try:
             for view_name, button in self._ai_view_buttons.items():
-                button.set_active(view_name == target)
+                active = view_name == target
+                button.set_active(active)
+                if active:
+                    button.add_css_class("focus-ai-view-active")
+                else:
+                    button.remove_css_class("focus-ai-view-active")
             for source, button in self._summary_source_buttons.items():
-                button.set_active(target == AI_VIEW_FILE and source == self._summary_active_source)
+                active = target == AI_VIEW_FILE and source == self._summary_active_source
+                button.set_active(active)
+                if active:
+                    button.add_css_class("focus-ai-view-active")
+                else:
+                    button.remove_css_class("focus-ai-view-active")
         finally:
             self._ai_view_toggle_guard = False
             self._summary_toggle_guard = False
@@ -8752,9 +8605,6 @@ class Focus(Adw.Application):
         )
 
     def _on_summarize_range_activate(self, _entry: Gtk.Entry) -> None:
-        self._summarize_page_range()
-
-    def _on_summarize_range_button_clicked(self, _button: Gtk.Button) -> None:
         self._summarize_page_range()
 
     def _summarize_page_range(self) -> None:
@@ -8851,22 +8701,26 @@ class Focus(Adw.Application):
         self._extract_range_entry.set_text("")
 
     def _on_rag_question_activate(self, _entry: Gtk.Entry) -> None:
-        self._submit_rag_question(deep=False)
+        self._submit_rag_question()
 
-    def _on_rag_question_button_clicked(self, _button: Gtk.Button) -> None:
-        self._submit_rag_question(deep=False)
+    def _on_rag_profile_retry_clicked(
+        self,
+        _button: Gtk.Button,
+        profile_key: str,
+        popover: Gtk.Popover | None,
+    ) -> None:
+        if popover:
+            popover.popdown()
+        self._submit_rag_question(profile_key=profile_key)
 
-    def _on_rag_deep_question_button_clicked(self, _button: Gtk.Button) -> None:
-        self._submit_rag_question(deep=True)
-
-    def _submit_rag_question(self, deep: bool = False) -> None:
+    def _submit_rag_question(self, *, profile_key: str | None = None) -> None:
         if not self._rag_question_entry:
             return
         question = self._rag_question_entry.get_text().strip()
         if not question:
             self._ai_transient_toast("Enter a question to run RAG.")
             return
-        self._start_rag_question(question, deep=deep)
+        self._start_rag_question(question, profile_key=profile_key)
 
     def _submit_speech_rag_question(self) -> None:
         settings = load_ai_settings()
@@ -9282,21 +9136,32 @@ class Focus(Adw.Application):
         if not allow_auto:
             self._ensure_ai_panel_visible()
 
-    def _start_rag_question(self, question: str, *, deep: bool = False) -> None:
+    def _start_rag_question(
+        self,
+        question: str,
+        *,
+        deep: bool = False,
+        profile_key: str | None = None,
+    ) -> None:
         state = self._current_view_state()
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
-        question_mode = "answer-2" if deep else "answer-1"
+        profile = settings.profile_by_key(profile_key)
+        profile_label = profile.short_name() if profile is not None else ""
+        question_mode = (
+            f"answer-{profile_key}" if profile_key else ("answer-2" if deep else "answer-1")
+        )
         if deep:
-            credentials = settings.rag_deep_llm_credentials()
+            credentials = settings.rag_deep_llm_credentials(profile_key)
             error = self._llm_credentials_error(credentials, "RAG answer 2")
             if error:
                 self._ensure_ai_panel_visible()
                 self._ai_transient_toast(error)
                 return
         else:
-            credentials = settings.rag_llm_credentials()
-            error = self._llm_credentials_error(credentials, "RAG answer")
+            credentials = settings.rag_llm_credentials(profile_key)
+            error_label = f"RAG answer with {profile_label}" if profile_label else "RAG answer"
+            error = self._llm_credentials_error(credentials, error_label)
             if error:
                 self._ensure_ai_panel_visible()
                 self._ai_transient_toast(error)
@@ -9338,7 +9203,7 @@ class Focus(Adw.Application):
 
         cancel_event = state.ai_cancel_event
         question_text = question.strip()
-        question_label = "question 2" if deep else "question 1"
+        question_label = f"question with {profile_label}" if profile_label else ("question 2" if deep else "question")
         label = f"{question_label}: {question_text[:48]}{'…' if len(question_text) > 48 else ''}"
 
         def worker() -> None:
@@ -9414,7 +9279,10 @@ class Focus(Adw.Application):
                 AI_VIEW_RAG_AUDIT,
                 False,
             )
-            answer_status = "Answering with model 2…" if deep else "Answering with model 1…"
+            if profile_label:
+                answer_status = f"Answering with {profile_label}…"
+            else:
+                answer_status = "Answering with model 2…" if deep else "Answering…"
             GLib.idle_add(self._update_ai_status, answer_status, True)
             self._stream_chat_worker(
                 settings,
