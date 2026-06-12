@@ -505,10 +505,6 @@ RAG_LONG_DATE_PATTERN = re.compile(
 RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
 RIGHT_SCROLL_ZONE_EDGE_MARGIN = 18
-HOVER_CONTROL_BAR_WIDTH = 620
-HOVER_CONTROL_HEIGHT = 40
-HOVER_CONTROL_TOP_MARGIN = 18
-HOVER_CONTROL_SPACING = 8
 HOVER_SUMMARY_CARD_WIDTH = 620
 HOVER_SUMMARY_CARD_TOP_MARGIN = 68
 AI_VIEW_SUMMARIZE = "summarize"
@@ -2334,47 +2330,6 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
   color: rgba(95, 95, 95, 0.62);
 }
 
-box.focus-hover-control-bar {
-  background: transparent;
-}
-
-button.focus-hover-zone {
-  border-radius: 14px;
-  padding: 0;
-  background-image: none;
-  box-shadow: none;
-  transition: background-color 120ms ease;
-}
-
-button.focus-image-hover-zone {
-  background-color: rgba(128, 128, 128, 0.00);
-}
-
-button.focus-hover-zone:hover,
-button.focus-hover-zone:active {
-  background-image: none;
-  box-shadow: none;
-}
-
-button.focus-image-hover-zone:hover,
-button.focus-image-hover-zone.hover,
-button.focus-image-hover-zone:active {
-  background-color: rgba(128, 128, 128, 0.12);
-}
-
-button.focus-hover-zone label.focus-hover-label {
-  color: rgba(95, 95, 95, 0.00);
-  font-size: 11px;
-  font-weight: 500;
-  transition: color 120ms ease;
-}
-
-button.focus-hover-zone:hover label.focus-hover-label,
-button.focus-hover-zone.hover label.focus-hover-label,
-button.focus-hover-zone:active label.focus-hover-label {
-  color: rgba(95, 95, 95, 0.62);
-}
-
 box.focus-hover-summary-card {
   background-color: mix(@window_bg_color, @window_fg_color, 0.08);
   border: 1px solid alpha(@window_fg_color, 0.18);
@@ -2964,10 +2919,6 @@ class Focus(Adw.Application):
         self._right_scroll_zone: Gtk.Button | None = None
         self._right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
         self._right_scroll_active = False
-        self._hover_control_bar: Gtk.Box | None = None
-        self._image_hover_zone: Gtk.Button | None = None
-        self._image_hover_motion_controller: Gtk.EventControllerMotion | None = None
-        self._image_hover_peek_active = False
         self._summary_hover_card: Gtk.Box | None = None
         self._summary_hover_scroller: Gtk.ScrolledWindow | None = None
         self._summary_hover_view: Gtk.TextView | None = None
@@ -3510,43 +3461,6 @@ class Focus(Adw.Application):
         self._content_overlay.set_hexpand(True)
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self._content_stack)
-
-        self._hover_control_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=HOVER_CONTROL_SPACING)
-        self._hover_control_bar.add_css_class("focus-hover-control-bar")
-        self._hover_control_bar.set_halign(Gtk.Align.CENTER)
-        self._hover_control_bar.set_valign(Gtk.Align.START)
-        self._hover_control_bar.set_hexpand(False)
-        self._hover_control_bar.set_vexpand(False)
-        self._hover_control_bar.set_margin_top(HOVER_CONTROL_TOP_MARGIN)
-        self._hover_control_bar.set_size_request(HOVER_CONTROL_BAR_WIDTH, HOVER_CONTROL_HEIGHT)
-        self._hover_control_bar.set_visible(False)
-
-        self._image_hover_zone = Gtk.Button()
-        self._image_hover_zone.add_css_class("flat")
-        self._image_hover_zone.add_css_class("focus-hover-zone")
-        self._image_hover_zone.add_css_class("focus-image-hover-zone")
-        self._image_hover_zone.set_hexpand(True)
-        self._image_hover_zone.set_vexpand(False)
-        self._image_hover_zone.set_size_request(-1, HOVER_CONTROL_HEIGHT)
-        self._image_hover_zone.set_can_target(True)
-        self._image_hover_zone.set_focus_on_click(False)
-        image_hover_label = Gtk.Label(label="Image View")
-        image_hover_label.add_css_class("focus-hover-label")
-        image_hover_label.set_halign(Gtk.Align.CENTER)
-        image_hover_label.set_valign(Gtk.Align.START)
-        image_hover_label.set_vexpand(True)
-        image_hover_label.set_margin_top(5)
-        self._image_hover_zone.set_child(image_hover_label)
-        self._image_hover_motion_controller = Gtk.EventControllerMotion()
-        self._image_hover_motion_controller.connect("enter", self._on_image_hover_zone_enter)
-        self._image_hover_motion_controller.connect("motion", self._on_image_hover_zone_enter)
-        self._image_hover_motion_controller.connect("leave", self._on_image_hover_zone_leave)
-        self._image_hover_zone.add_controller(self._image_hover_motion_controller)
-        self._hover_control_bar.append(self._image_hover_zone)
-
-        self._content_overlay.add_overlay(self._hover_control_bar)
-        if hasattr(self._content_overlay, "set_overlay_pass_through"):
-            self._content_overlay.set_overlay_pass_through(self._hover_control_bar, False)
 
         self._summary_hover_view = Gtk.TextView(editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self._summary_hover_view.add_css_class("focus-hover-summary-view")
@@ -5956,68 +5870,12 @@ class Focus(Adw.Application):
             self.textview.set_cursor_from_name(None)
         self._set_right_scroll_active(False)
 
-    def _can_show_image_hover_peek(self) -> bool:
-        if self._show_image:
-            return False
-        if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
-            return False
-        page = self.pages[self.current_index]
-        if page not in self.page_to_path:
-            return False
-        return (self.images_dir / f"{page:04d}.png").exists()
-
     def _can_summarize_current_page(self) -> bool:
         if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
             return False
         page = self.pages[self.current_index]
         path = self.page_to_path.get(page)
         return bool(path and path.exists())
-
-    def _update_image_hover_zone_visible(self) -> None:
-        if not self._hover_control_bar:
-            return
-        image_visible = self._image_hover_peek_active or self._can_show_image_hover_peek()
-        if self._image_hover_zone:
-            self._image_hover_zone.set_visible(image_visible)
-            self._image_hover_zone.set_sensitive(image_visible)
-        self._hover_control_bar.set_visible(image_visible)
-
-    def _on_image_hover_zone_enter(
-        self,
-        _controller: Gtk.EventControllerMotion,
-        _x: float,
-        _y: float,
-    ) -> None:
-        self._start_image_hover_peek()
-
-    def _on_image_hover_zone_leave(self, _controller: Gtk.EventControllerMotion) -> None:
-        self._end_image_hover_peek()
-
-    def _start_image_hover_peek(self) -> None:
-        if self._image_hover_peek_active:
-            return
-        if not self._can_show_image_hover_peek():
-            self._update_image_hover_zone_visible()
-            return
-        self._image_hover_peek_active = True
-        if self._image_hover_zone:
-            self._image_hover_zone.add_css_class("hover")
-        if not self._set_show_image(True, silent=True):
-            self._image_hover_peek_active = False
-            if self._image_hover_zone:
-                self._image_hover_zone.remove_css_class("hover")
-            self._update_image_hover_zone_visible()
-
-    def _end_image_hover_peek(self) -> None:
-        if not self._image_hover_peek_active:
-            return
-        self._image_hover_peek_active = False
-        if self._image_hover_zone:
-            self._image_hover_zone.remove_css_class("hover")
-        if self._show_image:
-            self._set_show_image(False, silent=True)
-        else:
-            self._update_image_hover_zone_visible()
 
     def _on_single_page_summary_clicked(self, _button: Gtk.Button) -> None:
         self._start_summary_hover_preview()
@@ -6057,7 +5915,6 @@ class Focus(Adw.Application):
     def _start_summary_hover_preview(self) -> None:
         if not self._can_summarize_current_page():
             self._hide_summary_hover_preview(cancel=True)
-            self._update_image_hover_zone_visible()
             self._ai_transient_toast("Summarize Page only works when a single page is visible.")
             return
         page = self.pages[self.current_index]
@@ -6879,7 +6736,6 @@ class Focus(Adw.Application):
             GLib.idle_add(self._refresh_image_right_scroll_zone_geometry)
         else:
             self._set_image_right_scroll_active(False)
-        self._update_image_hover_zone_visible()
 
     def _sync_show_image_action(self) -> None:
         if not self._show_image_action:
@@ -7054,7 +6910,6 @@ class Focus(Adw.Application):
 
         # Always force the stack back to the text view when disabling image mode,
         # even if the flag was already false (e.g., after returning from a different view).
-        self._image_hover_peek_active = False
         self._show_image = False
         self._show_image_update_visible()
         self._clear_image_view()
