@@ -9,7 +9,9 @@ from focus import (
     Focus,
     MAX_BREAKS,
     _render_markdown_text,
+    build_grep_match_order,
     build_pattern,
+    format_grep_status_text,
     normalize_text_for_search_with_map,
     preprocess_phrase,
     split_span_at_line_breaks,
@@ -75,6 +77,24 @@ def test_multiline_highlight_span_splits_into_visible_line_segments() -> None:
     spans = split_span_at_line_breaks(text, start, end)
 
     assert [text[start:end] for start, end in spans] == ["did", "not understand"]
+
+
+def test_grep_match_order_flattens_hits_across_matching_pages() -> None:
+    grep_hits = {
+        41: [(0, 5), (10, 15)],
+        55: [(3, 8)],
+        60: [(2, 2)],
+    }
+
+    order = build_grep_match_order(grep_hits, [41, 55, 60])
+
+    assert order == [(41, 0), (41, 1), (55, 0)]
+
+
+def test_grep_status_text_reports_global_hit_position() -> None:
+    match_order = [(41, 0), (41, 1), (55, 0)]
+
+    assert format_grep_status_text(match_order, 2) == "Search: hit 3/3"
 
 
 @pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep is not installed")

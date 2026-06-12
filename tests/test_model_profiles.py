@@ -7,6 +7,7 @@ from focus import (
     CONFIG_KEY_PAGE_API_KEY,
     CONFIG_KEY_PAGE_API_URL,
     CONFIG_KEY_PAGE_MODEL_ID,
+    CONFIG_KEY_SEARCH_CHIP_COLOR,
     CONFIG_KEY_TASK_DEFAULT_PROFILES,
     MODEL_PROFILE_IDS,
     TASK_PROFILE_PAGE,
@@ -91,6 +92,7 @@ def test_profile_credentials_override_legacy_values() -> None:
         grep_highlight_color=focus.DEFAULT_MATCH_COLOR,
         phrase_highlight_color=focus.DEFAULT_HIGHLIGHT_COLOR,
         summary_emphasis_color=focus.DEFAULT_SUMMARY_EMPHASIS_COLOR,
+        search_chip_color=focus.DEFAULT_SEARCH_CHIP_COLOR,
         model_profiles=[
             ModelProfile(
                 key="profile1",
@@ -169,3 +171,4 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     assert saved[CONFIG_KEY_PAGE_API_URL] == "https://profile.example"
     assert saved[CONFIG_KEY_PAGE_MODEL_ID] == "profile-model"
     assert saved[CONFIG_KEY_PAGE_API_KEY] == "profile-key"
+    assert saved[CONFIG_KEY_SEARCH_CHIP_COLOR] == focus.DEFAULT_SEARCH_CHIP_COLOR

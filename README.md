@@ -5,10 +5,10 @@
 Focus is a Libadwaita GTK4 app for browsing court transcript text files with fast paging, grep, images, and AI-assisted summaries/RAG. It is designed to work with a "case_bundle" created with [recordprep](https://github.com/jessemcg/record-prep).
 
 ## Features
-- Displays one text page at a time, with optional continuous scroll mode
+- Displays one text page at a time with transcript citation-page context
 - Mouse wheel scrolls within the current record; hold Ctrl + wheel to load previous/next page
-- Page jump (Ctrl+E), gap-tolerant grep (Ctrl+F), and TOC sidebar for navigation
-- Grep matches render in red and can show all matching pages in a single scrollable view
+- Page jump (Ctrl+E), transcript citation-page jump, gap-tolerant grep (Ctrl+F), and TOC sidebar for navigation
+- Grep matches render in red and navigate hit-by-hit while keeping one transcript page visible
 - Toggle image view for page scans (Ctrl+I) when images are available
 - Dual view buttons to keep two independent browsing states side by side
 - AI panel with page/range summaries, RAG Q&A, and a summary-file viewer
@@ -63,6 +63,7 @@ case_root/
     0001.png
   artifacts/
     toc.txt
+    transcript_page_numbers.json
   rag/
     case_overview.txt
     vector_database/
@@ -96,10 +97,9 @@ Defaults are defined in `focus.py` if a key is missing.
 ## Keyboard shortcuts
 - Up/Down: previous/next page
 - Home/End: first/last page
-- Ctrl+E: page jump
+- Ctrl+E: page jump; accepts citation pages like `2CT 606`, bare transcript pages like `606`, and file pages like `file 0876`
 - Ctrl+F: grep search
 - Ctrl+Shift+A: toggle AI panel
-- Ctrl+Shift+C: toggle continuous view
 - Ctrl+Shift+Z: toggle TOC sidebar
 - Ctrl+I: toggle image view
 

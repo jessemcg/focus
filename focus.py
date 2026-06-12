@@ -9,7 +9,7 @@ Features
 - Displays one text file at a time from a configurable directory.
 - Mouse wheel scrolls within the current record; hold Ctrl and wheel to load the previous/next page.
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
-- Grep matches render in red and can show all matching pages in a single scrollable view.
+- Grep matches render in red and navigate hit-by-hit while one transcript page stays visible.
 - Ctrl+Shift+Q opens case tools and focuses the RAG question box.
 - Ctrl+Shift+A opens detached case tools.
 - Ctrl+Shift+S summarizes the current page.
@@ -115,6 +115,7 @@ CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
 CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR = "phrase_highlight_color"
 CONFIG_KEY_SUMMARY_EMPHASIS_COLOR = "summary_emphasis_color"
+CONFIG_KEY_SEARCH_CHIP_COLOR = "search_chip_color"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
 CASE_NAME_FILENAME = "case_name.txt"
 DEFAULT_SUMMARIZATION_PROMPT = (
@@ -221,6 +222,7 @@ DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
 DEFAULT_HIGHLIGHT_COLOR = "#e5e4e2"     # platinum
 DEFAULT_SUMMARY_EMPHASIS_COLOR = "#f6c65b"
+DEFAULT_SEARCH_CHIP_COLOR = "#99c1f1"
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
 DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
 DEFAULT_PRINT_FONT_FAMILY = "Century Schoolbook"
@@ -421,10 +423,8 @@ def _action_command(
     )
 
 
-CONTINUOUS_PAGE_BATCH = 25
 PAGE_MARKER_BG_COLOR = "#eef2f7"
 PAGE_MARKER_FG_COLOR = "#1f2937"
-CONTINUOUS_SCROLL_THRESHOLD_PX = 800
 MONTH_NAME_TO_NUMBER = {
     "january": 1,
     "jan": 1,
@@ -1444,6 +1444,7 @@ class AiSettings:
     grep_highlight_color: str
     phrase_highlight_color: str
     summary_emphasis_color: str
+    search_chip_color: str
     model_profiles: list[ModelProfile] = field(default_factory=list)
     task_profile_defaults: dict[str, str | None] = field(default_factory=dict)
 
@@ -1811,20 +1812,14 @@ class FocusViewState:
     show_image: bool = False
     sidebar_visible: bool = True
     ai_panel_visible: bool = True
-    continuous_view: bool = False
-    continuous_text: str | None = None
-    continuous_pages_order: list[int] = field(default_factory=list)
-    continuous_loaded_count: int = 0
-    continuous_loading: bool = False
     grep_phrase_raw: str | None = None
     grep_regex: re.Pattern[str] | None = None
+    grep_active: bool = False
     grep_hits: dict[int, list[tuple[int, int]]] = field(default_factory=dict)
     matching_pages: list[int] = field(default_factory=list)
     matching_lookup: dict[int, int] = field(default_factory=dict)
-    grep_combined_text: str | None = None
-    grep_combined_highlights: list[tuple[int, int]] = field(default_factory=list)
+    grep_match_order: list[tuple[int, int]] = field(default_factory=list)
     grep_current_match_index: int = -1
-    showing_grep_results: bool = False
     ai_active_view: str = AI_VIEW_QA
     ai_output_raw: dict[str, str] = field(
         default_factory=lambda: {
@@ -1929,6 +1924,10 @@ def load_ai_settings() -> AiSettings:
         config.get(CONFIG_KEY_SUMMARY_EMPHASIS_COLOR),
         DEFAULT_SUMMARY_EMPHASIS_COLOR,
     )
+    search_chip_color = _coerce_color_value(
+        config.get(CONFIG_KEY_SEARCH_CHIP_COLOR),
+        DEFAULT_SEARCH_CHIP_COLOR,
+    )
     return AiSettings(
         api_url=api_url,
         model_id=model_id,
@@ -1968,6 +1967,7 @@ def load_ai_settings() -> AiSettings:
         grep_highlight_color=grep_highlight_color,
         phrase_highlight_color=phrase_highlight_color,
         summary_emphasis_color=summary_emphasis_color,
+        search_chip_color=search_chip_color,
         model_profiles=model_profiles,
         task_profile_defaults=task_profile_defaults,
     )
@@ -2051,6 +2051,10 @@ def save_ai_settings(settings: AiSettings) -> None:
         settings.summary_emphasis_color,
         DEFAULT_SUMMARY_EMPHASIS_COLOR,
     )
+    config[CONFIG_KEY_SEARCH_CHIP_COLOR] = _coerce_color_value(
+        settings.search_chip_color,
+        DEFAULT_SEARCH_CHIP_COLOR,
+    )
     _write_config(config)
 
 
@@ -2075,16 +2079,6 @@ def compose_extract_information_prompt(
     return f"{preface}\n\n{base_prompt}"
 
 
-CONTINUOUS_ICON_ON_CHOICES = (
-    "view-continuous-symbolic",
-    "view-list-symbolic",
-    "view-grid-symbolic",
-)
-CONTINUOUS_ICON_OFF_CHOICES = (
-    "zoom-original-symbolic",
-    "view-restore-symbolic",
-    "view-dual-symbolic",
-)
 IMAGE_ICON_ON_CHOICES = (
     "image-x-generic-symbolic",
     "insert-image-symbolic",
@@ -2468,6 +2462,13 @@ button.focus-filter-chip:active {
   box-shadow: none;
 }
 
+label.focus-search-chip {
+  border-radius: 10px;
+  padding: 4px 10px;
+  background-color: __SEARCH_CHIP_COLOR__;
+  color: #1f2937;
+}
+
 #page-text {
   background-color: transparent;
 }
@@ -2479,6 +2480,9 @@ button.focus-filter-chip:active {
 ).replace("__AI_PANEL_BG__", DEFAULT_AI_PANEL_BG_COLOR).replace(
     "__PAGE_TEXT_BG__",
     PAGE_TEXT_BG_COLOR,
+).replace(
+    "__SEARCH_CHIP_COLOR__",
+    DEFAULT_SEARCH_CHIP_COLOR,
 )
 _chrome_provider = Gtk.CssProvider()
 _chrome_provider.load_from_data(APP_CHROME_CSS.encode("utf-8"))
@@ -2822,6 +2826,29 @@ def split_span_at_line_breaks(text: str, start: int, end: int) -> list[tuple[int
     return spans
 
 
+def build_grep_match_order(
+    grep_hits: dict[int, list[tuple[int, int]]],
+    matching_pages: Sequence[int],
+) -> list[tuple[int, int]]:
+    order: list[tuple[int, int]] = []
+    for page in matching_pages:
+        for hit_index, (start, end) in enumerate(grep_hits.get(page, [])):
+            if end > start:
+                order.append((page, hit_index))
+    return order
+
+
+def format_grep_status_text(
+    match_order: Sequence[tuple[int, int]],
+    current_match_index: int,
+) -> str:
+    total_hits = len(match_order)
+    if total_hits <= 0:
+        return ""
+    current_index = min(max(current_match_index, 0), total_hits - 1)
+    return f"Search: hit {current_index + 1}/{total_hits}"
+
+
 def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:
     if not text:
         return
@@ -2987,13 +3014,6 @@ class Focus(Adw.Application):
         self._toc_sidebar_has_items = False
         self._toc_sidebar_visible = True
         self._sidebar_button_guard = False
-        self._continuous_view = False
-        self._continuous_text: str | None = None
-        self._continuous_action: Gio.SimpleAction | None = None
-        self._continuous_pages_order: list[int] = []
-        self._continuous_loaded_count = 0
-        self._continuous_vadj_handler: int | None = None
-        self._continuous_loading = False
         self._current_text_color = DEFAULT_TEXT_COLOR
 
         self._color_provider = Gtk.CssProvider()
@@ -3011,13 +3031,12 @@ class Focus(Adw.Application):
 
         self._grep_phrase_raw: str | None = None
         self._grep_regex: re.Pattern[str] | None = None
+        self._grep_active = False
         self._grep_hits: dict[int, list[tuple[int, int]]] = {}
         self._matching_pages: list[int] = []
         self._matching_lookup: dict[int, int] = {}
-        self._grep_combined_text: str | None = None
-        self._grep_combined_highlights: list[tuple[int, int]] = []
+        self._grep_match_order: list[tuple[int, int]] = []
         self._grep_current_match_index = -1
-        self._showing_grep_results = False
         self._grep_search_thread: threading.Thread | None = None
         self._grep_search_cancel_event: threading.Event | None = None
         self._grep_search_generation = 0
@@ -3084,11 +3103,6 @@ class Focus(Adw.Application):
         self._image_print_entry: Gtk.Entry | None = None
         self._image_print_pages: list[int] = []
         self._show_image_action: Gio.SimpleAction | None = None
-        self._continuous_toggle_button: Gtk.ToggleButton | None = None
-        self._continuous_icon: Gtk.Image | None = None
-        self._continuous_button_guard = False
-        self._continuous_icon_name_on = CONTINUOUS_ICON_ON_CHOICES[0]
-        self._continuous_icon_name_off = self._continuous_icon_name_on
         self._show_image_button: Gtk.ToggleButton | None = None
         self._show_image_icon: Gtk.Image | None = None
         self._show_image_button_guard = False
@@ -3506,8 +3520,6 @@ class Focus(Adw.Application):
         content_box.set_margin_end(12)
         content_box.set_margin_top(5)
 
-        self._continuous_icon_name_on = self._choose_icon(*CONTINUOUS_ICON_ON_CHOICES)
-        self._continuous_icon_name_off = self._continuous_icon_name_on
         self._image_icon_name_on = self._choose_icon(*IMAGE_ICON_ON_CHOICES)
         self._image_icon_name_off = self._image_icon_name_on
 
@@ -4070,9 +4082,10 @@ class Focus(Adw.Application):
         grep_controls.append(self._grep_entry)
 
         self._grep_hit_label = Gtk.Label(label="")
-        self._grep_hit_label.add_css_class("dim-label")
+        self._grep_hit_label.add_css_class("focus-search-chip")
         self._grep_hit_label.set_valign(Gtk.Align.CENTER)
         self._grep_hit_label.set_xalign(0.0)
+        self._grep_hit_label.set_visible(False)
         grep_controls.append(self._grep_hit_label)
 
         self._grep_prev_hit_button = Gtk.Button()
@@ -4113,7 +4126,6 @@ class Focus(Adw.Application):
         text_controls.set_end_widget(trailing_controls)
 
         content_box.append(text_controls)
-        self._update_continuous_toggle_button()
         self._update_show_image_toggle_button()
         self._update_page_nav_buttons()
 
@@ -4558,7 +4570,6 @@ class Focus(Adw.Application):
             ai_state.raw = ""
             self._apply_ai_output_links("", ai_state)
         self._set_rag_filter_chip(None)
-        self._sync_continuous_action()
         self._sync_show_image_action()
 
     def _cancel_all_ai_streams(self) -> None:
@@ -4596,20 +4607,14 @@ class Focus(Adw.Application):
             (self._ai_panel_toggle and self._ai_panel_toggle.get_active())
             or (self._ai_panel_revealer and self._ai_panel_revealer.get_child_revealed())
         )
-        state.continuous_view = self._continuous_view
-        state.continuous_text = self._continuous_text
-        state.continuous_pages_order = list(self._continuous_pages_order)
-        state.continuous_loaded_count = self._continuous_loaded_count
-        state.continuous_loading = self._continuous_loading
         state.grep_phrase_raw = self._grep_phrase_raw
         state.grep_regex = self._grep_regex
+        state.grep_active = self._grep_active
         state.grep_hits = {k: list(v) for k, v in self._grep_hits.items()}
         state.matching_pages = list(self._matching_pages)
         state.matching_lookup = dict(self._matching_lookup)
-        state.grep_combined_text = self._grep_combined_text
-        state.grep_combined_highlights = list(self._grep_combined_highlights)
+        state.grep_match_order = list(self._grep_match_order)
         state.grep_current_match_index = self._grep_current_match_index
-        state.showing_grep_results = self._showing_grep_results
         state.ai_active_view = self._ai_active_view
         state.ai_output_raw = {name: view.raw or "" for name, view in self._ai_outputs.items()}
         state.ai_status_text = ""
@@ -4709,8 +4714,6 @@ class Focus(Adw.Application):
                 hadj.set_value(hadj.get_lower())
 
     def _current_grep_highlights(self) -> list[tuple[int, int]]:
-        if self._showing_grep_results and self._grep_combined_text:
-            return list(self._grep_combined_highlights)
         if not self.pages or not self._grep_hits:
             return []
         if self.current_index < 0 or self.current_index >= len(self.pages):
@@ -4725,11 +4728,16 @@ class Focus(Adw.Application):
         highlights = self._current_grep_highlights()
         if not highlights:
             return
-        index = self._grep_current_match_index
-        if index < 0 or index >= len(highlights):
-            index = 0
-            self._grep_current_match_index = index
-        start, _end = highlights[index]
+        local_index = 0
+        if self._grep_active and 0 <= self._grep_current_match_index < len(self._grep_match_order):
+            page, hit_index = self._grep_match_order[self._grep_current_match_index]
+            current_page = self._current_page_number()
+            if page == current_page:
+                local_index = hit_index
+        elif 0 <= self._grep_current_match_index < len(highlights):
+            local_index = self._grep_current_match_index
+        local_index = max(0, min(local_index, len(highlights) - 1))
+        start, _end = highlights[local_index]
         GLib.idle_add(self._scroll_textview_to_offset, start)
 
     def _apply_page_marker_style(self, buf: Gtk.TextBuffer, text: str) -> None:
@@ -5170,188 +5178,6 @@ class Focus(Adw.Application):
             if tree_row.get_expanded() != should_expand:
                 tree_row.set_expanded(should_expand)
 
-    def _build_continuous_document(self) -> str:
-        ordered = self._continuous_page_order()
-        return self._render_continuous_chunk(ordered)
-
-    def _continuous_page_order(self) -> list[int]:
-        if not self.pages:
-            return []
-        return self.pages[self.current_index :] + self.pages[: self.current_index]
-
-    def _render_continuous_chunk(self, ordered: list[int]) -> str:
-        parts: list[str] = []
-        for idx, page in enumerate(ordered):
-            content, _, _ = self._read_page_text(page)
-            rendered, _ = self._render_multi_page_display(page, content, None)
-            if idx:
-                parts.append("\n\n")
-            parts.append(rendered)
-        return "".join(parts)
-
-    def _connect_continuous_scroll_watch(self) -> None:
-        if not self.scroller:
-            return
-        vadj = self.scroller.get_vadjustment()
-        if not vadj:
-            return
-        self._disconnect_continuous_scroll_watch()
-        self._continuous_vadj_handler = vadj.connect("value-changed", self._on_continuous_scroll)
-
-    def _disconnect_continuous_scroll_watch(self) -> None:
-        if self._continuous_vadj_handler is None or not self.scroller:
-            self._continuous_vadj_handler = None
-            return
-        vadj = self.scroller.get_vadjustment()
-        if vadj:
-            try:
-                vadj.disconnect(self._continuous_vadj_handler)
-            except (TypeError, RuntimeError):
-                pass
-        self._continuous_vadj_handler = None
-
-    def _on_continuous_scroll(self, adjustment: Gtk.Adjustment) -> None:
-        if not self._continuous_view:
-            return
-        self._maybe_load_more_continuous_pages(adjustment)
-
-    def _maybe_load_more_continuous_pages(self, adjustment: Gtk.Adjustment | None = None) -> None:
-        if (
-            not self._continuous_view
-            or self._continuous_loaded_count >= len(self._continuous_pages_order)
-            or self._continuous_loading
-        ):
-            return
-        vadj = adjustment
-        if not vadj and self.scroller:
-            vadj = self.scroller.get_vadjustment()
-        if not vadj:
-            return
-        upper = vadj.get_upper()
-        page_size = vadj.get_page_size()
-        value = vadj.get_value()
-        remaining = upper - (value + page_size)
-        if remaining > CONTINUOUS_SCROLL_THRESHOLD_PX:
-            return
-        self._load_next_continuous_batch(initial=False)
-
-    def _load_next_continuous_batch(self, *, initial: bool) -> None:
-        if (
-            not self.textview
-            or not self._continuous_pages_order
-            or self._continuous_loaded_count >= len(self._continuous_pages_order)
-        ):
-            return
-        if self._continuous_loading:
-            return
-        self._continuous_loading = True
-        try:
-            start = self._continuous_loaded_count
-            end = min(len(self._continuous_pages_order), start + CONTINUOUS_PAGE_BATCH)
-            chunk_pages = self._continuous_pages_order[start:end]
-            chunk = self._render_continuous_chunk(chunk_pages)
-            self._continuous_loaded_count = end
-            if not chunk:
-                return
-            if initial:
-                self._continuous_text = chunk
-                self._set_text(chunk, None)
-                self._update_image_hover_zone_visible()
-                self._update_header()
-                return
-            buf = self.textview.get_buffer()
-            if not buf:
-                return
-            start_offset = buf.get_char_count()
-            prefix = "\n\n" if start_offset > 0 else ""
-            rendered_chunk, markdown_spans, _ = _render_markdown_text(chunk)
-            text_to_insert = prefix + rendered_chunk
-            buf.insert(buf.get_end_iter(), text_to_insert)
-            self._continuous_text = (self._continuous_text or "") + prefix + chunk
-            chunk_offset = start_offset + len(prefix)
-            self._apply_markdown_spans(buf, markdown_spans, chunk_offset)
-            self._append_page_marker_style(buf, rendered_chunk, chunk_offset)
-            self._append_page_links(buf, rendered_chunk, chunk_offset)
-            self._append_rounded_grid_table_style(buf, rendered_chunk, chunk_offset)
-        finally:
-            self._continuous_loading = False
-
-    def _sync_continuous_action(self) -> None:
-        if not self._continuous_action:
-            self._update_continuous_toggle_button()
-            return
-        state = self._continuous_action.get_state()
-        current = state.get_boolean() if state is not None else None
-        if current != self._continuous_view:
-            self._continuous_action.set_state(GLib.Variant.new_boolean(self._continuous_view))
-        self._update_continuous_toggle_button()
-
-    def _update_continuous_toggle_button(self) -> None:
-        if not self._continuous_toggle_button or not self._continuous_icon:
-            return
-        self._continuous_button_guard = True
-        try:
-            self._continuous_toggle_button.set_active(self._continuous_view)
-        finally:
-            self._continuous_button_guard = False
-        icon_name = (
-            self._continuous_icon_name_on if self._continuous_view else self._continuous_icon_name_off
-        )
-        self._continuous_icon.set_from_icon_name(icon_name)
-        tooltip = (
-            "Disable continuous view (Ctrl+Shift+C)"
-            if self._continuous_view
-            else "Enable continuous view (Ctrl+Shift+C)"
-        )
-        self._continuous_toggle_button.set_tooltip_text(tooltip)
-
-    def _deactivate_continuous_view(self, *, reload: bool) -> None:
-        if not self._continuous_view:
-            return
-        self._continuous_view = False
-        self._continuous_text = None
-        self._continuous_pages_order = []
-        self._continuous_loaded_count = 0
-        self._continuous_loading = False
-        self._disconnect_continuous_scroll_watch()
-        self._sync_continuous_action()
-        def cleanup() -> bool:
-            if reload:
-                self._load_current()
-            else:
-                self._update_header()
-                self._update_image_hover_zone_visible()
-            self.textview.set_hexpand(True)
-            self.textview.set_vexpand(True)
-            return False
-        GLib.idle_add(cleanup)
-
-    def _set_continuous_view(self, enabled: bool) -> bool:
-        if enabled:
-            self._hide_summary_hover_preview(cancel=True)
-            if self._showing_grep_results:
-                self._transient_toast("Continuous view is unavailable while showing grep results.")
-                self._sync_continuous_action()
-                return False
-            if not self.pages:
-                self._transient_toast("No pages available for continuous view.")
-                self._sync_continuous_action()
-                return False
-            self._set_show_image(False, silent=True)
-            self._continuous_pages_order = self._continuous_page_order()
-            self._continuous_loaded_count = 0
-            self._continuous_text = None
-            if not self._continuous_pages_order:
-                self._sync_continuous_action()
-                return False
-            self._continuous_view = True
-            self._sync_continuous_action()
-            self._load_next_continuous_batch(initial=True)
-            self._connect_continuous_scroll_watch()
-            return True
-        self._deactivate_continuous_view(reload=True)
-        return True
-
     def _set_sidebar_visible(self, visible: bool) -> None:
         self._toc_sidebar_visible = visible
         self._current_view_state().sidebar_visible = visible
@@ -5414,25 +5240,6 @@ class Focus(Adw.Application):
         action.set_state(value)
         self._set_sidebar_visible(visible)
 
-    def _on_toggle_continuous_view(
-        self,
-        action: Gio.SimpleAction,
-        value: GLib.Variant,
-    ) -> None:
-        desired = value.get_boolean()
-        success = self._set_continuous_view(desired)
-        if not success:
-            action.set_state(GLib.Variant.new_boolean(self._continuous_view))
-        else:
-            action.set_state(GLib.Variant.new_boolean(self._continuous_view))
-
-    def _on_continuous_button_toggled(self, button: Gtk.ToggleButton) -> None:
-        if self._continuous_button_guard:
-            return
-        desired = button.get_active()
-        self._set_continuous_view(desired)
-        self._update_continuous_toggle_button()
-
     def _on_toggle_show_image(
         self,
         action: Gio.SimpleAction,
@@ -5451,6 +5258,11 @@ class Focus(Adw.Application):
 
     def _apply_text_color(self, color_value: str) -> None:
         self._current_text_color = color_value
+        search_chip_color = (
+            self._ai_settings.search_chip_color
+            if self._ai_settings
+            else DEFAULT_SEARCH_CHIP_COLOR
+        )
         css = (
             "#page-text { "
             f"color: {PAGE_TEXT_FG_COLOR}; font-size: {self._font_size_pt}pt; "
@@ -5464,6 +5276,9 @@ class Focus(Adw.Application):
             "}"
             "textview.ai-output-view.rag-audit-view { "
             f"font-size: {DEFAULT_RAG_AUDIT_FONT_SIZE_PT}pt; "
+            "}"
+            "label.focus-search-chip { "
+            f"background-color: {search_chip_color}; "
             "}"
         ).encode()
         try:
@@ -6263,7 +6078,7 @@ class Focus(Adw.Application):
         self._set_right_scroll_active(False)
 
     def _can_show_image_hover_peek(self) -> bool:
-        if self._show_image or self._continuous_view or self._showing_grep_results:
+        if self._show_image:
             return False
         if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
             return False
@@ -6273,8 +6088,6 @@ class Focus(Adw.Application):
         return (self.images_dir / f"{page:04d}.png").exists()
 
     def _can_summarize_current_page(self) -> bool:
-        if self._continuous_view or self._showing_grep_results:
-            return False
         if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
             return False
         page = self.pages[self.current_index]
@@ -7065,14 +6878,13 @@ class Focus(Adw.Application):
             return
         if not self.pages:
             return
-        self._deactivate_continuous_view(reload=False)
         idx = bisect.bisect_left(self.pages, page_num)
         if idx >= len(self.pages) or self.pages[idx] != page_num:
             self._transient_toast(f"Page {page_num:04d} not available")
             return
         self.current_index = idx
-        if self._showing_grep_results:
-            self._showing_grep_results = False
+        if self._grep_active or self._grep_search_thread:
+            self._clear_grep_state()
         self._load_current()
 
     def _load_image_for_page(self, page: int, *, silent: bool = False) -> bool:
@@ -7339,16 +7151,6 @@ class Focus(Adw.Application):
 
     def _set_show_image(self, enabled: bool, *, silent: bool = False) -> bool:
         if enabled:
-            if self._continuous_view:
-                if not silent:
-                    self._transient_toast("Show Image is unavailable in continuous view.")
-                self._sync_show_image_action()
-                return False
-            if self._showing_grep_results:
-                if not silent:
-                    self._transient_toast("Show Image is unavailable while multiple pages are displayed.")
-                self._sync_show_image_action()
-                return False
             if not self.pages:
                 if not silent:
                     self._transient_toast("No page available to display an image.")
@@ -7393,7 +7195,7 @@ class Focus(Adw.Application):
         return None
 
     def _update_page_nav_buttons(self) -> None:
-        enabled = bool(self.pages) and not self._continuous_view and not self._showing_grep_results
+        enabled = bool(self.pages)
         if self._page_back_one_button:
             self._page_back_one_button.set_sensitive(enabled)
         if self._page_forward_one_button:
@@ -7413,16 +7215,17 @@ class Focus(Adw.Application):
                 self._page_total_label.set_text("/ --")
 
     def _update_grep_hit_navigation(self) -> None:
-        total_hits = len(self._current_grep_highlights())
-        if total_hits > 0:
-            current_index = min(max(self._grep_current_match_index, 0), total_hits - 1)
-            current_display = current_index + 1
-        else:
-            current_display = 0
+        total_hits = len(self._grep_match_order) if self._grep_active else 0
+        current_index = min(max(self._grep_current_match_index, 0), total_hits - 1)
         if self._grep_hit_label:
-            self._grep_hit_label.set_text(f"{current_display}/{total_hits}" if total_hits > 0 else "")
-        prev_enabled = total_hits > 0 and current_display > 1
-        next_enabled = total_hits > 0 and current_display < total_hits
+            status_text = format_grep_status_text(
+                self._grep_match_order,
+                self._grep_current_match_index,
+            )
+            self._grep_hit_label.set_text(status_text)
+            self._grep_hit_label.set_visible(bool(status_text))
+        prev_enabled = total_hits > 0 and current_index > 0
+        next_enabled = total_hits > 0 and current_index < total_hits - 1
         if self._grep_prev_hit_button:
             self._grep_prev_hit_button.set_sensitive(prev_enabled)
         if self._grep_next_hit_button:
@@ -7431,17 +7234,6 @@ class Focus(Adw.Application):
     def _update_header(self) -> None:
         self._update_page_nav_buttons()
         self._update_grep_hit_navigation()
-        if self._showing_grep_results:
-            self._set_window_title(None, "Grep results")
-            return
-        if self._continuous_view:
-            if not self.pages:
-                self._set_window_title(None, "Continuous view")
-                return
-            page = self.pages[self.current_index]
-            summary = f"Continuous view - starting at {page:04d}"
-            self._set_window_title(None, summary)
-            return
         if not self.pages:
             self._set_window_title("No pages found", "No pages found")
             return
@@ -7553,28 +7345,6 @@ class Focus(Adw.Application):
     def _on_transcript_breakdown_clicked(self, _button: Gtk.Button) -> None:
         self._show_transcript_breakdown()
 
-    def _multi_page_marker_text(self, page: int) -> str:
-        return f"{page:04d}"
-
-    def _multi_page_header_text(self, page: int) -> str:
-        return f"{self._multi_page_marker_text(page)}\n\n"
-
-    def _render_multi_page_display(
-        self,
-        page: int,
-        content: str,
-        highlights: list[tuple[int, int]] | None,
-    ) -> tuple[str, list[tuple[int, int]] | None]:
-        header = self._multi_page_header_text(page)
-        adjusted: list[tuple[int, int]] = []
-        if highlights:
-            offset = len(header)
-            for start, end in highlights:
-                if end <= start:
-                    continue
-                adjusted.append((start + offset, end + offset))
-        return header + content, adjusted if adjusted else None
-
     def _render_page_display(
         self,
         _page: int,
@@ -7586,10 +7356,6 @@ class Focus(Adw.Application):
 
     def _load_current(self) -> None:
         self._hide_summary_hover_preview(cancel=True)
-        if self._showing_grep_results and self._grep_combined_text:
-            self._set_show_image(False, silent=True)
-            self._show_grep_results()
-            return
         if not self.pages:
             self._set_show_image(False, silent=True)
             return
@@ -7625,13 +7391,12 @@ class Focus(Adw.Application):
     def _clear_grep_state(self) -> None:
         self._stop_grep_search_if_running()
         self._grep_regex = None
+        self._grep_active = False
         self._grep_hits.clear()
         self._matching_pages.clear()
         self._matching_lookup.clear()
-        self._grep_combined_text = None
-        self._grep_combined_highlights = []
+        self._grep_match_order = []
         self._grep_current_match_index = -1
-        self._showing_grep_results = False
 
     def _stop_grep_search_if_running(self) -> None:
         if self._grep_search_cancel_event:
@@ -7647,7 +7412,6 @@ class Focus(Adw.Application):
     def _apply_grep(self, phrase: str) -> None:
         self._stop_grep_search_if_running()
         phrase = phrase.strip()
-        self._deactivate_continuous_view(reload=False)
         if phrase:
             self._set_show_image(False, silent=True)
         if not phrase:
@@ -7657,6 +7421,13 @@ class Focus(Adw.Application):
             return
 
         self._grep_phrase_raw = phrase
+        self._grep_hits.clear()
+        self._matching_pages.clear()
+        self._matching_lookup.clear()
+        self._grep_match_order = []
+        self._grep_current_match_index = -1
+        self._grep_active = False
+        self._update_header()
         try:
             self._grep_regex = re.compile(
                 build_pattern(preprocess_phrase(self._grep_phrase_raw), MAX_BREAKS),
@@ -7665,13 +7436,6 @@ class Focus(Adw.Application):
         except re.error as exc:
             self._transient_toast(f"Invalid grep pattern: {exc}")
             return
-        self._grep_hits.clear()
-        self._matching_pages.clear()
-        self._matching_lookup.clear()
-        self._grep_combined_text = None
-        self._grep_combined_highlights = []
-        self._grep_current_match_index = -1
-        self._showing_grep_results = False
         self._grep_search_generation += 1
         generation = self._grep_search_generation
         cancel_event = threading.Event()
@@ -7696,7 +7460,6 @@ class Focus(Adw.Application):
         page_to_path: dict[int, Path],
     ) -> None:
         local_hits: dict[int, list[tuple[int, int]]] = {}
-        local_contents: dict[int, str] = {}
         phrase_source = self._grep_phrase_raw or ""
         phrase_prepared = preprocess_phrase(phrase_source)
         candidate_pages = self._find_grep_candidate_pages(
@@ -7750,44 +7513,14 @@ class Focus(Adw.Application):
                     mapped_hits.append(mapped)
             if mapped_hits:
                 local_hits[page] = mapped_hits
-                local_contents[page] = content
 
         matching_pages = sorted(local_hits.keys())
-        combined_text: str | None = None
-        combined_highlights: list[tuple[int, int]] = []
-
-        if len(matching_pages) > 1:
-            parts: list[str] = []
-            offset = 0
-            for idx, page in enumerate(matching_pages):
-                if cancel_event.is_set():
-                    return
-                if idx:
-                    separator = "\n\n"
-                    parts.append(separator)
-                    offset += len(separator)
-                content = local_contents.get(page)
-                if content is None:
-                    path = page_to_path.get(page)
-                    content = self._read_text_file(path) if path else ""
-                header = self._multi_page_header_text(page)
-                parts.append(header)
-                parts.append(content)
-                header_len = len(header)
-                for start, end in local_hits.get(page, []):
-                    combined_highlights.append(
-                        (offset + header_len + start, offset + header_len + end)
-                    )
-                offset += header_len + len(content)
-            combined_text = "".join(parts) if parts else None
 
         GLib.idle_add(
             self._on_grep_search_finished,
             generation,
             local_hits,
             matching_pages,
-            combined_text,
-            combined_highlights,
         )
 
     def _find_grep_candidate_pages(
@@ -7886,8 +7619,6 @@ class Focus(Adw.Application):
         generation: int,
         grep_hits: dict[int, list[tuple[int, int]]],
         matching_pages: list[int],
-        combined_text: str | None,
-        combined_highlights: list[tuple[int, int]],
     ) -> bool:
         if generation != self._grep_search_generation:
             return False
@@ -7897,48 +7628,22 @@ class Focus(Adw.Application):
         self._grep_hits = {page: list(hits) for page, hits in grep_hits.items()}
         self._matching_pages = list(matching_pages)
         self._matching_lookup = {page: idx for idx, page in enumerate(self._matching_pages)}
+        self._grep_match_order = build_grep_match_order(self._grep_hits, self._matching_pages)
 
-        if not self._matching_pages:
-            self._showing_grep_results = False
-            self._grep_combined_text = None
-            self._grep_combined_highlights = []
+        if not self._grep_match_order:
+            self._grep_active = False
             self._grep_current_match_index = -1
             self._transient_toast("No pages matched the grep phrase")
             self._load_current()
             return False
 
-        first_page = self._matching_pages[0]
+        self._grep_active = True
+        first_page, _first_hit = self._grep_match_order[0]
         if first_page in self.pages:
             self.current_index = self.pages.index(first_page)
         self._grep_current_match_index = 0
-
-        if len(self._matching_pages) == 1:
-            self._showing_grep_results = False
-            self._grep_combined_text = None
-            self._grep_combined_highlights = []
-            self._load_current()
-            return False
-
-        self._grep_combined_text = combined_text
-        self._grep_combined_highlights = list(combined_highlights)
-        self._showing_grep_results = bool(self._grep_combined_text)
-        if not self._showing_grep_results:
-            self._load_current()
-            return False
-        self._show_grep_results()
+        self._load_current()
         return False
-
-    def _show_grep_results(self) -> None:
-        if not self._showing_grep_results or not self._grep_combined_text:
-            return
-        self._hide_summary_hover_preview(cancel=True)
-        if self._grep_entry and self._grep_phrase_raw is not None:
-            self._grep_entry.set_text(self._grep_phrase_raw)
-        self._set_text(self._grep_combined_text, self._grep_combined_highlights)
-        self._update_image_hover_zone_visible()
-        self._update_header()
-        self._sync_sidebar_active_page()
-        self._scroll_to_current_grep_match()
 
     def _on_grep_prev_hit_clicked(self, _button: Gtk.Button) -> None:
         self._navigate_grep_match(-1)
@@ -7947,34 +7652,9 @@ class Focus(Adw.Application):
         self._navigate_grep_match(1)
 
     def _navigate_grep_match(self, direction: int) -> bool:
-        if direction == 0 or not self._grep_hits:
+        if direction == 0 or not self._grep_active or not self._grep_match_order:
             return False
-        if self._showing_grep_results and self._grep_combined_text:
-            highlights = self._grep_combined_highlights
-            if not highlights:
-                return False
-            count = len(highlights)
-            current = self._grep_current_match_index
-            if current < 0 or current >= count:
-                current = 0 if direction > 0 else count - 1
-            else:
-                next_index = current + direction
-                if next_index < 0 or next_index >= count:
-                    self._edge_flash()
-                    return True
-                current = next_index
-            self._grep_current_match_index = current
-            self._update_grep_hit_navigation()
-            self._scroll_to_current_grep_match()
-            return True
-
-        if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
-            return False
-        page = self.pages[self.current_index]
-        page_hits = self._grep_hits.get(page, [])
-        if not page_hits:
-            return False
-        count = len(page_hits)
+        count = len(self._grep_match_order)
         current = self._grep_current_match_index
         if current < 0 or current >= count:
             current = 0 if direction > 0 else count - 1
@@ -7985,6 +7665,16 @@ class Focus(Adw.Application):
                 return True
             current = next_index
         self._grep_current_match_index = current
+        target_page, _hit_index = self._grep_match_order[current]
+        if target_page in self.pages and (
+            not self.pages
+            or self.current_index < 0
+            or self.current_index >= len(self.pages)
+            or self.pages[self.current_index] != target_page
+        ):
+            self.current_index = self.pages.index(target_page)
+            self._load_current()
+            return True
         self._update_grep_hit_navigation()
         self._scroll_to_current_grep_match()
         return True
@@ -8550,6 +8240,7 @@ class Focus(Adw.Application):
             self._ai_settings.rag_prompt = DEFAULT_RAG_PROMPT
         self._refresh_ai_profile_dropdowns()
         self._refresh_ai_quote_colors()
+        self._apply_text_color(self._current_text_color)
         self._kickoff_rag_background_load()
         if self.textview:
             self._load_current()
@@ -8566,7 +8257,6 @@ class Focus(Adw.Application):
         if not normalized.exists() or not normalized.is_dir():
             self._transient_toast(f"Directory not found: {normalized}")
             return
-        self._deactivate_continuous_view(reload=False)
         self._set_show_image(False, silent=True)
         self._close_transcript_breakdown_window()
         self._reset_view_states()
@@ -8576,14 +8266,13 @@ class Focus(Adw.Application):
         save_input_dir_to_config(normalized)
         if not self.text_dir.exists():
             self._transient_toast(f"Text pages directory not found: {self.text_dir}")
-        self._showing_grep_results = False
         self._grep_phrase_raw = None
         self._grep_regex = None
+        self._grep_active = False
         self._grep_hits.clear()
         self._matching_pages.clear()
         self._matching_lookup.clear()
-        self._grep_combined_text = None
-        self._grep_combined_highlights = []
+        self._grep_match_order = []
         self._grep_current_match_index = -1
         self._scan_pages()
         self._refresh_transcript_breakdown_button()
@@ -8651,13 +8340,9 @@ class Focus(Adw.Application):
         return False
 
     def _on_page_back_one_clicked(self, _button: Gtk.Button) -> None:
-        if self._continuous_view or self._showing_grep_results:
-            return
         self._go_prev()
 
     def _on_page_forward_one_clicked(self, _button: Gtk.Button) -> None:
-        if self._continuous_view or self._showing_grep_results:
-            return
         self._go_next()
 
     def _on_page_number_activate(self, entry: Gtk.Entry) -> None:
@@ -8893,9 +8578,8 @@ class Focus(Adw.Application):
     def _go_by(self, delta: int) -> None:
         if not self.pages:
             return
-        self._deactivate_continuous_view(reload=False)
-        if self._showing_grep_results:
-            self._showing_grep_results = False
+        if self._grep_active or self._grep_search_thread:
+            self._clear_grep_state()
         new_index = self.current_index + delta
         new_index = max(0, min(len(self.pages) - 1, new_index))
         if new_index != self.current_index:
@@ -8919,18 +8603,16 @@ class Focus(Adw.Application):
     def _go_first(self) -> None:
         if not self.pages:
             return
-        self._deactivate_continuous_view(reload=False)
-        if self._showing_grep_results:
-            self._showing_grep_results = False
+        if self._grep_active or self._grep_search_thread:
+            self._clear_grep_state()
         self.current_index = 0
         self._load_current()
 
     def _go_last(self) -> None:
         if not self.pages:
             return
-        self._deactivate_continuous_view(reload=False)
-        if self._showing_grep_results:
-            self._showing_grep_results = False
+        if self._grep_active or self._grep_search_thread:
+            self._clear_grep_state()
         self.current_index = len(self.pages) - 1
         self._load_current()
 
@@ -9055,9 +8737,6 @@ class Focus(Adw.Application):
         self._set_ai_view(view_name)
 
     def _on_summarize_page_clicked(self, _button: Gtk.Button) -> None:
-        if self._continuous_view or self._showing_grep_results:
-            self._ai_transient_toast("Summarize Page only works when a single page is visible.")
-            return
         if not self.pages:
             self._ai_transient_toast("No page loaded to summarize.")
             return
@@ -9120,9 +8799,6 @@ class Focus(Adw.Application):
         return start, end
 
     def _on_extract_page_clicked(self, _button: Gtk.Button) -> None:
-        if self._continuous_view or self._showing_grep_results:
-            self._ai_transient_toast("Extract Current Page only works when a single text page is visible.")
-            return
         if not self.pages:
             self._ai_transient_toast("No page loaded to extract from.")
             return
@@ -10936,6 +10612,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._grep_highlight_color_control: Gtk.Widget | None = None
         self._phrase_highlight_color_control: Gtk.Widget | None = None
         self._summary_emphasis_color_control: Gtk.Widget | None = None
+        self._search_chip_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._prompt_editors: dict[str, SummarizationPromptWidgets | RagPromptWidgets] = {}
         self._model_profiles: list[ModelProfile] = list(app._ai_settings.model_profiles)
@@ -11040,6 +10717,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_SUMMARY_EMPHASIS_COLOR,
         )
         highlight_group.add(summary_emphasis_row)
+
+        search_chip_row, self._search_chip_color_control = self._build_color_row(
+            "Search Chip Color",
+            DEFAULT_SEARCH_CHIP_COLOR,
+        )
+        highlight_group.add(search_chip_row)
 
         highlight_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         highlight_box.set_margin_top(6)
@@ -11696,6 +11379,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             settings.summary_emphasis_color,
             DEFAULT_SUMMARY_EMPHASIS_COLOR,
         )
+        self._set_color_control_value(
+            self._search_chip_color_control,
+            settings.search_chip_color,
+            DEFAULT_SEARCH_CHIP_COLOR,
+        )
         self._set_status("Loaded saved values.")
 
     def _set_status(self, text: str) -> None:
@@ -11782,6 +11470,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._summary_emphasis_color_control,
             DEFAULT_SUMMARY_EMPHASIS_COLOR,
         )
+        search_chip_color = self._read_color_control_value(
+            self._search_chip_color_control,
+            DEFAULT_SEARCH_CHIP_COLOR,
+        )
 
         record_font_size = (
             int(round(self._record_font_size_row.get_value()))
@@ -11846,6 +11538,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
             summary_emphasis_color=summary_emphasis_color,
+            search_chip_color=search_chip_color,
             model_profiles=model_profiles,
             task_profile_defaults=task_profile_defaults,
         )
