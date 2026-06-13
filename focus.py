@@ -1022,6 +1022,13 @@ def load_transcript_page_index(path: Path) -> TranscriptPageIndex:
     return TranscriptPageIndex(by_file_page, by_transcript_tuple, by_key_tuple)
 
 
+def format_toc_page_subtitle(page: int, index: TranscriptPageIndex) -> str:
+    label = index.by_file_page.get(page)
+    if label:
+        return label.citation_label
+    return f"{page:04d}.txt"
+
+
 PAGE_JUMP_FILE_RE = re.compile(r"^(?:p|file)\s*:?\s*(\d{1,8})$", re.IGNORECASE)
 PAGE_JUMP_CITATION_RE = re.compile(
     r"^([A-Za-z0-9]+(?:\s+[A-Za-z]+)?)\s*:?\s+(\d{1,8})$",
@@ -4763,7 +4770,9 @@ class Focus(Adw.Application):
             action_row.add_css_class("focus-sidebar-top-level")
         action_row.set_title(item.title)
         if item.kind == "bookmark" and item.page is not None:
-            action_row.set_subtitle(f"Page {item.page:04d}")
+            action_row.set_subtitle(
+                format_toc_page_subtitle(item.page, self._transcript_page_index)
+            )
         else:
             action_row.set_subtitle("")
         self._update_sidebar_row_expand_widgets(list_row, tree_row)
