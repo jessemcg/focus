@@ -62,6 +62,9 @@ from gi.repository import PangoCairo  # type: ignore
 APPLICATION_ID = "com.mcglaw.Focus"
 APPLICATION_NAME = "Focus"
 ACTION_OBJECT_PATH = "/" + APPLICATION_ID.replace(".", "/")
+PROSE_APPLICATION_ID = "com.mcglaw.Prose"
+PROSE_ACTION_OBJECT_PATHS = ("/com/mcglaw/Prose", "/org/gtk/Application")
+PROSE_INSERT_RECORD_CITATIONS_ACTION = "insert-record-citations"
 
 GLib.set_application_name(APPLICATION_NAME)
 
@@ -329,6 +332,13 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
                 "grep_prev_hit",
                 "<Primary><Shift>G",
                 "Move to the previous grep match.",
+            ),
+            FocusCommand(
+                "Grep",
+                "Send grep citations to Prose",
+                "copy_grep_citations",
+                "<Primary><Shift>C",
+                "Insert citations for the current grep search in Prose, or copy them if Prose is unavailable.",
             ),
         ),
     ),
@@ -3011,6 +3021,61 @@ def format_grep_status_text(
     return f"Search: hit {current_index + 1}/{total_hits}"
 
 
+def format_grep_citations_for_clipboard(
+    match_order: Sequence[tuple[int, int]],
+    transcript_index: TranscriptPageIndex,
+) -> str:
+    seen_pages: set[int] = set()
+    citations: list[str] = []
+    for page, _hit_index in match_order:
+        if page in seen_pages:
+            continue
+        seen_pages.add(page)
+        label = transcript_index.by_file_page.get(page)
+        if not label:
+            continue
+        citation = _format_record_citation_label(label.citation_label)
+        if citation:
+            citations.append(citation)
+    return " ".join(citations)
+
+
+def _normalize_selection_for_citation_match(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _format_record_citation_label(citation_label: str) -> str:
+    citation = citation_label.strip().rstrip(".")
+    if not citation:
+        return ""
+    return f"({citation}.)"
+
+
+def append_page_citation_to_selected_text(
+    captured_text: str,
+    focus_selection: str,
+    page: int,
+    transcript_index: TranscriptPageIndex,
+) -> str:
+    if not captured_text.strip() or not focus_selection.strip():
+        return captured_text
+    if (
+        _normalize_selection_for_citation_match(captured_text)
+        != _normalize_selection_for_citation_match(focus_selection)
+    ):
+        return captured_text
+    label = transcript_index.by_file_page.get(page)
+    if not label:
+        return captured_text
+    citation = _format_record_citation_label(label.citation_label)
+    if not citation:
+        return captured_text
+    stripped_text = captured_text.rstrip()
+    if stripped_text.endswith(citation):
+        return stripped_text
+    return f"{stripped_text} {citation}"
+
+
 def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:
     if not text:
         return
@@ -3182,6 +3247,7 @@ class Focus(Adw.Application):
         self._page_jump_popover: Gtk.Popover | None = None
         self._page_total_label: Gtk.Label | None = None
         self._transcript_breakdown_button: Gtk.Button | None = None
+        self._grep_copy_citations_button: Gtk.Button | None = None
         self._grep_prev_hit_button: Gtk.Button | None = None
         self._grep_next_hit_button: Gtk.Button | None = None
         self._grep_hit_label: Gtk.Label | None = None
@@ -4184,6 +4250,29 @@ class Focus(Adw.Application):
         self._grep_hit_label.set_xalign(0.0)
         self._grep_hit_label.set_visible(False)
         grep_controls.append(self._grep_hit_label)
+
+        self._grep_copy_citations_button = Gtk.Button()
+        self._grep_copy_citations_button.add_css_class("flat")
+        self._grep_copy_citations_button.set_valign(Gtk.Align.CENTER)
+        self._grep_copy_citations_button.set_tooltip_text(
+            "Send grep citations to Prose (Ctrl+Shift+C)"
+        )
+        self._grep_copy_citations_button.set_sensitive(False)
+        self._grep_copy_citations_button.set_visible(False)
+        self._grep_copy_citations_button.set_child(
+            Gtk.Image.new_from_icon_name(
+                self._choose_icon(
+                    "document-send-symbolic",
+                    "insert-text-symbolic",
+                    "edit-copy-symbolic",
+                    "mail-attachment-symbolic",
+                )
+            )
+        )
+        self._grep_copy_citations_button.connect(
+            "clicked", self._on_grep_copy_citations_clicked
+        )
+        grep_controls.append(self._grep_copy_citations_button)
 
         self._grep_prev_hit_button = Gtk.Button()
         self._grep_prev_hit_button.add_css_class("flat")
@@ -7143,6 +7232,9 @@ class Focus(Adw.Application):
             self._grep_prev_hit_button.set_sensitive(prev_enabled)
         if self._grep_next_hit_button:
             self._grep_next_hit_button.set_sensitive(next_enabled)
+        if self._grep_copy_citations_button:
+            self._grep_copy_citations_button.set_sensitive(total_hits > 0)
+            self._grep_copy_citations_button.set_visible(total_hits > 0)
 
     def _update_header(self) -> None:
         self._update_page_nav_buttons()
@@ -7564,6 +7656,135 @@ class Focus(Adw.Application):
     def _on_grep_next_hit_clicked(self, _button: Gtk.Button) -> None:
         self._navigate_grep_match(1)
 
+    def _on_grep_copy_citations_clicked(self, _button: Gtk.Button) -> None:
+        self._send_grep_citations_to_prose_or_clipboard()
+
+    def _current_grep_citations_for_clipboard(self) -> str:
+        return format_grep_citations_for_clipboard(
+            self._grep_match_order,
+            self._transcript_page_index,
+        )
+
+    def _copy_text_to_clipboard(self, text: str) -> bool:
+        display = Gdk.Display.get_default()
+        if not display:
+            self._transient_toast("Clipboard is not available.")
+            return False
+        display.get_clipboard().set(text)
+        return True
+
+    def _prose_record_citations_action_available(self) -> bool:
+        try:
+            connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except Exception:
+            return False
+        for object_path in PROSE_ACTION_OBJECT_PATHS:
+            try:
+                connection.call_sync(
+                    PROSE_APPLICATION_ID,
+                    object_path,
+                    "org.gtk.Actions",
+                    "Describe",
+                    GLib.Variant("(s)", (PROSE_INSERT_RECORD_CITATIONS_ACTION,)),
+                    GLib.VariantType.new("((bgav))"),
+                    Gio.DBusCallFlags.NONE,
+                    1000,
+                    None,
+                )
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _send_text_to_prose_record_citations_action(self, text: str) -> bool:
+        if not self._prose_record_citations_action_available():
+            return False
+        try:
+            connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except Exception:
+            return False
+        for object_path in PROSE_ACTION_OBJECT_PATHS:
+            try:
+                connection.call_sync(
+                    PROSE_APPLICATION_ID,
+                    object_path,
+                    "org.gtk.Actions",
+                    "Activate",
+                    GLib.Variant(
+                        "(sava{sv})",
+                        (
+                            PROSE_INSERT_RECORD_CITATIONS_ACTION,
+                            [GLib.Variant("s", text)],
+                            {},
+                        ),
+                    ),
+                    None,
+                    Gio.DBusCallFlags.NONE,
+                    1000,
+                    None,
+                )
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _send_grep_citations_to_prose_or_clipboard(self) -> bool:
+        if not self._grep_active or not self._grep_match_order:
+            self._transient_toast("No grep results to send.")
+            return False
+        citations = self._current_grep_citations_for_clipboard()
+        if not citations:
+            self._transient_toast("No transcript citations available for grep results.")
+            return False
+        citation_count = citations.count("(")
+        noun = "citation" if citation_count == 1 else "citations"
+        if self._send_text_to_prose_record_citations_action(citations):
+            self._transient_toast(f"Sent {citation_count} grep {noun} to Prose.")
+            return True
+        if not self._copy_text_to_clipboard(citations):
+            return False
+        self._transient_toast(f"Prose unavailable. Copied {citation_count} grep {noun}.")
+        return True
+
+    def _on_append_selection_citation_to_file_action(
+        self,
+        _action: Gio.SimpleAction,
+        param: GLib.Variant | None,
+    ) -> None:
+        if param is None:
+            return
+        file_path = param.get_string()
+        if not file_path:
+            return
+        selection = self._get_main_text_selection()
+        if not selection:
+            return
+        if (
+            not self.pages
+            or self.current_index < 0
+            or self.current_index >= len(self.pages)
+        ):
+            return
+
+        path = Path(file_path)
+        try:
+            captured_text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+
+        updated_text = append_page_citation_to_selected_text(
+            captured_text,
+            selection,
+            self.pages[self.current_index],
+            self._transcript_page_index,
+        )
+        if updated_text == captured_text:
+            return
+        try:
+            path.write_text(updated_text, encoding="utf-8")
+        except OSError:
+            return
+
     def _navigate_grep_match(self, direction: int) -> bool:
         if direction == 0 or not self._grep_active or not self._grep_match_order:
             return False
@@ -7700,6 +7921,23 @@ class Focus(Adw.Application):
         grep_prev_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(-1))
         self.add_action(grep_prev_hit)
 
+        copy_grep_citations = Gio.SimpleAction.new("copy_grep_citations", None)
+        copy_grep_citations.connect(
+            "activate",
+            lambda _a, _p: self._send_grep_citations_to_prose_or_clipboard(),
+        )
+        self.add_action(copy_grep_citations)
+
+        append_selection_citation = Gio.SimpleAction.new(
+            "append_selection_citation_to_file",
+            GLib.VariantType.new("s"),
+        )
+        append_selection_citation.connect(
+            "activate",
+            self._on_append_selection_citation_to_file_action,
+        )
+        self.add_action(append_selection_citation)
+
         for name, cb in {
             "next": self._go_next,
             "prev": self._go_prev,
@@ -7719,6 +7957,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.focus_grep", ["<Primary>f"])
         self.set_accels_for_action("app.grep_next_hit", ["<Primary>g"])
         self.set_accels_for_action("app.grep_prev_hit", ["<Primary><Shift>g"])
+        self.set_accels_for_action("app.copy_grep_citations", ["<Primary><Shift>c"])
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
@@ -7768,6 +8007,12 @@ class Focus(Adw.Application):
         )
         search_group.append(
             Gtk.ShortcutsShortcut(title="Previous grep result", accelerator="<Primary><Shift>G")
+        )
+        search_group.append(
+            Gtk.ShortcutsShortcut(
+                title="Send grep citations to Prose",
+                accelerator="<Primary><Shift>C",
+            )
         )
         navigation_section.append(search_group)
 

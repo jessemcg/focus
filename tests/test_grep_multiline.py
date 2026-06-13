@@ -8,9 +8,13 @@ import pytest
 from focus import (
     Focus,
     MAX_BREAKS,
+    TranscriptPageIndex,
+    TranscriptPageLabel,
     _render_markdown_text,
+    append_page_citation_to_selected_text,
     build_grep_match_order,
     build_pattern,
+    format_grep_citations_for_clipboard,
     format_grep_status_text,
     normalize_text_for_search_with_map,
     preprocess_phrase,
@@ -95,6 +99,140 @@ def test_grep_status_text_reports_global_hit_position() -> None:
     match_order = [(41, 0), (41, 1), (55, 0)]
 
     assert format_grep_status_text(match_order, 2) == "Search: hit 3/3"
+
+
+def _label(file_page: int, citation_label: str) -> TranscriptPageLabel:
+    return TranscriptPageLabel(
+        file_page=file_page,
+        transcript_page_number=file_page,
+        citation_prefix=citation_label.split(maxsplit=1)[0],
+        citation_label=citation_label,
+        citation_key=citation_label.replace(" ", ":"),
+        record_type="",
+        series_id="",
+        series_description="",
+        status="selected",
+    )
+
+
+def test_grep_citations_copy_unique_pages_in_search_order() -> None:
+    index = TranscriptPageIndex(
+        by_file_page={
+            41: _label(41, "RT 45"),
+            55: _label(55, "RT 23"),
+        },
+        by_transcript_number={},
+        by_citation_key={},
+    )
+
+    citations = format_grep_citations_for_clipboard(
+        [(41, 0), (41, 1), (55, 0)],
+        index,
+    )
+
+    assert citations == "(RT 45.) (RT 23.)"
+
+
+def test_grep_citations_support_mixed_prefixes_and_existing_periods() -> None:
+    index = TranscriptPageIndex(
+        by_file_page={
+            12: _label(12, "2CT 454."),
+            13: _label(13, "3CT 12"),
+            14: _label(14, "4CT 523"),
+        },
+        by_transcript_number={},
+        by_citation_key={},
+    )
+
+    citations = format_grep_citations_for_clipboard(
+        [(12, 0), (13, 0), (14, 0)],
+        index,
+    )
+
+    assert citations == "(2CT 454.) (3CT 12.) (4CT 523.)"
+
+
+def test_grep_citations_skip_pages_without_citation_metadata() -> None:
+    index = TranscriptPageIndex(
+        by_file_page={55: _label(55, "RT 23")},
+        by_transcript_number={},
+        by_citation_key={},
+    )
+
+    citations = format_grep_citations_for_clipboard(
+        [(41, 0), (55, 0)],
+        index,
+    )
+
+    assert citations == "(RT 23.)"
+
+
+def test_append_page_citation_to_selected_text_matches_collapsed_whitespace() -> None:
+    index = TranscriptPageIndex(
+        by_file_page={41: _label(41, "RT 45")},
+        by_transcript_number={},
+        by_citation_key={},
+    )
+
+    updated = append_page_citation_to_selected_text(
+        "The child was detained at the hearing.",
+        "The child was detained\nat the hearing.",
+        41,
+        index,
+    )
+
+    assert updated == "The child was detained at the hearing. (RT 45.)"
+
+
+def test_append_page_citation_to_selected_text_skips_non_focus_selection() -> None:
+    index = TranscriptPageIndex(
+        by_file_page={41: _label(41, "RT 45")},
+        by_transcript_number={},
+        by_citation_key={},
+    )
+
+    updated = append_page_citation_to_selected_text(
+        "Text selected from another app.",
+        "The Focus transcript selection.",
+        41,
+        index,
+    )
+
+    assert updated == "Text selected from another app."
+
+
+def test_append_page_citation_to_selected_text_skips_missing_citation_metadata() -> None:
+    index = TranscriptPageIndex(
+        by_file_page={},
+        by_transcript_number={},
+        by_citation_key={},
+    )
+
+    updated = append_page_citation_to_selected_text(
+        "The child was detained.",
+        "The child was detained.",
+        41,
+        index,
+    )
+
+    assert updated == "The child was detained."
+
+
+def test_append_page_citation_to_selected_text_does_not_duplicate_citation() -> None:
+    index = TranscriptPageIndex(
+        by_file_page={41: _label(41, "RT 45")},
+        by_transcript_number={},
+        by_citation_key={},
+    )
+
+    updated = append_page_citation_to_selected_text(
+        "The child was detained. (RT 45.)",
+        "The child was detained. (RT 45.)",
+        41,
+        index,
+    )
+
+    assert updated == "The child was detained. (RT 45.)"
 
 
 @pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep is not installed")
