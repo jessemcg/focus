@@ -1,90 +1,348 @@
 import json
 
 from focus import (
-    load_record_range_choices,
-    record_range_choice_for_page,
+    TranscriptPageIndex,
+    load_transcript_page_index,
     validate_sum_page_fields,
 )
 
 
-def test_load_record_range_choices_from_manifest_boundaries(tmp_path) -> None:
-    artifacts = tmp_path / "artifacts"
-    artifacts.mkdir()
-    (tmp_path / "manifest.json").write_text(
-        json.dumps(
+def _write_transcript_index(tmp_path, entries) -> TranscriptPageIndex:
+    path = tmp_path / "transcript_page_numbers.json"
+    path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+    return load_transcript_page_index(path)
+
+
+def test_validate_sum_page_fields_resolves_unique_bare_transcript_pages(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
             {
-                "files": {
-                    "hearing_boundaries": "artifacts/hearings.json",
-                    "report_boundaries": "artifacts/reports.json",
-                    "minutes_boundaries": "artifacts/minutes.json",
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    (artifacts / "hearings.json").write_text(
-        json.dumps([{"date": "July 30, 2025", "start_page": "0003", "end_page": "0016"}]),
-        encoding="utf-8",
-    )
-    (artifacts / "reports.json").write_text(
-        json.dumps(
-            [
-                {
-                    "report_label": "July 30, 2025 - Status Review Report",
-                    "start_page": "0044",
-                    "end_page": "0059",
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-    (artifacts / "minutes.json").write_text(
-        json.dumps([{"date": "August 1, 2025", "start_page": "0278", "end_page": "0278"}]),
-        encoding="utf-8",
+                "file_page": 3,
+                "record_type": "RT",
+                "transcript_page_number": 3,
+                "citation_label": "RT 3",
+                "status": "selected",
+            },
+            {
+                "file_page": 4,
+                "record_type": "RT",
+                "transcript_page_number": 4,
+                "citation_label": "RT 4",
+                "status": "selected",
+            },
+        ],
     )
 
-    choices = load_record_range_choices(tmp_path)
-
-    assert [(choice.label, choice.start_page, choice.end_page) for choice in choices] == [
-        ("Hearing - July 30, 2025", 3, 16),
-        ("Report - July 30, 2025 - Status Review Report", 44, 59),
-        ("Minute Order - August 1, 2025", 278, 278),
-    ]
-
-
-def test_record_range_choice_for_page_prefers_smallest_containing_choice(tmp_path) -> None:
-    artifacts = tmp_path / "artifacts"
-    artifacts.mkdir()
-    (artifacts / "hearing_boundaries.json").write_text(
-        json.dumps(
-            [
-                {"date": "Full", "start_page": "0003", "end_page": "0016"},
-                {"date": "Narrow", "start_page": "0005", "end_page": "0006"},
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    choices = load_record_range_choices(tmp_path)
-
-    assert record_range_choice_for_page(choices, 5).label == "Hearing - Narrow"
-    assert record_range_choice_for_page(choices, 17) is None
-
-
-def test_validate_sum_page_fields_accepts_available_targets_only() -> None:
-    validation = validate_sum_page_fields("3", "6", [1, 3, 5, 7])
+    validation = validate_sum_page_fields("3", "4", [1, 3, 4, 10], index)
 
     assert validation.valid is True
     assert validation.start_page == 3
-    assert validation.end_page == 6
+    assert validation.end_page == 4
+    assert validation.targets == (3, 4)
+    assert validation.start_label == "RT 3"
+    assert validation.end_label == "RT 4"
+
+
+def test_validate_sum_page_fields_resolves_prefixed_duplicate_transcript_page(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 1,
+                "record_type": "CT",
+                "transcript_page_number": 1,
+                "citation_prefix": "1CT",
+                "citation_label": "1CT 1",
+                "status": "selected",
+            },
+            {
+                "file_page": 401,
+                "record_type": "CT",
+                "transcript_page_number": 1,
+                "citation_prefix": "2CT",
+                "citation_label": "2CT 1",
+                "status": "selected",
+            },
+        ],
+    )
+
+    validation = validate_sum_page_fields("2CT 1", "2CT 1", [1, 401], index)
+
+    assert validation.valid is True
+    assert validation.targets == (401,)
+    assert validation.start_label == "2CT 1"
+    assert validation.end_label == "2CT 1"
+
+
+def test_validate_sum_page_fields_infers_end_prefix_from_start_prefix(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 10,
+                "record_type": "CT",
+                "citation_prefix": "1CT",
+                "transcript_page_number": 25,
+                "citation_label": "1CT 25",
+                "status": "selected",
+            },
+            {
+                "file_page": 20,
+                "record_type": "CT",
+                "citation_prefix": "1CT",
+                "transcript_page_number": 40,
+                "citation_label": "1CT 40",
+                "status": "selected",
+            },
+            {
+                "file_page": 410,
+                "record_type": "CT",
+                "citation_prefix": "2CT",
+                "transcript_page_number": 40,
+                "citation_label": "2CT 40",
+                "status": "selected",
+            },
+        ],
+    )
+
+    validation = validate_sum_page_fields("1CT 25", "40", [10, 20, 410], index)
+
+    assert validation.valid is True
+    assert validation.targets == (10, 20)
+    assert validation.start_label == "1CT 25"
+    assert validation.end_label == "1CT 40"
+
+
+def test_validate_sum_page_fields_infers_start_prefix_from_end_prefix(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 10,
+                "record_type": "CT",
+                "citation_prefix": "1CT",
+                "transcript_page_number": 25,
+                "citation_label": "1CT 25",
+                "status": "selected",
+            },
+            {
+                "file_page": 20,
+                "record_type": "CT",
+                "citation_prefix": "1CT",
+                "transcript_page_number": 40,
+                "citation_label": "1CT 40",
+                "status": "selected",
+            },
+            {
+                "file_page": 410,
+                "record_type": "CT",
+                "citation_prefix": "2CT",
+                "transcript_page_number": 25,
+                "citation_label": "2CT 25",
+                "status": "selected",
+            },
+        ],
+    )
+
+    validation = validate_sum_page_fields("25", "1CT 40", [10, 20, 410], index)
+
+    assert validation.valid is True
+    assert validation.targets == (10, 20)
+    assert validation.start_label == "1CT 25"
+    assert validation.end_label == "1CT 40"
+
+
+def test_validate_sum_page_fields_prompts_for_duplicate_bare_range_despite_current_page(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 10,
+                "record_type": "CT",
+                "citation_prefix": "1CT",
+                "transcript_page_number": 25,
+                "citation_label": "1CT 25",
+                "status": "selected",
+            },
+            {
+                "file_page": 20,
+                "record_type": "CT",
+                "citation_prefix": "1CT",
+                "transcript_page_number": 40,
+                "citation_label": "1CT 40",
+                "status": "selected",
+            },
+            {
+                "file_page": 410,
+                "record_type": "CT",
+                "citation_prefix": "2CT",
+                "transcript_page_number": 25,
+                "citation_label": "2CT 25",
+                "status": "selected",
+            },
+            {
+                "file_page": 420,
+                "record_type": "CT",
+                "citation_prefix": "2CT",
+                "transcript_page_number": 40,
+                "citation_label": "2CT 40",
+                "status": "selected",
+            },
+        ],
+    )
+
+    validation = validate_sum_page_fields("25", "40", [10, 20, 410, 420], index, current_page=410)
+
+    assert validation.valid is False
+    assert [choice.label for choice in validation.ambiguous_range_choices] == [
+        "1CT 25-1CT 40",
+        "2CT 25-2CT 40",
+    ]
+
+
+def test_validate_sum_page_fields_infers_only_matching_bare_series(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 10,
+                "record_type": "RT",
+                "citation_prefix": "RT",
+                "transcript_page_number": 3,
+                "citation_label": "RT 3",
+                "status": "selected",
+            },
+            {
+                "file_page": 11,
+                "record_type": "RT",
+                "citation_prefix": "RT",
+                "transcript_page_number": 4,
+                "citation_label": "RT 4",
+                "status": "selected",
+            },
+            {
+                "file_page": 410,
+                "record_type": "CT",
+                "citation_prefix": "1CT",
+                "transcript_page_number": 3,
+                "citation_label": "1CT 3",
+                "status": "selected",
+            },
+        ],
+    )
+
+    validation = validate_sum_page_fields("3", "4", [10, 11, 410], index)
+
+    assert validation.valid is True
+    assert validation.targets == (10, 11)
+    assert validation.start_label == "RT 3"
+    assert validation.end_label == "RT 4"
+
+
+def test_validate_sum_page_fields_reports_ambiguous_bare_transcript_range(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 1,
+                "record_type": "CT",
+                "transcript_page_number": 1,
+                "citation_prefix": "1CT",
+                "citation_label": "1CT 1",
+                "status": "selected",
+            },
+            {
+                "file_page": 2,
+                "record_type": "CT",
+                "transcript_page_number": 2,
+                "citation_prefix": "1CT",
+                "citation_label": "1CT 2",
+                "status": "selected",
+            },
+            {
+                "file_page": 401,
+                "record_type": "CT",
+                "transcript_page_number": 1,
+                "citation_prefix": "2CT",
+                "citation_label": "2CT 1",
+                "status": "selected",
+            },
+            {
+                "file_page": 402,
+                "record_type": "CT",
+                "transcript_page_number": 2,
+                "citation_prefix": "2CT",
+                "citation_label": "2CT 2",
+                "status": "selected",
+            },
+        ],
+    )
+
+    validation = validate_sum_page_fields("1", "2", [1, 2, 401, 402], index)
+
+    assert validation.valid is False
+    assert [choice.label for choice in validation.ambiguous_range_choices] == [
+        "1CT 1-1CT 2",
+        "2CT 1-2CT 2",
+    ]
+
+
+def test_validate_sum_page_fields_does_not_fall_back_to_file_page_when_index_exists(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 10,
+                "record_type": "RT",
+                "transcript_page_number": 1,
+                "citation_label": "RT 1",
+                "status": "selected",
+            }
+        ],
+    )
+
+    validation = validate_sum_page_fields("95", "95", [10, 95], index)
+
+    assert validation.valid is False
+    assert validation.message == "Transcript page 95 not available."
+
+
+def test_validate_sum_page_fields_accepts_file_pages_without_transcript_index() -> None:
+    validation = validate_sum_page_fields("3", "5", [1, 3, 5], TranscriptPageIndex({}, {}, {}))
+
+    assert validation.valid is True
+    assert validation.start_page == 3
+    assert validation.end_page == 5
     assert validation.targets == (3, 5)
-    assert validation.message == "2 pages"
+    assert validation.start_label == "0003.txt"
+    assert validation.end_label == "0005.txt"
 
 
-def test_validate_sum_page_fields_rejects_invalid_ranges() -> None:
-    pages = [1, 2, 3]
+def test_validate_sum_page_fields_rejects_invalid_ranges(tmp_path) -> None:
+    index = _write_transcript_index(
+        tmp_path,
+        [
+            {
+                "file_page": 3,
+                "record_type": "RT",
+                "transcript_page_number": 3,
+                "citation_label": "RT 3",
+                "status": "selected",
+            },
+            {
+                "file_page": 4,
+                "record_type": "RT",
+                "transcript_page_number": 4,
+                "citation_label": "RT 4",
+                "status": "selected",
+            },
+        ],
+    )
 
-    assert validate_sum_page_fields("", "3", pages).message == "Enter start and end pages."
-    assert validate_sum_page_fields("a", "3", pages).message == "Use digits only."
-    assert validate_sum_page_fields("3", "1", pages).message == "Start must be before end."
-    assert validate_sum_page_fields("10", "12", pages).message == "No matching pages."
+    assert validate_sum_page_fields("", "RT 4", [3, 4], index).message == "Enter start and end pages."
+    assert (
+        validate_sum_page_fields("file 3", "RT 4", [3, 4], index).message
+        == "Use transcript citation pages, not .txt page numbers."
+    )
+    assert validate_sum_page_fields("RT 4", "RT 3", [3, 4], index).message == "Start must be before end."

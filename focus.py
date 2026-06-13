@@ -786,15 +786,13 @@ class TranscriptPageIndex:
 
 
 @dataclass(frozen=True)
-class RecordRangeChoice:
-    source: str
-    label: str
-    start_page: int
-    end_page: int
+class SumRangeChoice:
+    start: TranscriptPageLabel
+    end: TranscriptPageLabel
 
     @property
-    def page_count(self) -> int:
-        return max(0, self.end_page - self.start_page + 1)
+    def label(self) -> str:
+        return f"{self.start.citation_label}-{self.end.citation_label}"
 
 
 @dataclass(frozen=True)
@@ -803,10 +801,27 @@ class SumRangeValidation:
     end_page: int | None
     targets: tuple[int, ...]
     message: str
+    start_label: str = ""
+    end_label: str = ""
+    ambiguous_field: str | None = None
+    ambiguous_matches: tuple[TranscriptPageLabel, ...] = ()
+    ambiguous_range_choices: tuple[SumRangeChoice, ...] = ()
 
     @property
     def valid(self) -> bool:
         return bool(self.targets)
+
+
+@dataclass(frozen=True)
+class SumPageResolution:
+    page: int | None
+    label: str
+    message: str
+    ambiguous_matches: tuple[TranscriptPageLabel, ...] = ()
+
+    @property
+    def valid(self) -> bool:
+        return self.page is not None and not self.ambiguous_matches
 
 
 def _path_from_manifest(value: Any, root: Path) -> Path | None:
@@ -846,31 +861,6 @@ def _read_manifest_file(path: Path) -> dict[str, Any] | None:
     if isinstance(data, dict):
         return data
     return None
-
-
-def _read_json_list_file(path: Path) -> list[Any]:
-    if not path.exists():
-        return []
-    try:
-        raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw)
-    except (OSError, json.JSONDecodeError):
-        return []
-    if isinstance(data, list):
-        return data
-    return []
-
-
-def _coerce_record_page(value: Any) -> int | None:
-    if isinstance(value, int):
-        page = value
-    elif isinstance(value, str) and value.strip().isdigit():
-        page = int(value.strip())
-    else:
-        return None
-    if page <= 0:
-        return None
-    return page
 
 
 def _normalize_citation_prefix(value: Any) -> str:
@@ -1055,93 +1045,315 @@ def parse_transcript_page_jump_query(text: str) -> TranscriptPageJumpQuery | Non
     return None
 
 
-def _boundary_path(
-    root: Path,
-    manifest: dict[str, Any],
-    file_key: str,
-    fallback_name: str,
-) -> Path:
-    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-    return _path_from_manifest(files.get(file_key), root) or root / "artifacts" / fallback_name
+def _has_transcript_page_index(index: TranscriptPageIndex) -> bool:
+    return bool(index.by_file_page or index.by_transcript_number or index.by_citation_key)
 
 
-def load_record_range_choices(root: Path) -> list[RecordRangeChoice]:
-    manifest = _read_record_prep_manifest(root) or {}
-    specs = (
-        ("hearing", "Hearing", "hearing_boundaries", "hearing_boundaries.json"),
-        ("report", "Report", "report_boundaries", "report_boundaries.json"),
-        ("minute", "Minute Order", "minutes_boundaries", "minutes_boundaries.json"),
-    )
-    choices: list[RecordRangeChoice] = []
-    for source, title, file_key, fallback_name in specs:
-        path = _boundary_path(root, manifest, file_key, fallback_name)
-        for item in _read_json_list_file(path):
-            if not isinstance(item, dict):
-                continue
-            start_page = _coerce_record_page(item.get("start_page"))
-            end_page = _coerce_record_page(item.get("end_page"))
-            if start_page is None or end_page is None:
-                continue
-            if start_page > end_page:
-                start_page, end_page = end_page, start_page
-            if source == "report":
-                detail = str(
-                    item.get("report_label")
-                    or " - ".join(
-                        part
-                        for part in (
-                            str(item.get("report_date") or "").strip(),
-                            str(item.get("report_name") or "").strip(),
-                        )
-                        if part
-                    )
-                    or item.get("report_id")
-                    or ""
-                ).strip()
-            else:
-                detail = str(item.get("date") or "").strip()
-            label = f"{title} - {detail}" if detail else title
-            choices.append(
-                RecordRangeChoice(
-                    source=source,
-                    label=label,
-                    start_page=start_page,
-                    end_page=end_page,
-                )
+def resolve_sum_page_field(
+    text: str,
+    pages: Sequence[int],
+    transcript_index: TranscriptPageIndex,
+) -> SumPageResolution:
+    raw = text.strip()
+    if not raw:
+        return SumPageResolution(None, "", "Enter start and end pages.")
+    query = parse_transcript_page_jump_query(raw)
+    if query is None:
+        return SumPageResolution(None, "", "Use transcript pages like RT 3 or 1CT 25.")
+
+    has_index = _has_transcript_page_index(transcript_index)
+    if has_index:
+        if query.kind == "file":
+            return SumPageResolution(
+                None,
+                "",
+                "Use transcript citation pages, not .txt page numbers.",
             )
-    choices.sort(key=lambda choice: (choice.start_page, choice.end_page, choice.label))
-    return choices
+        if query.kind == "citation":
+            matches = transcript_index.by_citation_key.get(
+                _citation_key(query.citation_prefix, query.page_number),
+                (),
+            )
+            if not matches:
+                return SumPageResolution(
+                    None,
+                    "",
+                    f"{query.citation_prefix} {query.page_number} not available.",
+                )
+        else:
+            matches = transcript_index.by_transcript_number.get(query.page_number, ())
+            if not matches:
+                return SumPageResolution(
+                    None,
+                    "",
+                    f"Transcript page {query.page_number} not available.",
+                )
+        if len(matches) > 1:
+            return SumPageResolution(
+                None,
+                "",
+                f"Choose which transcript page {query.page_number} means.",
+                tuple(matches),
+            )
+        label = matches[0]
+        return SumPageResolution(label.file_page, label.citation_label, "")
+
+    if query.kind == "citation":
+        return SumPageResolution(
+            None,
+            "",
+            "Transcript page labels are not available; use .txt page numbers.",
+        )
+    page = query.page_number
+    if page not in pages:
+        return SumPageResolution(None, "", f"{page:04d}.txt not available.")
+    return SumPageResolution(page, f"{page:04d}.txt", "")
 
 
-def record_range_choice_for_page(
-    choices: Sequence[RecordRangeChoice],
-    page: int,
-) -> RecordRangeChoice | None:
-    containing = [choice for choice in choices if choice.start_page <= page <= choice.end_page]
-    if not containing:
-        return None
-    return min(containing, key=lambda choice: (choice.page_count, choice.start_page, choice.label))
+def _sum_matches_for_query(
+    query: TranscriptPageJumpQuery,
+    transcript_index: TranscriptPageIndex,
+) -> tuple[TranscriptPageLabel, ...]:
+    if query.kind == "citation":
+        return transcript_index.by_citation_key.get(
+            _citation_key(query.citation_prefix, query.page_number),
+            (),
+        )
+    if query.kind == "bare":
+        return transcript_index.by_transcript_number.get(query.page_number, ())
+    return ()
+
+
+def _sum_range_choices_for_matches(
+    start_matches: Sequence[TranscriptPageLabel],
+    end_matches: Sequence[TranscriptPageLabel],
+    *,
+    preferred_prefix: str = "",
+) -> tuple[SumRangeChoice, ...]:
+    normalized_prefix = _normalize_citation_prefix(preferred_prefix)
+    choices: list[SumRangeChoice] = []
+    for start in start_matches:
+        for end in end_matches:
+            if start.citation_prefix != end.citation_prefix:
+                continue
+            if normalized_prefix and start.citation_prefix != normalized_prefix:
+                continue
+            if start.file_page > end.file_page:
+                continue
+            choices.append(SumRangeChoice(start, end))
+    return tuple(
+        sorted(
+            choices,
+            key=lambda choice: (
+                choice.start.file_page,
+                choice.end.file_page,
+                choice.start.citation_label,
+                choice.end.citation_label,
+            ),
+        )
+    )
+
+
+def _validation_from_sum_range_choice(
+    choice: SumRangeChoice,
+    pages: Sequence[int],
+) -> SumRangeValidation:
+    start_page = choice.start.file_page
+    end_page = choice.end.file_page
+    targets = tuple(page for page in pages if start_page <= page <= end_page)
+    if not targets:
+        return SumRangeValidation(
+            start_page,
+            end_page,
+            (),
+            "No matching pages.",
+            choice.start.citation_label,
+            choice.end.citation_label,
+        )
+    return SumRangeValidation(
+        start_page,
+        end_page,
+        targets,
+        f"{len(targets)} pages",
+        choice.start.citation_label,
+        choice.end.citation_label,
+    )
+
+
+def _validate_sum_page_fields_with_transcript_index(
+    start_text: str,
+    end_text: str,
+    pages: Sequence[int],
+    transcript_index: TranscriptPageIndex,
+    current_page: int | None,
+) -> SumRangeValidation:
+    start_raw = start_text.strip()
+    end_raw = end_text.strip()
+    if not start_raw or not end_raw:
+        return SumRangeValidation(None, None, (), "Enter start and end pages.")
+    start_query = parse_transcript_page_jump_query(start_raw)
+    end_query = parse_transcript_page_jump_query(end_raw)
+    if start_query is None or end_query is None:
+        return SumRangeValidation(None, None, (), "Use transcript pages like RT 3 or 1CT 25.")
+    if start_query.kind == "file" or end_query.kind == "file":
+        return SumRangeValidation(
+            None,
+            None,
+            (),
+            "Use transcript citation pages, not .txt page numbers.",
+        )
+
+    start_matches = _sum_matches_for_query(start_query, transcript_index)
+    if not start_matches:
+        label = (
+            f"{start_query.citation_prefix} {start_query.page_number}"
+            if start_query.kind == "citation"
+            else f"Transcript page {start_query.page_number}"
+        )
+        return SumRangeValidation(None, None, (), f"{label} not available.")
+    end_matches = _sum_matches_for_query(end_query, transcript_index)
+    if not end_matches:
+        label = (
+            f"{end_query.citation_prefix} {end_query.page_number}"
+            if end_query.kind == "citation"
+            else f"Transcript page {end_query.page_number}"
+        )
+        return SumRangeValidation(None, None, (), f"{label} not available.")
+
+    preferred_prefix = ""
+    if start_query.kind == "citation":
+        preferred_prefix = start_query.citation_prefix
+    elif end_query.kind == "citation":
+        preferred_prefix = end_query.citation_prefix
+    if preferred_prefix:
+        choices = _sum_range_choices_for_matches(
+            start_matches,
+            end_matches,
+            preferred_prefix=preferred_prefix,
+        )
+        if len(choices) == 1:
+            return _validation_from_sum_range_choice(choices[0], pages)
+        if len(choices) > 1:
+            return SumRangeValidation(
+                None,
+                None,
+                (),
+                "Choose which transcript range to summarize.",
+                ambiguous_range_choices=choices,
+            )
+
+    choices = _sum_range_choices_for_matches(start_matches, end_matches)
+    if len(choices) == 1:
+        return _validation_from_sum_range_choice(choices[0], pages)
+    if len(choices) > 1:
+        return SumRangeValidation(
+            None,
+            None,
+            (),
+            "Choose which transcript range to summarize.",
+            ambiguous_range_choices=choices,
+        )
+    if current_page is not None:
+        current_label = transcript_index.by_file_page.get(current_page)
+        if current_label and current_label.citation_prefix:
+            choices = _sum_range_choices_for_matches(
+                start_matches,
+                end_matches,
+                preferred_prefix=current_label.citation_prefix,
+            )
+            if len(choices) == 1:
+                return _validation_from_sum_range_choice(choices[0], pages)
+            if len(choices) > 1:
+                return SumRangeValidation(
+                    None,
+                    None,
+                    (),
+                    "Choose which transcript range to summarize.",
+                    ambiguous_range_choices=choices,
+                )
+    if any(
+        start.citation_prefix == end.citation_prefix
+        and start.file_page > end.file_page
+        for start in start_matches
+        for end in end_matches
+    ):
+        return SumRangeValidation(None, None, (), "Start must be before end.")
+    return SumRangeValidation(None, None, (), "No matching transcript range.")
 
 
 def validate_sum_page_fields(
     start_text: str,
     end_text: str,
     pages: Sequence[int],
+    transcript_index: TranscriptPageIndex | None = None,
+    current_page: int | None = None,
 ) -> SumRangeValidation:
-    start_raw = start_text.strip()
-    end_raw = end_text.strip()
-    if not start_raw or not end_raw:
+    index = transcript_index or TranscriptPageIndex({}, {}, {})
+    if _has_transcript_page_index(index):
+        return _validate_sum_page_fields_with_transcript_index(
+            start_text,
+            end_text,
+            pages,
+            index,
+            current_page,
+        )
+    start = resolve_sum_page_field(start_text, pages, index)
+    end = resolve_sum_page_field(end_text, pages, index)
+    if not start_text.strip() or not end_text.strip():
         return SumRangeValidation(None, None, (), "Enter start and end pages.")
-    if not start_raw.isdigit() or not end_raw.isdigit():
-        return SumRangeValidation(None, None, (), "Use digits only.")
-    start_page = int(start_raw)
-    end_page = int(end_raw)
+    if start.ambiguous_matches:
+        return SumRangeValidation(
+            None,
+            None,
+            (),
+            start.message,
+            ambiguous_field="start",
+            ambiguous_matches=start.ambiguous_matches,
+        )
+    if end.ambiguous_matches:
+        return SumRangeValidation(
+            None,
+            None,
+            (),
+            end.message,
+            ambiguous_field="end",
+            ambiguous_matches=end.ambiguous_matches,
+        )
+    if not start.valid:
+        return SumRangeValidation(None, None, (), start.message)
+    if not end.valid:
+        return SumRangeValidation(None, None, (), end.message)
+    start_page = start.page
+    end_page = end.page
+    if start_page is None or end_page is None:
+        return SumRangeValidation(None, None, (), "Enter start and end pages.")
     if start_page > end_page:
-        return SumRangeValidation(start_page, end_page, (), "Start must be before end.")
+        return SumRangeValidation(
+            start_page,
+            end_page,
+            (),
+            "Start must be before end.",
+            start.label,
+            end.label,
+        )
     targets = tuple(page for page in pages if start_page <= page <= end_page)
     if not targets:
-        return SumRangeValidation(start_page, end_page, (), "No matching pages.")
-    return SumRangeValidation(start_page, end_page, targets, f"{len(targets)} pages")
+        return SumRangeValidation(
+            start_page,
+            end_page,
+            (),
+            "No matching pages.",
+            start.label,
+            end.label,
+        )
+    return SumRangeValidation(
+        start_page,
+        end_page,
+        targets,
+        f"{len(targets)} pages",
+        start.label,
+        end.label,
+    )
 
 
 def _looks_like_record_prep(root: Path) -> bool:
@@ -3075,9 +3287,7 @@ class Focus(Adw.Application):
         self._ai_range_start_entry: Gtk.Entry | None = None
         self._ai_range_end_entry: Gtk.Entry | None = None
         self._ai_range_status_label: Gtk.Label | None = None
-        self._ai_range_section_button: Gtk.MenuButton | None = None
-        self._ai_range_section_popover: Gtk.Popover | None = None
-        self._record_range_choices: list[RecordRangeChoice] = []
+        self._sum_range_choice_popover: Gtk.Popover | None = None
         self._ai_range_autofilled = True
         self._ai_range_update_guard = False
         self._extract_range_entry: Gtk.Entry | None = None
@@ -3147,7 +3357,6 @@ class Focus(Adw.Application):
         self._page_cache.clear()
         self._page_search_cache.clear()
         self._page_search_map_cache.clear()
-        self._record_range_choices = load_record_range_choices(self._record_layout.root)
         self._transcript_page_index = load_transcript_page_index(
             self._record_layout.transcript_page_numbers_path
         )
@@ -3162,10 +3371,8 @@ class Focus(Adw.Application):
                 num = int(m.group("num"))
                 self.page_to_path[num] = p
         self.pages = sorted(self.page_to_path.keys())
-        if self._ai_range_section_button:
-            self._ai_range_autofilled = True
-            self._refresh_sum_range_section_menu()
-            self._maybe_prefill_sum_range_for_current_page()
+        self._ai_range_autofilled = True
+        self._maybe_prefill_sum_range_for_current_page()
 
     def _current_toc_path(self) -> Path:
         return self.toc_path
@@ -3593,31 +3800,19 @@ class Focus(Adw.Application):
         summarize_view.set_vexpand(True)
         summarize_controls = self._build_wrapping_controls_box()
 
-        self._ai_range_section_button = Gtk.MenuButton()
-        self._ai_range_section_button.add_css_class("flat")
-        self._ai_range_section_button.add_css_class("no-bold")
-        self._ai_range_section_button.set_valign(Gtk.Align.CENTER)
-        self._ai_range_section_button.set_tooltip_text("Choose a record section")
-        self._ai_range_section_button.set_child(
-            Gtk.Image.new_from_icon_name(
-                self._choose_icon("view-list-symbolic", "open-menu-symbolic")
-            )
-        )
-        summarize_controls.insert(self._ai_range_section_button, -1)
-
         from_label = Gtk.Label(label="From")
         from_label.add_css_class("dim-label")
         from_label.set_valign(Gtk.Align.CENTER)
         summarize_controls.insert(from_label, -1)
 
         self._ai_range_start_entry = Gtk.Entry()
-        self._ai_range_start_entry.set_width_chars(5)
-        self._ai_range_start_entry.set_max_width_chars(5)
-        self._ai_range_start_entry.set_max_length(4)
-        self._ai_range_start_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
-        self._ai_range_start_entry.set_alignment(1.0)
+        self._ai_range_start_entry.set_width_chars(8)
+        self._ai_range_start_entry.set_max_width_chars(12)
+        self._ai_range_start_entry.set_max_length(16)
+        self._ai_range_start_entry.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
+        self._ai_range_start_entry.set_alignment(0.5)
         self._ai_range_start_entry.set_valign(Gtk.Align.CENTER)
-        self._ai_range_start_entry.set_placeholder_text("0001")
+        self._ai_range_start_entry.set_placeholder_text("RT 1")
         self._ai_range_start_entry.connect("changed", self._on_sum_range_field_changed)
         self._ai_range_start_entry.connect("activate", self._on_summarize_range_activate)
         summarize_controls.insert(self._ai_range_start_entry, -1)
@@ -3628,16 +3823,23 @@ class Focus(Adw.Application):
         summarize_controls.insert(to_label, -1)
 
         self._ai_range_end_entry = Gtk.Entry()
-        self._ai_range_end_entry.set_width_chars(5)
-        self._ai_range_end_entry.set_max_width_chars(5)
-        self._ai_range_end_entry.set_max_length(4)
-        self._ai_range_end_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
-        self._ai_range_end_entry.set_alignment(1.0)
+        self._ai_range_end_entry.set_width_chars(8)
+        self._ai_range_end_entry.set_max_width_chars(12)
+        self._ai_range_end_entry.set_max_length(16)
+        self._ai_range_end_entry.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
+        self._ai_range_end_entry.set_alignment(0.5)
         self._ai_range_end_entry.set_valign(Gtk.Align.CENTER)
-        self._ai_range_end_entry.set_placeholder_text("0001")
+        self._ai_range_end_entry.set_placeholder_text("RT 1")
         self._ai_range_end_entry.connect("changed", self._on_sum_range_field_changed)
         self._ai_range_end_entry.connect("activate", self._on_summarize_range_activate)
         summarize_controls.insert(self._ai_range_end_entry, -1)
+
+        summarize_submit_button = Gtk.Button(label="Submit")
+        summarize_submit_button.add_css_class("flat")
+        summarize_submit_button.add_css_class("no-bold")
+        summarize_submit_button.set_valign(Gtk.Align.CENTER)
+        summarize_submit_button.connect("clicked", self._on_summarize_range_button_clicked)
+        summarize_controls.insert(summarize_submit_button, -1)
 
         self._ai_range_status_label = Gtk.Label(label="")
         self._ai_range_status_label.add_css_class("dim-label")
@@ -3648,7 +3850,6 @@ class Focus(Adw.Application):
         self._ai_range_status_label.set_ellipsize(Pango.EllipsizeMode.END)
         summarize_controls.insert(self._ai_range_status_label, -1)
 
-        self._refresh_sum_range_section_menu()
         self._maybe_prefill_sum_range_for_current_page()
 
         extract_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -5330,56 +5531,19 @@ class Focus(Adw.Application):
         box.set_column_spacing(6)
         return box
 
-    def _refresh_sum_range_section_menu(self) -> None:
-        if not self._ai_range_section_button:
-            return
-        popover = Gtk.Popover()
-        popover.set_has_arrow(False)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        box.set_margin_top(6)
-        box.set_margin_bottom(6)
-        box.set_margin_start(6)
-        box.set_margin_end(6)
-        if self._record_range_choices:
-            for choice in self._record_range_choices:
-                label = f"{choice.label} ({choice.start_page:04d}-{choice.end_page:04d})"
-                button = Gtk.Button(label=label)
-                button.add_css_class("flat")
-                button.add_css_class("no-bold")
-                button.set_halign(Gtk.Align.FILL)
-                button.connect("clicked", self._on_sum_range_choice_clicked, choice, popover)
-                box.append(button)
-            self._ai_range_section_button.set_sensitive(True)
-        else:
-            label = Gtk.Label(label="No record sections")
-            label.add_css_class("dim-label")
-            label.set_margin_top(6)
-            label.set_margin_bottom(6)
-            label.set_margin_start(6)
-            label.set_margin_end(6)
-            box.append(label)
-            self._ai_range_section_button.set_sensitive(False)
-        popover.set_child(box)
-        self._ai_range_section_popover = popover
-        self._ai_range_section_button.set_popover(popover)
-
-    def _on_sum_range_choice_clicked(
-        self,
-        _button: Gtk.Button,
-        choice: RecordRangeChoice,
-        popover: Gtk.Popover,
-    ) -> None:
-        self._set_sum_range_fields(choice.start_page, choice.end_page, autofilled=False)
-        self._refresh_sum_range_state(status=choice.label)
-        popover.popdown()
+    def _sum_page_display_label(self, page: int) -> str:
+        label = self._transcript_page_index.by_file_page.get(page)
+        if label:
+            return label.citation_label
+        return str(page)
 
     def _set_sum_range_fields(self, start_page: int, end_page: int, *, autofilled: bool) -> None:
         if not self._ai_range_start_entry or not self._ai_range_end_entry:
             return
         self._ai_range_update_guard = True
         try:
-            self._ai_range_start_entry.set_text(f"{start_page:04d}")
-            self._ai_range_end_entry.set_text(f"{end_page:04d}")
+            self._ai_range_start_entry.set_text(self._sum_page_display_label(start_page))
+            self._ai_range_end_entry.set_text(self._sum_page_display_label(end_page))
         finally:
             self._ai_range_update_guard = False
         self._ai_range_autofilled = autofilled
@@ -5424,18 +5588,19 @@ class Focus(Adw.Application):
         if current_page is None:
             self._refresh_sum_range_state()
             return
-        choice = record_range_choice_for_page(self._record_range_choices, current_page)
-        if choice:
-            self._set_sum_range_fields(choice.start_page, choice.end_page, autofilled=True)
-            self._refresh_sum_range_state(status=choice.label)
-            return
         self._set_sum_range_fields(current_page, current_page, autofilled=True)
         self._refresh_sum_range_state(status="Current page")
 
     def _sum_range_validation(self) -> SumRangeValidation:
         start_text = self._ai_range_start_entry.get_text() if self._ai_range_start_entry else ""
         end_text = self._ai_range_end_entry.get_text() if self._ai_range_end_entry else ""
-        return validate_sum_page_fields(start_text, end_text, self.pages)
+        return validate_sum_page_fields(
+            start_text,
+            end_text,
+            self.pages,
+            self._transcript_page_index,
+            self._current_page_number(),
+        )
 
     def _refresh_sum_range_state(self, *, status: str | None = None) -> None:
         validation = self._sum_range_validation()
@@ -8471,6 +8636,77 @@ class Focus(Adw.Application):
     def _on_summarize_range_activate(self, _entry: Gtk.Entry) -> None:
         self._summarize_page_range()
 
+    def _on_summarize_range_button_clicked(self, _button: Gtk.Button) -> None:
+        self._summarize_page_range()
+
+    def _show_sum_range_choice_popover(
+        self,
+        choices: Sequence[SumRangeChoice],
+    ) -> None:
+        entry = self._ai_range_start_entry
+        if entry is None or not choices:
+            return
+        if self._sum_range_choice_popover:
+            self._sum_range_choice_popover.popdown()
+            self._sum_range_choice_popover = None
+
+        popover = Gtk.Popover()
+        popover.set_parent(entry)
+        popover.set_autohide(True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(6)
+        box.set_margin_bottom(6)
+        box.set_margin_start(6)
+        box.set_margin_end(6)
+
+        heading = Gtk.Label(label="Choose citation range")
+        heading.add_css_class("dim-label")
+        heading.set_xalign(0.0)
+        heading.set_margin_bottom(2)
+        box.append(heading)
+
+        for choice in choices:
+            button = Gtk.Button(label=choice.label)
+            button.add_css_class("flat")
+            button.add_css_class("no-bold")
+            button.set_halign(Gtk.Align.FILL)
+            description = choice.start.series_description or choice.end.series_description
+            if description:
+                button.set_tooltip_text(description)
+            button.connect("clicked", self._on_sum_range_choice_clicked, choice, popover)
+            box.append(button)
+
+        popover.set_child(box)
+        self._sum_range_choice_popover = popover
+        popover.popup()
+
+    def _on_sum_range_choice_clicked(
+        self,
+        _button: Gtk.Button,
+        choice: SumRangeChoice,
+        popover: Gtk.Popover,
+    ) -> None:
+        popover.popdown()
+        if self._sum_range_choice_popover is popover:
+            self._sum_range_choice_popover = None
+        if not self._ai_range_start_entry or not self._ai_range_end_entry:
+            return
+        self._ai_range_update_guard = True
+        try:
+            self._ai_range_start_entry.set_text(choice.start.citation_label)
+            self._ai_range_end_entry.set_text(choice.end.citation_label)
+        finally:
+            self._ai_range_update_guard = False
+        state = self._current_view_state()
+        if self._ai_range_start_entry:
+            state.ai_range_start_text = self._ai_range_start_entry.get_text()
+        if self._ai_range_end_entry:
+            state.ai_range_end_text = self._ai_range_end_entry.get_text()
+        self._ai_range_autofilled = False
+        state.ai_range_autofilled = False
+        self._refresh_sum_range_state()
+        self._summarize_page_range()
+
     def _summarize_page_range(self) -> None:
         if not self.pages:
             self._ai_transient_toast("No pages available to summarize.")
@@ -8479,6 +8715,16 @@ class Focus(Adw.Application):
             return
         validation = self._sum_range_validation()
         self._refresh_sum_range_state()
+        if validation.ambiguous_range_choices:
+            self._show_sum_range_choice_popover(validation.ambiguous_range_choices)
+            return
+        if validation.ambiguous_field and validation.ambiguous_matches:
+            choices = tuple(
+                SumRangeChoice(label, label)
+                for label in validation.ambiguous_matches
+            )
+            self._show_sum_range_choice_popover(choices)
+            return
         if not validation.valid or validation.start_page is None or validation.end_page is None:
             self._ai_transient_toast(validation.message)
             return
@@ -8489,9 +8735,10 @@ class Focus(Adw.Application):
         parts: list[str] = []
         for page in targets:
             content, _, _ = self._read_page_text(page)
-            parts.append(f"{page:04d}\n\n{content}\n\n")
+            page_label = format_toc_page_subtitle(page, self._transcript_page_index)
+            parts.append(f"{page_label}\n\n{content}\n\n")
         combined = "".join(parts)
-        label = f"pages {start_page:04d}-{end_page:04d}"
+        label = f"{validation.start_label}-{validation.end_label}"
         self._start_ai_stream(
             label=label,
             content=combined,
