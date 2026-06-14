@@ -10746,7 +10746,6 @@ class SummarizationPromptWidgets:
 @dataclass
 class RagPromptWidgets:
     profile_dropdown: Gtk.DropDown
-    deep_profile_dropdown: Gtk.DropDown
     provider_row: Adw.ComboRow
     provider_values: list[str]
     voyage_model_row: Adw.EntryRow
@@ -11370,30 +11369,20 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page_box.append(title_label)
 
         settings = load_ai_settings()
-        rag_group = Adw.PreferencesGroup(title="Default Model Profiles")
+        rag_group = Adw.PreferencesGroup(title="Default Model Profile")
         rag_group.add_css_class("list-stack")
         rag_group.set_hexpand(True)
         page_box.append(rag_group)
 
         rag_profile_row = Adw.ActionRow(
-            title="Answer 1",
-            subtitle="Uses the selected profile for the 1: RAG answer.",
+            title="RAG Answer",
+            subtitle="Uses the selected profile as the default model for RAG answers.",
         )
         rag_profile_row.set_activatable(False)
         rag_profile_dropdown = self._build_profile_dropdown(settings, TASK_PROFILE_RAG)
         rag_profile_row.add_suffix(rag_profile_dropdown)
         rag_profile_row.set_activatable_widget(rag_profile_dropdown)
         rag_group.add(rag_profile_row)
-
-        deep_rag_profile_row = Adw.ActionRow(
-            title="Answer 2",
-            subtitle="Uses the selected profile for the 2: RAG answer.",
-        )
-        deep_rag_profile_row.set_activatable(False)
-        deep_rag_profile_dropdown = self._build_profile_dropdown(settings, TASK_PROFILE_RAG_DEEP)
-        deep_rag_profile_row.add_suffix(deep_rag_profile_dropdown)
-        deep_rag_profile_row.set_activatable_widget(deep_rag_profile_dropdown)
-        rag_group.add(deep_rag_profile_row)
 
         provider_group = Adw.PreferencesGroup(title="Embedding Provider")
         provider_group.add_css_class("list-stack")
@@ -11479,7 +11468,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
         self._prompt_editors[key] = RagPromptWidgets(
             profile_dropdown=rag_profile_dropdown,
-            deep_profile_dropdown=deep_rag_profile_dropdown,
             provider_row=provider_row,
             provider_values=provider_values,
             voyage_model_row=voyage_model_row,
@@ -11578,10 +11566,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
             rag_widgets.profile_dropdown.set_selected(
                 self._profile_dropdown_selected_index(settings, TASK_PROFILE_RAG)
-            )
-            rag_widgets.deep_profile_dropdown.set_model(self._profile_dropdown_model())
-            rag_widgets.deep_profile_dropdown.set_selected(
-                self._profile_dropdown_selected_index(settings, TASK_PROFILE_RAG_DEEP)
             )
             provider = _normalize_rag_provider(settings.rag_provider)
             if provider in rag_widgets.provider_values:
@@ -11685,7 +11669,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             TASK_PROFILE_RANGE: self._profile_key_from_dropdown(range_widgets.profile_dropdown),
             TASK_PROFILE_EXTRACT: self._profile_key_from_dropdown(extract_widgets.profile_dropdown),
             TASK_PROFILE_RAG: self._profile_key_from_dropdown(rag_widgets.profile_dropdown),
-            TASK_PROFILE_RAG_DEEP: self._profile_key_from_dropdown(rag_widgets.deep_profile_dropdown),
         }
         provider_index = int(rag_widgets.provider_row.get_selected())
         if 0 <= provider_index < len(rag_widgets.provider_values):
