@@ -1029,6 +1029,23 @@ def format_toc_page_subtitle(page: int, index: TranscriptPageIndex) -> str:
     return f"{page:04d}.txt"
 
 
+def format_page_nav_labels(
+    page: int | None,
+    total_pages: int,
+    index: TranscriptPageIndex,
+) -> tuple[str, str]:
+    if page is None or total_pages <= 0:
+        return "", "--/--"
+    label = index.by_file_page.get(page)
+    if label:
+        return label.citation_label, f"{page}/{total_pages}"
+    return str(page), f"/{total_pages}"
+
+
+def format_transcript_page_choice_label(label: TranscriptPageLabel) -> str:
+    return f"{label.citation_label}  text {label.file_page}"
+
+
 PAGE_JUMP_FILE_RE = re.compile(r"^(?:p|file)\s*:?\s*(\d{1,8})$", re.IGNORECASE)
 PAGE_JUMP_CITATION_RE = re.compile(
     r"^([A-Za-z0-9]+(?:\s+[A-Za-z]+)?)\s*:?\s+(\d{1,8})$",
@@ -5663,11 +5680,13 @@ class Focus(Adw.Application):
         return self._transcript_page_index.by_file_page.get(current_page)
 
     def _current_page_entry_text(self) -> str:
-        label = self._current_transcript_page_label()
-        if label:
-            return label.citation_label
         current_page = self._current_page_number()
-        return str(current_page) if current_page is not None else ""
+        entry_text, _detail_text = format_page_nav_labels(
+            current_page,
+            len(self.pages),
+            self._transcript_page_index,
+        )
+        return entry_text
 
     def _maybe_prefill_sum_range_for_current_page(self) -> None:
         if not self._ai_range_start_entry or not self._ai_range_end_entry:
@@ -7213,13 +7232,18 @@ class Focus(Adw.Application):
         if self._page_total_label and self._page_number_entry:
             if self.pages and 0 <= self.current_index < len(self.pages):
                 current_page = self.pages[self.current_index]
+                entry_text, detail_text = format_page_nav_labels(
+                    current_page,
+                    len(self.pages),
+                    self._transcript_page_index,
+                )
                 if not self._page_number_entry.has_focus():
-                    self._page_number_entry.set_text(self._current_page_entry_text())
-                self._page_total_label.set_text(f"/{current_page}.txt")
+                    self._page_number_entry.set_text(entry_text)
+                self._page_total_label.set_text(detail_text)
             else:
                 if not self._page_number_entry.has_focus():
                     self._page_number_entry.set_text("")
-                self._page_total_label.set_text("/ --")
+                self._page_total_label.set_text("--/--")
 
     def _update_grep_hit_navigation(self) -> None:
         total_hits = len(self._grep_match_order) if self._grep_active else 0
@@ -8549,7 +8573,7 @@ class Focus(Adw.Application):
         box.append(heading)
 
         for label in matches:
-            button_label = f"{label.citation_label}/{label.file_page}.txt"
+            button_label = format_transcript_page_choice_label(label)
             button = Gtk.Button(label=button_label)
             button.add_css_class("flat")
             button.add_css_class("no-bold")

@@ -1,8 +1,11 @@
 import json
 
 from focus import (
+    TranscriptPageLabel,
     TranscriptPageIndex,
+    format_page_nav_labels,
     format_toc_page_subtitle,
+    format_transcript_page_choice_label,
     load_transcript_page_index,
     parse_transcript_page_jump_query,
 )
@@ -141,6 +144,60 @@ def test_format_toc_page_subtitle_falls_back_for_missing_index_page(tmp_path) ->
     index = load_transcript_page_index(path)
 
     assert format_toc_page_subtitle(95, index) == "0095.txt"
+
+
+def test_format_page_nav_labels_uses_citation_and_page_progress(tmp_path) -> None:
+    path = tmp_path / "transcript_page_numbers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "file_page": 1201,
+                        "record_type": "CT",
+                        "transcript_page_number": 690,
+                        "citation_label": "CT 690",
+                        "status": "selected",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    index = load_transcript_page_index(path)
+
+    assert format_page_nav_labels(1201, 1530, index) == (
+        "CT 690",
+        "1201/1530",
+    )
+
+
+def test_format_page_nav_labels_falls_back_to_file_page_progress() -> None:
+    index = TranscriptPageIndex({}, {}, {})
+
+    assert format_page_nav_labels(1201, 1530, index) == ("1201", "/1530")
+
+
+def test_format_page_nav_labels_handles_empty_pages() -> None:
+    index = TranscriptPageIndex({}, {}, {})
+
+    assert format_page_nav_labels(None, 0, index) == ("", "--/--")
+
+
+def test_format_transcript_page_choice_label_removes_slash_filename() -> None:
+    label = TranscriptPageLabel(
+        file_page=1201,
+        transcript_page_number=690,
+        citation_prefix="CT",
+        citation_label="CT 690",
+        citation_key="CT:690",
+        record_type="CT",
+        series_id="",
+        series_description="",
+        status="selected",
+    )
+
+    assert format_transcript_page_choice_label(label) == "CT 690  text 1201"
 
 
 def test_parse_transcript_page_jump_query() -> None:
