@@ -2477,6 +2477,10 @@ listbox.focus-sidebar-listview row {
   margin-left: -2px;
 }
 
+entry.focus-page-number-entry {
+  font-weight: 700;
+}
+
 .focus-sidebar-row.focus-sidebar-category {
   padding-top: 0px;
   padding-bottom: 0px;
@@ -4175,6 +4179,7 @@ class Focus(Adw.Application):
         paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
         self._page_number_entry = Gtk.Entry()
+        self._page_number_entry.add_css_class("focus-page-number-entry")
         self._page_number_entry.set_width_chars(9)
         self._page_number_entry.set_max_width_chars(12)
         self._page_number_entry.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
