@@ -15,6 +15,7 @@ from focus import (
     build_grep_match_order,
     build_pattern,
     format_current_page_citation_for_clipboard,
+    format_page_citation_range_for_clipboard,
     format_grep_status_text,
     normalize_text_for_search_with_map,
     preprocess_phrase,
@@ -149,6 +150,58 @@ def test_current_page_citation_skips_pages_without_citation_metadata() -> None:
     citation = format_current_page_citation_for_clipboard(41, index)
 
     assert citation == ""
+
+
+def test_page_citation_range_formats_single_page() -> None:
+    result = format_page_citation_range_for_clipboard(
+        _label(41, "RT 45"),
+        _label(41, "RT 45"),
+    )
+
+    assert result.valid is True
+    assert result.citation == "(RT 45.)"
+
+
+def test_page_citation_range_formats_same_series_range() -> None:
+    result = format_page_citation_range_for_clipboard(
+        _label(12, "RT 12"),
+        _label(15, "RT 15"),
+    )
+
+    assert result.valid is True
+    assert result.citation == "(RT 12\u201315.)"
+
+
+def test_page_citation_range_formats_ct_volume_range() -> None:
+    result = format_page_citation_range_for_clipboard(
+        _label(100, "1CT 100"),
+        _label(104, "1CT 104"),
+    )
+
+    assert result.valid is True
+    assert result.citation == "(1CT 100\u2013104.)"
+
+
+def test_page_citation_range_rejects_mixed_series() -> None:
+    result = format_page_citation_range_for_clipboard(
+        _label(100, "1CT 100"),
+        _label(104, "2CT 104"),
+    )
+
+    assert result.valid is False
+    assert result.citation == ""
+    assert result.message == "Citation range must stay in one series."
+
+
+def test_page_citation_range_rejects_reversed_pages() -> None:
+    result = format_page_citation_range_for_clipboard(
+        _label(15, "RT 15"),
+        _label(12, "RT 12"),
+    )
+
+    assert result.valid is False
+    assert result.citation == ""
+    assert result.message == "Citation range end must be after the start."
 
 
 def test_append_page_citation_to_selected_text_matches_collapsed_whitespace() -> None:

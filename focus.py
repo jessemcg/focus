@@ -11,7 +11,6 @@ Features
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
 - Grep matches render in red and navigate hit-by-hit while one transcript page stays visible.
 - Ctrl+Shift+A opens case tools and focuses the RAG question box.
-- Ctrl+Shift+S summarizes the current page.
 - Ctrl+P prints the current page image.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
@@ -340,6 +339,13 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
                 "<Primary><Shift>C",
                 "Insert the current page citation in Prose, or copy it if Prose is unavailable.",
             ),
+            FocusCommand(
+                "Grep",
+                "Set or insert citation range",
+                "insert_page_citation_range",
+                "<Primary><Alt>C",
+                "Set a range start, then insert a citation range from that page to the current page.",
+            ),
         ),
     ),
     (
@@ -351,13 +357,6 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
                 "toggle_ai_panel",
                 "<Primary><Shift>A",
                 "Show case tools and focus the question box.",
-            ),
-            FocusCommand(
-                "AI Panel",
-                "Summarize current page",
-                "summarize_current_page",
-                "<Primary><Shift>S",
-                "Summarize the current page.",
             ),
             FocusCommand(
                 "AI Panel",
@@ -515,8 +514,6 @@ RAG_LONG_DATE_PATTERN = re.compile(
 RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
 RIGHT_SCROLL_ZONE_EDGE_MARGIN = 18
-HOVER_SUMMARY_CARD_WIDTH = 620
-HOVER_SUMMARY_CARD_TOP_MARGIN = 68
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_EXTRACT = "extract"
 AI_VIEW_QA = "qa"
@@ -803,6 +800,16 @@ class SumRangeChoice:
     @property
     def label(self) -> str:
         return f"{self.start.citation_label}-{self.end.citation_label}"
+
+
+@dataclass(frozen=True)
+class CitationRangeFormatting:
+    citation: str
+    message: str = ""
+
+    @property
+    def valid(self) -> bool:
+        return bool(self.citation)
 
 
 @dataclass(frozen=True)
@@ -2318,10 +2325,10 @@ IMAGE_ICON_OFF_CHOICES = (
     "image-x-generic-symbolic",
     "image-missing",
 )
-PAGE_SUMMARY_ICON_CHOICES = (
-    "document-edit-symbolic",
-    "accessories-text-editor-symbolic",
-    "text-x-generic-symbolic",
+PAGE_CITATION_RANGE_IDLE_ICON_CHOICES = (
+    "insert-link-symbolic",
+    "format-justify-fill-symbolic",
+    "insert-text-symbolic",
 )
 @dataclass
 class TocBookmark:
@@ -2580,17 +2587,6 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
   color: rgba(95, 95, 95, 0.62);
 }
 
-box.focus-hover-summary-card {
-  background-color: mix(@window_bg_color, @window_fg_color, 0.08);
-  border: 1px solid alpha(@window_fg_color, 0.18);
-  border-radius: 16px;
-  padding: 12px;
-}
-
-textview.focus-hover-summary-view {
-  background: transparent;
-}
-
 .ai-output-frame {
   background-color: __AI_PANEL_BG__;
   border-radius: 16px;
@@ -2641,6 +2637,19 @@ button.focus-ai-view-active:active {
 }
 
 button.focus-ai-view-active image {
+  color: @window_fg_color;
+}
+
+button.focus-citation-range-active,
+button.focus-citation-range-active:hover,
+button.focus-citation-range-active:active {
+  background-color: alpha(@window_fg_color, 0.08);
+  color: @window_fg_color;
+  background-image: none;
+  box-shadow: none;
+}
+
+button.focus-citation-range-active image {
   color: @window_fg_color;
 }
 
@@ -3063,6 +3072,28 @@ def _format_record_citation_label(citation_label: str) -> str:
     return f"({citation}.)"
 
 
+def format_page_citation_range_for_clipboard(
+    start: TranscriptPageLabel,
+    end: TranscriptPageLabel,
+) -> CitationRangeFormatting:
+    if start.file_page > end.file_page:
+        return CitationRangeFormatting("", "Citation range end must be after the start.")
+    if start.citation_prefix != end.citation_prefix:
+        return CitationRangeFormatting("", "Citation range must stay in one series.")
+    if not start.citation_prefix:
+        return CitationRangeFormatting("", "No transcript citation available for range.")
+    if start.transcript_page_number == end.transcript_page_number:
+        citation = _format_record_citation_label(start.citation_label)
+    else:
+        citation = _format_record_citation_label(
+            f"{start.citation_prefix} "
+            f"{start.transcript_page_number}\u2013{end.transcript_page_number}"
+        )
+    if not citation:
+        return CitationRangeFormatting("", "No transcript citation available for range.")
+    return CitationRangeFormatting(citation)
+
+
 def append_page_citation_to_selected_text(
     captured_text: str,
     focus_selection: str,
@@ -3215,16 +3246,6 @@ class Focus(Adw.Application):
         self._right_scroll_zone: Gtk.Button | None = None
         self._right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
         self._right_scroll_active = False
-        self._summary_hover_card: Gtk.Box | None = None
-        self._summary_hover_scroller: Gtk.ScrolledWindow | None = None
-        self._summary_hover_view: Gtk.TextView | None = None
-        self._summary_hover_buffer: Gtk.TextBuffer | None = None
-        self._summary_hover_generation = 0
-        self._summary_hover_page: int | None = None
-        self._summary_hover_raw = ""
-        self._summary_hover_cancel_event: threading.Event | None = None
-        self._summary_hover_thread: threading.Thread | None = None
-        self._summary_hover_in_flight = False
         self._image_scroll_overlay: Gtk.Overlay | None = None
         self._image_right_scroll_zone: Gtk.Button | None = None
         self._image_right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
@@ -3260,6 +3281,9 @@ class Focus(Adw.Application):
         self._page_total_label: Gtk.Label | None = None
         self._transcript_breakdown_button: Gtk.Button | None = None
         self._current_page_citation_button: Gtk.Button | None = None
+        self._page_citation_range_button: Gtk.Button | None = None
+        self._page_citation_range_icon: Gtk.Image | None = None
+        self._page_citation_range_start: TranscriptPageLabel | None = None
         self._grep_prev_hit_button: Gtk.Button | None = None
         self._grep_next_hit_button: Gtk.Button | None = None
         self._grep_hit_label: Gtk.Label | None = None
@@ -3342,7 +3366,6 @@ class Focus(Adw.Application):
         self._show_image_button: Gtk.ToggleButton | None = None
         self._show_image_icon: Gtk.Image | None = None
         self._show_image_button_guard = False
-        self._single_page_summary_button: Gtk.Button | None = None
         self._image_icon_name_on = IMAGE_ICON_ON_CHOICES[0]
         self._image_icon_name_off = self._image_icon_name_on
         self._toc_categories: list[TocCategory] = []
@@ -3753,37 +3776,6 @@ class Focus(Adw.Application):
         self._content_overlay.set_hexpand(True)
         self._content_overlay.set_vexpand(True)
         self._content_overlay.set_child(self._content_stack)
-
-        self._summary_hover_view = Gtk.TextView(editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
-        self._summary_hover_view.add_css_class("focus-hover-summary-view")
-        self._summary_hover_view.set_cursor_visible(False)
-        self._summary_hover_view.set_top_margin(4)
-        self._summary_hover_view.set_bottom_margin(4)
-        self._summary_hover_view.set_left_margin(4)
-        self._summary_hover_view.set_right_margin(4)
-        self._summary_hover_buffer = self._summary_hover_view.get_buffer()
-
-        self._summary_hover_scroller = Gtk.ScrolledWindow()
-        self._summary_hover_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self._summary_hover_scroller.set_hexpand(True)
-        self._summary_hover_scroller.set_vexpand(False)
-        self._summary_hover_scroller.set_propagate_natural_height(True)
-        self._summary_hover_scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
-        self._summary_hover_scroller.set_child(self._summary_hover_view)
-
-        self._summary_hover_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self._summary_hover_card.add_css_class("focus-hover-summary-card")
-        self._summary_hover_card.set_halign(Gtk.Align.CENTER)
-        self._summary_hover_card.set_valign(Gtk.Align.START)
-        self._summary_hover_card.set_hexpand(False)
-        self._summary_hover_card.set_vexpand(False)
-        self._summary_hover_card.set_margin_top(HOVER_SUMMARY_CARD_TOP_MARGIN)
-        self._summary_hover_card.set_size_request(HOVER_SUMMARY_CARD_WIDTH, -1)
-        self._summary_hover_card.set_visible(False)
-        self._summary_hover_card.append(self._summary_hover_scroller)
-        self._content_overlay.add_overlay(self._summary_hover_card)
-        if hasattr(self._content_overlay, "set_overlay_pass_through"):
-            self._content_overlay.set_overlay_pass_through(self._summary_hover_card, False)
 
         self._ai_panel_revealer = Gtk.Revealer()
         self._ai_panel_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
@@ -4237,15 +4229,6 @@ class Focus(Adw.Application):
         self._show_image_button.set_tooltip_text("Enable image view (Ctrl+I)")
         self._show_image_button.connect("toggled", self._on_show_image_button_toggled)
 
-        self._single_page_summary_button = Gtk.Button()
-        self._single_page_summary_button.add_css_class("flat")
-        self._single_page_summary_button.set_valign(Gtk.Align.CENTER)
-        self._single_page_summary_button.set_tooltip_text("Summarize current page (Ctrl+Shift+S)")
-        self._single_page_summary_button.set_child(
-            self._build_header_icon(*PAGE_SUMMARY_ICON_CHOICES)
-        )
-        self._single_page_summary_button.connect("clicked", self._on_single_page_summary_clicked)
-
         grep_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         grep_controls.set_valign(Gtk.Align.CENTER)
 
@@ -4306,6 +4289,22 @@ class Focus(Adw.Application):
         )
         grep_controls.append(self._current_page_citation_button)
 
+        self._page_citation_range_button = Gtk.Button()
+        self._page_citation_range_button.add_css_class("flat")
+        self._page_citation_range_button.set_valign(Gtk.Align.CENTER)
+        self._page_citation_range_button.set_tooltip_text(
+            "Set citation range start (Ctrl+Alt+C)"
+        )
+        self._page_citation_range_button.set_sensitive(False)
+        self._page_citation_range_icon = self._build_header_icon(
+            *PAGE_CITATION_RANGE_IDLE_ICON_CHOICES
+        )
+        self._page_citation_range_button.set_child(self._page_citation_range_icon)
+        self._page_citation_range_button.connect(
+            "clicked", self._on_page_citation_range_clicked
+        )
+        grep_controls.append(self._page_citation_range_button)
+
         grep_highlighted_button = Gtk.Button()
         grep_highlighted_button.add_css_class("flat")
         grep_highlighted_button.add_css_class("focus-subdued")
@@ -4320,7 +4319,6 @@ class Focus(Adw.Application):
         grep_controls.append(grep_highlighted_button)
         trailing_controls.append(grep_controls)
         trailing_controls.append(self._show_image_button)
-        trailing_controls.append(self._single_page_summary_button)
         text_controls.set_end_widget(trailing_controls)
 
         content_box.append(text_controls)
@@ -4652,7 +4650,6 @@ class Focus(Adw.Application):
     def _reset_view_states(self) -> None:
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
-        self._hide_summary_hover_preview(cancel=True)
         self._view_state = FocusViewState()
         self._current_view_state().sidebar_visible = self._toc_sidebar_visible
         self._current_view_state().ai_panel_visible = bool(
@@ -5370,9 +5367,6 @@ class Focus(Adw.Application):
             "}"
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
-            "}"
-            "textview.focus-hover-summary-view { "
-            f"color: @window_fg_color; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
             "}"
             "textview.ai-output-view.rag-audit-view { "
             f"font-size: {DEFAULT_RAG_AUDIT_FONT_SIZE_PT}pt; "
@@ -6146,111 +6140,6 @@ class Focus(Adw.Application):
         if self.textview:
             self.textview.set_cursor_from_name(None)
         self._set_right_scroll_active(False)
-
-    def _can_summarize_current_page(self) -> bool:
-        if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
-            return False
-        page = self.pages[self.current_index]
-        path = self.page_to_path.get(page)
-        return bool(path and path.exists())
-
-    def _on_single_page_summary_clicked(self, _button: Gtk.Button) -> None:
-        self._start_summary_hover_preview()
-
-    def _hide_summary_hover_preview(self, *, cancel: bool) -> None:
-        if cancel:
-            self._cancel_summary_hover_stream()
-        self._summary_hover_page = None
-        self._summary_hover_raw = ""
-        if self._summary_hover_card:
-            self._summary_hover_card.set_visible(False)
-        if self._summary_hover_buffer:
-            self._summary_hover_buffer.set_text("")
-
-    def _cancel_summary_hover_stream(self) -> None:
-        self._summary_hover_generation += 1
-        if self._summary_hover_cancel_event:
-            self._summary_hover_cancel_event.set()
-        if self._summary_hover_thread and self._summary_hover_thread.is_alive():
-            try:
-                self._summary_hover_thread.join(timeout=0.1)
-            except Exception:
-                pass
-        self._summary_hover_cancel_event = None
-        self._summary_hover_thread = None
-        self._summary_hover_in_flight = False
-
-    def _set_summary_hover_text(self, text: str) -> None:
-        if not self._summary_hover_buffer:
-            return
-        rendered_text, markdown_spans, _ = _render_markdown_text(text)
-        self._summary_hover_buffer.set_text(rendered_text)
-        self._apply_markdown_spans(self._summary_hover_buffer, markdown_spans)
-        if self._summary_hover_scroller:
-            self._summary_hover_scroller.queue_resize()
-
-    def _start_summary_hover_preview(self) -> None:
-        if not self._can_summarize_current_page():
-            self._hide_summary_hover_preview(cancel=True)
-            self._ai_transient_toast("Summarize Page only works when a single page is visible.")
-            return
-        page = self.pages[self.current_index]
-        if self._summary_hover_page == page and (
-            self._summary_hover_in_flight or self._summary_hover_raw.strip()
-        ):
-            if self._summary_hover_card:
-                self._summary_hover_card.set_visible(True)
-            return
-
-        self._cancel_summary_hover_stream()
-        self._summary_hover_page = page
-        self._summary_hover_raw = ""
-        if self._summary_hover_card:
-            self._summary_hover_card.set_visible(True)
-        self._set_summary_hover_text(f"Summarizing page {page:04d}...")
-
-        settings = load_ai_settings()
-        profile_key = self._selected_ai_profile_key(TASK_PROFILE_PAGE)
-        credentials = settings.page_llm_credentials(profile_key)
-        error = self._llm_credentials_error(credentials, "page summary")
-        if error or not settings.page_prompt.strip():
-            self._set_summary_hover_text(
-                error or "Configure the single-page summarization prompt in Settings."
-            )
-            return
-
-        content, _, _ = self._read_page_text(page)
-        if not content.strip():
-            self._set_summary_hover_text(f"Nothing to summarize for page {page:04d}.")
-            return
-
-        payload = f"Page {page:04d}\n\n{content}"
-        self._summary_hover_generation += 1
-        generation = self._summary_hover_generation
-        cancel_event = threading.Event()
-        self._summary_hover_cancel_event = cancel_event
-        self._summary_hover_in_flight = True
-        prompt = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
-        worker_settings = settings
-        self._summary_hover_thread = threading.Thread(
-            target=self._summary_hover_stream_worker,
-            args=(
-                worker_settings,
-                payload,
-                f"page {page:04d}",
-                cancel_event,
-                generation,
-                prompt,
-            ),
-            kwargs={
-                "model_id": credentials.model_id,
-                "api_url": credentials.api_url,
-                "api_key": credentials.api_key,
-                "disable_reasoning": credentials.disable_reasoning,
-            },
-            daemon=True,
-        )
-        self._summary_hover_thread.start()
 
     def _on_image_motion(
         self,
@@ -7253,6 +7142,7 @@ class Focus(Adw.Application):
             self._grep_next_hit_button.set_sensitive(next_enabled)
         if self._current_page_citation_button:
             self._current_page_citation_button.set_sensitive(bool(self.pages))
+        self._sync_page_citation_range_button()
 
     def _update_header(self) -> None:
         self._update_page_nav_buttons()
@@ -7378,7 +7268,6 @@ class Focus(Adw.Application):
         return content, adjusted if adjusted else None
 
     def _load_current(self) -> None:
-        self._hide_summary_hover_preview(cancel=True)
         if not self.pages:
             self._set_show_image(False, silent=True)
             return
@@ -7677,6 +7566,9 @@ class Focus(Adw.Application):
     def _on_current_page_citation_clicked(self, _button: Gtk.Button) -> None:
         self._insert_current_page_citation_in_prose_or_clipboard()
 
+    def _on_page_citation_range_clicked(self, _button: Gtk.Button) -> None:
+        self._insert_page_citation_range_in_prose_or_clipboard()
+
     def _current_page_citation_for_clipboard(self) -> str:
         current_page = self._current_page_number()
         if current_page is None:
@@ -7693,6 +7585,27 @@ class Focus(Adw.Application):
             return False
         display.get_clipboard().set(text)
         return True
+
+    def _sync_page_citation_range_button(self) -> None:
+        if not self._page_citation_range_button:
+            return
+        self._page_citation_range_button.set_sensitive(bool(self.pages))
+        start = self._page_citation_range_start
+        if start:
+            self._page_citation_range_button.add_css_class(
+                "focus-citation-range-active"
+            )
+            self._page_citation_range_button.set_tooltip_text(
+                f"Range starts at {start.citation_label}. "
+                "Press again to insert. (Ctrl+Alt+C)"
+            )
+        else:
+            self._page_citation_range_button.remove_css_class(
+                "focus-citation-range-active"
+            )
+            self._page_citation_range_button.set_tooltip_text(
+                "Set citation range start (Ctrl+Alt+C)"
+            )
 
     def _prose_record_citations_action_available(self) -> bool:
         try:
@@ -7758,11 +7671,32 @@ class Focus(Adw.Application):
             self._transient_toast("No transcript citation available for current page.")
             return False
         if self._send_text_to_prose_record_citations_action(citation):
-            self._transient_toast("Sent current page citation to Prose.")
             return True
         if not self._copy_text_to_clipboard(citation):
             return False
-        self._transient_toast("Prose unavailable. Copied current page citation.")
+        return True
+
+    def _insert_page_citation_range_in_prose_or_clipboard(self) -> bool:
+        current_label = self._current_transcript_page_label()
+        if current_label is None:
+            self._transient_toast("No transcript citation available for current page.")
+            return False
+        start_label = self._page_citation_range_start
+        if start_label is None:
+            self._page_citation_range_start = current_label
+            self._sync_page_citation_range_button()
+            return True
+
+        result = format_page_citation_range_for_clipboard(start_label, current_label)
+        if not result.valid:
+            self._transient_toast(result.message)
+            return False
+        self._page_citation_range_start = None
+        self._sync_page_citation_range_button()
+        if self._send_text_to_prose_record_citations_action(result.citation):
+            return True
+        if not self._copy_text_to_clipboard(result.citation):
+            return False
         return True
 
     def _on_append_selection_citation_to_file_action(
@@ -7914,13 +7848,6 @@ class Focus(Adw.Application):
         focus_page_number.connect("activate", lambda _a, _p: self._focus_page_number_entry())
         self.add_action(focus_page_number)
 
-        summarize_current_page = Gio.SimpleAction.new("summarize_current_page", None)
-        summarize_current_page.connect(
-            "activate",
-            lambda _a, _p: self._start_summary_hover_preview(),
-        )
-        self.add_action(summarize_current_page)
-
         toggle_ai_panel = Gio.SimpleAction.new("toggle_ai_panel", None)
         toggle_ai_panel.connect(
             "activate",
@@ -7949,6 +7876,16 @@ class Focus(Adw.Application):
             lambda _a, _p: self._insert_current_page_citation_in_prose_or_clipboard(),
         )
         self.add_action(insert_current_page_citation)
+
+        insert_page_citation_range = Gio.SimpleAction.new(
+            "insert_page_citation_range",
+            None,
+        )
+        insert_page_citation_range.connect(
+            "activate",
+            lambda _a, _p: self._insert_page_citation_range_in_prose_or_clipboard(),
+        )
+        self.add_action(insert_page_citation_range)
 
         append_selection_citation = Gio.SimpleAction.new(
             "append_selection_citation_to_file",
@@ -7983,10 +7920,13 @@ class Focus(Adw.Application):
             "app.insert_current_page_citation",
             ["<Primary><Shift>c"],
         )
+        self.set_accels_for_action(
+            "app.insert_page_citation_range",
+            ["<Primary><Alt>c"],
+        )
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
-        self.set_accels_for_action("app.summarize_current_page", ["<Primary><Shift>s"])
         self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>a"])
         self.set_accels_for_action("app.show_shortcuts", ["F1"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
@@ -8039,6 +7979,12 @@ class Focus(Adw.Application):
                 accelerator="<Primary><Shift>C",
             )
         )
+        search_group.append(
+            Gtk.ShortcutsShortcut(
+                title="Set or insert citation range",
+                accelerator="<Primary><Alt>C",
+            )
+        )
         navigation_section.append(search_group)
 
         tools_group = Gtk.ShortcutsGroup(title="AI Panel")
@@ -8046,12 +7992,6 @@ class Focus(Adw.Application):
             Gtk.ShortcutsShortcut(
                 title="Toggle case tools and focus question box",
                 accelerator="<Primary><Shift>A",
-            )
-        )
-        tools_group.append(
-            Gtk.ShortcutsShortcut(
-                title="Summarize current page",
-                accelerator="<Primary><Shift>S",
             )
         )
         tools_group.append(
@@ -8476,13 +8416,6 @@ class Focus(Adw.Application):
         ):
             self._toggle_embedded_ai_panel_from_shortcut()
             return True
-        if (
-            key in ("S", "s")
-            and (state & Gdk.ModifierType.CONTROL_MASK)
-            and (state & Gdk.ModifierType.SHIFT_MASK)
-        ):
-            self._start_summary_hover_preview()
-            return True
         return False
 
     def _on_page_back_one_clicked(self, _button: Gtk.Button) -> None:
@@ -8887,21 +8820,6 @@ class Focus(Adw.Application):
         if popover:
             popover.popdown()
         self._set_ai_view(view_name)
-
-    def _on_summarize_page_clicked(self, _button: Gtk.Button) -> None:
-        if not self.pages:
-            self._ai_transient_toast("No page loaded to summarize.")
-            return
-        self._set_ai_view(AI_VIEW_SUMMARIZE)
-        page = self.pages[self.current_index]
-        content, _, _ = self._read_page_text(page)
-        payload = f"Page {page:04d}\n\n{content}"
-        self._start_ai_stream(
-            label=f"page {page:04d}",
-            content=payload,
-            prompt_kind="page",
-            profile_key=self._selected_ai_profile_key(TASK_PROFILE_PAGE),
-        )
 
     def _on_summarize_range_activate(self, _entry: Gtk.Entry) -> None:
         self._summarize_page_range()
@@ -10199,9 +10117,9 @@ class Focus(Adw.Application):
         state = self._current_view_state()
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
-        target_view = AI_VIEW_EXTRACT if prompt_kind == "extract" else AI_VIEW_SUMMARIZE
-        action_label = "Extracting" if prompt_kind == "extract" else "Summarizing"
         if prompt_kind == "extract":
+            target_view = AI_VIEW_EXTRACT
+            action_label = "Extracting"
             credentials = settings.extract_llm_credentials(profile_key)
             error = self._llm_credentials_error(credentials, "extract")
             if error or not (settings.extract_prompt or DEFAULT_EXTRACT_PROMPT).strip():
@@ -10209,6 +10127,8 @@ class Focus(Adw.Application):
                 self._ensure_ai_panel_visible()
                 return
         elif prompt_kind == "range":
+            target_view = AI_VIEW_SUMMARIZE
+            action_label = "Summarizing"
             credentials = settings.range_llm_credentials(profile_key)
             error = self._llm_credentials_error(credentials, "range summary")
             if error or not (settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT).strip():
@@ -10216,21 +10136,15 @@ class Focus(Adw.Application):
                 self._ensure_ai_panel_visible()
                 return
         else:
-            credentials = settings.page_llm_credentials(profile_key)
-            error = self._llm_credentials_error(credentials, "page summary")
-            if error or not (settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT).strip():
-                self._ai_transient_toast(error or "Configure the single-page summarization prompt in Settings.")
-                self._ensure_ai_panel_visible()
-                return
+            self._ai_transient_toast("Unsupported AI request.")
+            return
         if not content.strip():
             self._ai_transient_toast(f"Nothing to {action_label.lower()} for the requested selection.")
             return
         if prompt_kind == "extract":
             prompt = compose_extract_information_prompt(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
-        elif prompt_kind == "range":
-            prompt = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
         else:
-            prompt = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
+            prompt = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
         api_url = credentials.api_url
         model_id = credentials.model_id
         api_key = credentials.api_key
@@ -10448,128 +10362,6 @@ class Focus(Adw.Application):
             except Exception as exc:  # noqa: BLE001
                 GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
                 return
-
-    def _summary_hover_stream_worker(
-        self,
-        settings: AiSettings,
-        content: str,
-        label: str,
-        cancel_event: threading.Event | None,
-        generation: int,
-        prompt: str,
-        *,
-        model_id: str,
-        api_url: str,
-        api_key: str | None = None,
-        disable_reasoning: bool = False,
-    ) -> None:
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-            "Authorization": f"Bearer {api_key or settings.api_key}",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Focus/1.0",
-        }
-        body = {
-            "model": model_id,
-            "stream": True,
-            "messages": [
-                {"role": "system", "content": prompt or DEFAULT_SUMMARIZATION_PROMPT},
-                {"role": "user", "content": content},
-            ],
-        }
-        _apply_disable_reasoning_to_body(
-            body,
-            model_id=model_id,
-            disable_reasoning=disable_reasoning,
-        )
-        attempted_without_thinking = False
-        attempted_without_reasoning_effort = False
-
-        while True:
-            data = json.dumps(body).encode("utf-8")
-            req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    for chunk in self._iter_sse_chunks(resp, cancel_event):
-                        if cancel_event and cancel_event.is_set():
-                            GLib.idle_add(self._on_summary_hover_stream_cancelled, generation)
-                            return
-                        GLib.idle_add(self._append_summary_hover_output, chunk, generation)
-                if cancel_event and cancel_event.is_set():
-                    GLib.idle_add(self._on_summary_hover_stream_cancelled, generation)
-                else:
-                    GLib.idle_add(self._on_summary_hover_stream_finished, label, generation)
-                return
-            except urllib.error.HTTPError as exc:
-                try:
-                    error_body = exc.read().decode("utf-8", errors="ignore")
-                except Exception:  # noqa: BLE001
-                    error_body = ""
-                message = (error_body.strip() or exc.reason or "request failed").lower()
-                if (
-                    not attempted_without_thinking
-                    and "thinking" in body
-                    and "thinking" in message
-                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
-                ):
-                    attempted_without_thinking = True
-                    body.pop("thinking", None)
-                    continue
-                if (
-                    not attempted_without_reasoning_effort
-                    and "reasoning_effort" in body
-                    and "reasoning_effort" in message
-                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
-                ):
-                    attempted_without_reasoning_effort = True
-                    body.pop("reasoning_effort", None)
-                    continue
-                detail = error_body.strip() or exc.reason or "request failed"
-                GLib.idle_add(
-                    self._on_summary_hover_stream_error,
-                    f"HTTP error {exc.code}: {detail}",
-                    generation,
-                )
-                return
-            except Exception as exc:  # noqa: BLE001
-                GLib.idle_add(self._on_summary_hover_stream_error, str(exc), generation)
-                return
-
-    def _append_summary_hover_output(self, text: str, generation: int) -> bool:
-        if generation != self._summary_hover_generation:
-            return False
-        if not text:
-            return False
-        self._summary_hover_raw += text
-        self._set_summary_hover_text(self._summary_hover_raw)
-        return False
-
-    def _on_summary_hover_stream_finished(self, _label: str, generation: int) -> bool:
-        if generation != self._summary_hover_generation:
-            return False
-        self._summary_hover_in_flight = False
-        self._summary_hover_cancel_event = None
-        self._summary_hover_thread = None
-        if not self._summary_hover_raw.strip():
-            self._set_summary_hover_text("No summary text was returned.")
-        return False
-
-    def _on_summary_hover_stream_error(self, message: str, generation: int) -> bool:
-        if generation != self._summary_hover_generation:
-            return False
-        self._summary_hover_in_flight = False
-        self._summary_hover_cancel_event = None
-        self._summary_hover_thread = None
-        self._set_summary_hover_text(message or "Summary request failed.")
-        return False
-
-    def _on_summary_hover_stream_cancelled(self, generation: int) -> bool:
-        if generation != self._summary_hover_generation:
-            return False
-        self._summary_hover_in_flight = False
-        self._summary_hover_cancel_event = None
-        self._summary_hover_thread = None
-        return False
 
     def _iter_sse_chunks(
         self,
