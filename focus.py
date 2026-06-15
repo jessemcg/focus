@@ -512,8 +512,9 @@ RAG_LONG_DATE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
-RIGHT_SCROLL_ZONE_COVERAGE_RATIO = 0.15
 RIGHT_SCROLL_ZONE_EDGE_MARGIN = 18
+IMAGE_PREVIEW_RAIL_WIDTH = 212
+IMAGE_PREVIEW_THUMB_WIDTH = IMAGE_PREVIEW_RAIL_WIDTH
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_EXTRACT = "extract"
 AI_VIEW_QA = "qa"
@@ -2557,6 +2558,37 @@ entry.focus-page-number-entry {
   background: __PAGE_TEXT_BG__;
 }
 
+box.focus-text-mode {
+  background: transparent;
+}
+
+box.focus-image-preview-rail {
+  background: transparent;
+}
+
+button.focus-image-preview-button,
+button.focus-image-preview-button:hover,
+button.focus-image-preview-button:active {
+  border-radius: 12px;
+  padding: 0;
+  background-image: none;
+  box-shadow: none;
+}
+
+button.focus-image-preview-button {
+  background-color: alpha(@window_fg_color, 0.04);
+}
+
+button.focus-image-preview-button:hover,
+button.focus-image-preview-button:active {
+  background-color: alpha(@window_fg_color, 0.08);
+}
+
+picture.focus-image-preview {
+  background-color: __PAGE_TEXT_BG__;
+  border-radius: 12px;
+}
+
 button.focus-right-scroll-zone {
   border-radius: 14px;
   padding: 0;
@@ -3242,10 +3274,14 @@ class Focus(Adw.Application):
         self._input_dir_dialog: Gtk.FileDialog | None = None
         self.textview: Gtk.TextView | None = None
         self.scroller: Gtk.ScrolledWindow | None = None
+        self._text_mode_box: Gtk.Box | None = None
         self._text_scroll_overlay: Gtk.Overlay | None = None
         self._right_scroll_zone: Gtk.Button | None = None
         self._right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
         self._right_scroll_active = False
+        self._image_preview_rail: Gtk.Box | None = None
+        self._image_preview_button: Gtk.Button | None = None
+        self._image_preview_picture: Gtk.Picture | None = None
         self._image_scroll_overlay: Gtk.Overlay | None = None
         self._image_right_scroll_zone: Gtk.Button | None = None
         self._image_right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
@@ -3649,14 +3685,14 @@ class Focus(Adw.Application):
         self._right_scroll_zone = Gtk.Button()
         self._right_scroll_zone.add_css_class("flat")
         self._right_scroll_zone.add_css_class("focus-right-scroll-zone")
-        self._right_scroll_zone.set_halign(Gtk.Align.END)
+        self._right_scroll_zone.set_halign(Gtk.Align.FILL)
         self._right_scroll_zone.set_valign(Gtk.Align.FILL)
-        self._right_scroll_zone.set_hexpand(False)
+        self._right_scroll_zone.set_hexpand(True)
         self._right_scroll_zone.set_vexpand(True)
         self._right_scroll_zone.set_margin_start(0)
         self._right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
         self._right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-        self._right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+        self._right_scroll_zone.set_margin_end(0)
         self._right_scroll_zone.set_can_target(True)
         self._right_scroll_zone.set_focus_on_click(False)
         right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
@@ -3674,9 +3710,44 @@ class Focus(Adw.Application):
         self._right_scroll_zone_scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         self._right_scroll_zone_scroll_controller.connect("scroll", self._on_right_scroll_zone_scroll)
         self._right_scroll_zone.add_controller(self._right_scroll_zone_scroll_controller)
-        self._text_scroll_overlay.add_overlay(self._right_scroll_zone)
-        if hasattr(self._text_scroll_overlay, "set_overlay_pass_through"):
-            self._text_scroll_overlay.set_overlay_pass_through(self._right_scroll_zone, False)
+
+        self._image_preview_picture = Gtk.Picture()
+        self._image_preview_picture.add_css_class("focus-image-preview")
+        self._image_preview_picture.set_hexpand(False)
+        self._image_preview_picture.set_vexpand(False)
+        self._image_preview_picture.set_halign(Gtk.Align.CENTER)
+        self._image_preview_picture.set_valign(Gtk.Align.CENTER)
+        self._image_preview_picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self._image_preview_picture.set_can_shrink(True)
+        self._image_preview_picture.set_overflow(Gtk.Overflow.HIDDEN)
+
+        self._image_preview_button = Gtk.Button()
+        self._image_preview_button.add_css_class("flat")
+        self._image_preview_button.add_css_class("focus-image-preview-button")
+        self._image_preview_button.set_halign(Gtk.Align.CENTER)
+        self._image_preview_button.set_valign(Gtk.Align.START)
+        self._image_preview_button.set_focus_on_click(False)
+        self._image_preview_button.set_size_request(IMAGE_PREVIEW_RAIL_WIDTH, -1)
+        self._image_preview_button.set_child(self._image_preview_picture)
+        self._image_preview_button.set_visible(False)
+        self._image_preview_button.connect("clicked", self._on_image_preview_clicked)
+
+        self._image_preview_rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self._image_preview_rail.add_css_class("focus-image-preview-rail")
+        self._image_preview_rail.set_hexpand(False)
+        self._image_preview_rail.set_vexpand(True)
+        self._image_preview_rail.set_halign(Gtk.Align.END)
+        self._image_preview_rail.set_valign(Gtk.Align.FILL)
+        self._image_preview_rail.set_size_request(IMAGE_PREVIEW_RAIL_WIDTH, -1)
+        self._image_preview_rail.append(self._image_preview_button)
+        self._image_preview_rail.append(self._right_scroll_zone)
+
+        self._text_mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._text_mode_box.add_css_class("focus-text-mode")
+        self._text_mode_box.set_hexpand(True)
+        self._text_mode_box.set_vexpand(True)
+        self._text_mode_box.append(self._text_scroll_overlay)
+        self._text_mode_box.append(self._image_preview_rail)
         GLib.idle_add(self._refresh_right_scroll_zone_geometry)
 
         self._image_picture = Gtk.Picture()
@@ -3768,7 +3839,7 @@ class Focus(Adw.Application):
         self._content_stack.set_transition_duration(120)
         self._content_stack.set_hhomogeneous(False)
         self._content_stack.set_vhomogeneous(False)
-        self._content_stack.add_named(self._text_scroll_overlay, "text")
+        self._content_stack.add_named(self._text_mode_box, "text")
         self._content_stack.add_named(self._image_scroll_overlay, "image")
         self._content_stack.set_visible_child_name("text")
 
@@ -6100,41 +6171,33 @@ class Focus(Adw.Application):
     def _sync_right_scroll_zone_geometry(
         self, width: int, height: int
     ) -> tuple[float, float, float, float]:
-        coverage = min(1.0, max(0.0, float(RIGHT_SCROLL_ZONE_COVERAGE_RATIO)))
         right = max(0.0, float(width))
-        left = max(0.0, right * (1.0 - coverage))
+        left = 0.0
         top = 0.0
         bottom = max(0.0, float(height))
 
         if self._right_scroll_zone:
-            zone_width = max(1, int(round(right - left)))
+            zone_width = IMAGE_PREVIEW_RAIL_WIDTH
+            if right > 0:
+                zone_width = min(zone_width, max(1, int(round(right))))
             self._right_scroll_zone.set_size_request(zone_width, -1)
             self._right_scroll_zone.set_margin_start(0)
             self._right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
             self._right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-            self._right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+            self._right_scroll_zone.set_margin_end(0)
         return left, right, top, bottom
 
     def _refresh_right_scroll_zone_geometry(self) -> bool:
+        if self._image_preview_rail:
+            self._sync_right_scroll_zone_geometry(
+                self._image_preview_rail.get_width(),
+                self._image_preview_rail.get_height(),
+            )
+            return False
         if not self.textview:
             return False
         self._sync_right_scroll_zone_geometry(self.textview.get_width(), self.textview.get_height())
         return False
-
-    def _current_text_right_scroll_zone_width(self) -> int:
-        if not self._right_scroll_zone:
-            return 0
-        allocated_width = self._right_scroll_zone.get_width()
-        if allocated_width > 0:
-            return allocated_width
-        try:
-            minimum_width, natural_width, _, _ = self._right_scroll_zone.measure(
-                Gtk.Orientation.HORIZONTAL,
-                -1,
-            )
-        except Exception:
-            return 0
-        return max(0, natural_width, minimum_width)
 
     def _on_textview_leave(self, _controller: Gtk.EventControllerMotion) -> None:
         if self.textview:
@@ -6154,13 +6217,10 @@ class Focus(Adw.Application):
         self, width: int, height: int
     ) -> tuple[float, float, float, float]:
         right = max(0.0, float(width))
-        zone_width = self._current_text_right_scroll_zone_width()
-        if zone_width <= 0:
-            coverage = min(1.0, max(0.0, float(RIGHT_SCROLL_ZONE_COVERAGE_RATIO)))
-            left = max(0.0, right * (1.0 - coverage))
-            zone_width = max(1, int(round(right - left)))
-        else:
-            left = max(0.0, right - zone_width)
+        zone_width = IMAGE_PREVIEW_RAIL_WIDTH
+        if right > 0:
+            zone_width = min(zone_width, max(1, int(round(right))))
+        left = max(0.0, right - zone_width)
         top = 0.0
         bottom = max(0.0, float(height))
 
@@ -6169,7 +6229,7 @@ class Focus(Adw.Application):
             self._image_right_scroll_zone.set_margin_start(0)
             self._image_right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
             self._image_right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-            self._image_right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
+            self._image_right_scroll_zone.set_margin_end(0)
         return left, right, top, bottom
 
     def _refresh_image_right_scroll_zone_geometry(self) -> bool:
@@ -6789,6 +6849,9 @@ class Focus(Adw.Application):
             self._clear_grep_state()
         self._load_current()
 
+    def _image_path_for_page(self, page: int) -> Path:
+        return self.images_dir / f"{page:04d}.png"
+
     def _load_image_for_page(self, page: int, *, silent: bool = False) -> bool:
         if not (self._image_picture and self._image_scroller):
             return False
@@ -6797,8 +6860,7 @@ class Focus(Adw.Application):
             if not silent:
                 self._transient_toast(f"Text for page {page:04d} not available")
             return False
-        image_dir = self.images_dir
-        image_path = image_dir / f"{page:04d}.png"
+        image_path = self._image_path_for_page(page)
         if not image_path.exists():
             if not silent:
                 self._transient_toast(f"Image {image_path.name} not found")
@@ -6825,6 +6887,53 @@ class Focus(Adw.Application):
         if hadj:
             GLib.idle_add(hadj.set_value, hadj.get_lower())
         return True
+
+    def _load_image_preview_for_page(self, page: int) -> None:
+        if not (self._image_preview_picture and self._image_preview_button):
+            return
+        image_path = self._image_path_for_page(page)
+        if not image_path.exists():
+            self._clear_image_preview()
+            return
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(image_path))
+        except GLib.Error:
+            self._clear_image_preview()
+            return
+
+        width = max(1, pixbuf.get_width())
+        height = max(1, pixbuf.get_height())
+        scale = IMAGE_PREVIEW_THUMB_WIDTH / width
+        target_width = IMAGE_PREVIEW_THUMB_WIDTH
+        target_height = max(1, int(height * scale))
+        scaled = pixbuf.scale_simple(
+            target_width,
+            target_height,
+            GdkPixbuf.InterpType.BILINEAR,
+        )
+        if not scaled:
+            self._clear_image_preview()
+            return
+
+        texture = Gdk.Texture.new_for_pixbuf(scaled)
+        self._image_preview_picture.set_paintable(texture)
+        self._image_preview_picture.set_size_request(target_width, target_height)
+        self._image_preview_picture.set_alternative_text(f"Page {page:04d} image preview")
+        self._image_preview_button.set_tooltip_text(f"Open page {page:04d} image")
+        self._image_preview_button.set_sensitive(True)
+        self._image_preview_button.set_visible(True)
+
+    def _clear_image_preview(self) -> None:
+        if self._image_preview_picture:
+            self._image_preview_picture.set_paintable(None)
+            self._image_preview_picture.set_alternative_text("")
+            self._image_preview_picture.set_size_request(-1, -1)
+        if self._image_preview_button:
+            self._image_preview_button.set_sensitive(False)
+            self._image_preview_button.set_visible(False)
+
+    def _on_image_preview_clicked(self, _button: Gtk.Button) -> None:
+        self._set_show_image(True)
 
     def _clear_image_view(self) -> None:
         if self._image_picture:
@@ -7269,6 +7378,7 @@ class Focus(Adw.Application):
 
     def _load_current(self) -> None:
         if not self.pages:
+            self._clear_image_preview()
             self._set_show_image(False, silent=True)
             return
         page = self.pages[self.current_index]
@@ -7278,6 +7388,7 @@ class Focus(Adw.Application):
                 page, f"Missing file for page {page:04d}", None
             )
             self._set_text(display_text, highlight_spans)
+            self._clear_image_preview()
             self._set_show_image(False, silent=True)
             self._update_header()
             self._sync_sidebar_active_page(scroll=True)
@@ -7286,6 +7397,7 @@ class Focus(Adw.Application):
         highlights = self._grep_hits.get(page)
         display_text, highlight_spans = self._render_page_display(page, content, highlights)
         self._set_text(display_text, highlight_spans)
+        self._load_image_preview_for_page(page)
         if self._show_image:
             if not self._load_image_for_page(page):
                 self._set_show_image(False, silent=True)
@@ -8128,7 +8240,7 @@ class Focus(Adw.Application):
             if page not in available_pages:
                 missing_pages += 1
                 continue
-            image_path = self.images_dir / f"{page:04d}.png"
+            image_path = self._image_path_for_page(page)
             if not image_path.exists():
                 missing_images += 1
                 continue
@@ -8231,7 +8343,7 @@ class Focus(Adw.Application):
         if page_num < 0 or page_num >= len(self._image_print_pages):
             return
         page = self._image_print_pages[page_num]
-        image_path = self.images_dir / f"{page:04d}.png"
+        image_path = self._image_path_for_page(page)
         try:
             pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(image_path))
         except GLib.Error:
