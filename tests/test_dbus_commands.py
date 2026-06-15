@@ -43,7 +43,7 @@ def test_focus_command_items_cover_shortcut_actions_once() -> None:
         "focus_grep",
         "grep_next_hit",
         "grep_prev_hit",
-        "copy_grep_citations",
+        "insert_current_page_citation",
         "toggle_ai_panel",
         "summarize_current_page",
         "focus_rag_question",

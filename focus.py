@@ -335,10 +335,10 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
             ),
             FocusCommand(
                 "Grep",
-                "Send grep citations to Prose",
-                "copy_grep_citations",
+                "Insert current page citation",
+                "insert_current_page_citation",
                 "<Primary><Shift>C",
-                "Insert citations for the current grep search in Prose, or copy them if Prose is unavailable.",
+                "Insert the current page citation in Prose, or copy it if Prose is unavailable.",
             ),
         ),
     ),
@@ -3042,23 +3042,14 @@ def format_grep_status_text(
     return f"Search: hit {current_index + 1}/{total_hits}"
 
 
-def format_grep_citations_for_clipboard(
-    match_order: Sequence[tuple[int, int]],
+def format_current_page_citation_for_clipboard(
+    page: int,
     transcript_index: TranscriptPageIndex,
 ) -> str:
-    seen_pages: set[int] = set()
-    citations: list[str] = []
-    for page, _hit_index in match_order:
-        if page in seen_pages:
-            continue
-        seen_pages.add(page)
-        label = transcript_index.by_file_page.get(page)
-        if not label:
-            continue
-        citation = _format_record_citation_label(label.citation_label)
-        if citation:
-            citations.append(citation)
-    return " ".join(citations)
+    label = transcript_index.by_file_page.get(page)
+    if not label:
+        return ""
+    return _format_record_citation_label(label.citation_label)
 
 
 def _normalize_selection_for_citation_match(text: str) -> str:
@@ -3268,7 +3259,7 @@ class Focus(Adw.Application):
         self._page_jump_popover: Gtk.Popover | None = None
         self._page_total_label: Gtk.Label | None = None
         self._transcript_breakdown_button: Gtk.Button | None = None
-        self._grep_copy_citations_button: Gtk.Button | None = None
+        self._current_page_citation_button: Gtk.Button | None = None
         self._grep_prev_hit_button: Gtk.Button | None = None
         self._grep_next_hit_button: Gtk.Button | None = None
         self._grep_hit_label: Gtk.Label | None = None
@@ -4273,29 +4264,6 @@ class Focus(Adw.Application):
         self._grep_hit_label.set_visible(False)
         grep_controls.append(self._grep_hit_label)
 
-        self._grep_copy_citations_button = Gtk.Button()
-        self._grep_copy_citations_button.add_css_class("flat")
-        self._grep_copy_citations_button.set_valign(Gtk.Align.CENTER)
-        self._grep_copy_citations_button.set_tooltip_text(
-            "Send grep citations to Prose (Ctrl+Shift+C)"
-        )
-        self._grep_copy_citations_button.set_sensitive(False)
-        self._grep_copy_citations_button.set_visible(False)
-        self._grep_copy_citations_button.set_child(
-            Gtk.Image.new_from_icon_name(
-                self._choose_icon(
-                    "document-send-symbolic",
-                    "insert-text-symbolic",
-                    "edit-copy-symbolic",
-                    "mail-attachment-symbolic",
-                )
-            )
-        )
-        self._grep_copy_citations_button.connect(
-            "clicked", self._on_grep_copy_citations_clicked
-        )
-        grep_controls.append(self._grep_copy_citations_button)
-
         self._grep_prev_hit_button = Gtk.Button()
         self._grep_prev_hit_button.add_css_class("flat")
         self._grep_prev_hit_button.set_valign(Gtk.Align.CENTER)
@@ -4315,6 +4283,28 @@ class Focus(Adw.Application):
         )
         self._grep_next_hit_button.connect("clicked", self._on_grep_next_hit_clicked)
         grep_controls.append(self._grep_next_hit_button)
+
+        self._current_page_citation_button = Gtk.Button()
+        self._current_page_citation_button.add_css_class("flat")
+        self._current_page_citation_button.set_valign(Gtk.Align.CENTER)
+        self._current_page_citation_button.set_tooltip_text(
+            "Insert current page citation in Prose (Ctrl+Shift+C)"
+        )
+        self._current_page_citation_button.set_sensitive(False)
+        self._current_page_citation_button.set_child(
+            Gtk.Image.new_from_icon_name(
+                self._choose_icon(
+                    "document-send-symbolic",
+                    "insert-text-symbolic",
+                    "edit-copy-symbolic",
+                    "mail-attachment-symbolic",
+                )
+            )
+        )
+        self._current_page_citation_button.connect(
+            "clicked", self._on_current_page_citation_clicked
+        )
+        grep_controls.append(self._current_page_citation_button)
 
         grep_highlighted_button = Gtk.Button()
         grep_highlighted_button.add_css_class("flat")
@@ -7261,9 +7251,8 @@ class Focus(Adw.Application):
             self._grep_prev_hit_button.set_sensitive(prev_enabled)
         if self._grep_next_hit_button:
             self._grep_next_hit_button.set_sensitive(next_enabled)
-        if self._grep_copy_citations_button:
-            self._grep_copy_citations_button.set_sensitive(total_hits > 0)
-            self._grep_copy_citations_button.set_visible(total_hits > 0)
+        if self._current_page_citation_button:
+            self._current_page_citation_button.set_sensitive(bool(self.pages))
 
     def _update_header(self) -> None:
         self._update_page_nav_buttons()
@@ -7685,12 +7674,15 @@ class Focus(Adw.Application):
     def _on_grep_next_hit_clicked(self, _button: Gtk.Button) -> None:
         self._navigate_grep_match(1)
 
-    def _on_grep_copy_citations_clicked(self, _button: Gtk.Button) -> None:
-        self._send_grep_citations_to_prose_or_clipboard()
+    def _on_current_page_citation_clicked(self, _button: Gtk.Button) -> None:
+        self._insert_current_page_citation_in_prose_or_clipboard()
 
-    def _current_grep_citations_for_clipboard(self) -> str:
-        return format_grep_citations_for_clipboard(
-            self._grep_match_order,
+    def _current_page_citation_for_clipboard(self) -> str:
+        current_page = self._current_page_number()
+        if current_page is None:
+            return ""
+        return format_current_page_citation_for_clipboard(
+            current_page,
             self._transcript_page_index,
         )
 
@@ -7757,22 +7749,20 @@ class Focus(Adw.Application):
                 continue
         return False
 
-    def _send_grep_citations_to_prose_or_clipboard(self) -> bool:
-        if not self._grep_active or not self._grep_match_order:
-            self._transient_toast("No grep results to send.")
+    def _insert_current_page_citation_in_prose_or_clipboard(self) -> bool:
+        if self._current_page_number() is None:
+            self._transient_toast("No current page citation to send.")
             return False
-        citations = self._current_grep_citations_for_clipboard()
-        if not citations:
-            self._transient_toast("No transcript citations available for grep results.")
+        citation = self._current_page_citation_for_clipboard()
+        if not citation:
+            self._transient_toast("No transcript citation available for current page.")
             return False
-        citation_count = citations.count("(")
-        noun = "citation" if citation_count == 1 else "citations"
-        if self._send_text_to_prose_record_citations_action(citations):
-            self._transient_toast(f"Sent {citation_count} grep {noun} to Prose.")
+        if self._send_text_to_prose_record_citations_action(citation):
+            self._transient_toast("Sent current page citation to Prose.")
             return True
-        if not self._copy_text_to_clipboard(citations):
+        if not self._copy_text_to_clipboard(citation):
             return False
-        self._transient_toast(f"Prose unavailable. Copied {citation_count} grep {noun}.")
+        self._transient_toast("Prose unavailable. Copied current page citation.")
         return True
 
     def _on_append_selection_citation_to_file_action(
@@ -7950,12 +7940,15 @@ class Focus(Adw.Application):
         grep_prev_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(-1))
         self.add_action(grep_prev_hit)
 
-        copy_grep_citations = Gio.SimpleAction.new("copy_grep_citations", None)
-        copy_grep_citations.connect(
-            "activate",
-            lambda _a, _p: self._send_grep_citations_to_prose_or_clipboard(),
+        insert_current_page_citation = Gio.SimpleAction.new(
+            "insert_current_page_citation",
+            None,
         )
-        self.add_action(copy_grep_citations)
+        insert_current_page_citation.connect(
+            "activate",
+            lambda _a, _p: self._insert_current_page_citation_in_prose_or_clipboard(),
+        )
+        self.add_action(insert_current_page_citation)
 
         append_selection_citation = Gio.SimpleAction.new(
             "append_selection_citation_to_file",
@@ -7986,7 +7979,10 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.focus_grep", ["<Primary>f"])
         self.set_accels_for_action("app.grep_next_hit", ["<Primary>g"])
         self.set_accels_for_action("app.grep_prev_hit", ["<Primary><Shift>g"])
-        self.set_accels_for_action("app.copy_grep_citations", ["<Primary><Shift>c"])
+        self.set_accels_for_action(
+            "app.insert_current_page_citation",
+            ["<Primary><Shift>c"],
+        )
         self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
@@ -8039,7 +8035,7 @@ class Focus(Adw.Application):
         )
         search_group.append(
             Gtk.ShortcutsShortcut(
-                title="Send grep citations to Prose",
+                title="Insert current page citation",
                 accelerator="<Primary><Shift>C",
             )
         )

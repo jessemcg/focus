@@ -14,7 +14,7 @@ from focus import (
     append_page_citation_to_selected_text,
     build_grep_match_order,
     build_pattern,
-    format_grep_citations_for_clipboard,
+    format_current_page_citation_for_clipboard,
     format_grep_status_text,
     normalize_text_for_search_with_map,
     preprocess_phrase,
@@ -115,56 +115,40 @@ def _label(file_page: int, citation_label: str) -> TranscriptPageLabel:
     )
 
 
-def test_grep_citations_copy_unique_pages_in_search_order() -> None:
+def test_current_page_citation_formats_page_label() -> None:
     index = TranscriptPageIndex(
-        by_file_page={
-            41: _label(41, "RT 45"),
-            55: _label(55, "RT 23"),
-        },
+        by_file_page={41: _label(41, "RT 45")},
         by_transcript_number={},
         by_citation_key={},
     )
 
-    citations = format_grep_citations_for_clipboard(
-        [(41, 0), (41, 1), (55, 0)],
-        index,
-    )
+    citation = format_current_page_citation_for_clipboard(41, index)
 
-    assert citations == "(RT 45.) (RT 23.)"
+    assert citation == "(RT 45.)"
 
 
-def test_grep_citations_support_mixed_prefixes_and_existing_periods() -> None:
+def test_current_page_citation_preserves_existing_period() -> None:
     index = TranscriptPageIndex(
-        by_file_page={
-            12: _label(12, "2CT 454."),
-            13: _label(13, "3CT 12"),
-            14: _label(14, "4CT 523"),
-        },
+        by_file_page={12: _label(12, "2CT 454.")},
         by_transcript_number={},
         by_citation_key={},
     )
 
-    citations = format_grep_citations_for_clipboard(
-        [(12, 0), (13, 0), (14, 0)],
-        index,
-    )
+    citation = format_current_page_citation_for_clipboard(12, index)
 
-    assert citations == "(2CT 454.) (3CT 12.) (4CT 523.)"
+    assert citation == "(2CT 454.)"
 
 
-def test_grep_citations_skip_pages_without_citation_metadata() -> None:
+def test_current_page_citation_skips_pages_without_citation_metadata() -> None:
     index = TranscriptPageIndex(
         by_file_page={55: _label(55, "RT 23")},
         by_transcript_number={},
         by_citation_key={},
     )
 
-    citations = format_grep_citations_for_clipboard(
-        [(41, 0), (55, 0)],
-        index,
-    )
+    citation = format_current_page_citation_for_clipboard(41, index)
 
-    assert citations == "(RT 23.)"
+    assert citation == ""
 
 
 def test_append_page_citation_to_selected_text_matches_collapsed_whitespace() -> None:
