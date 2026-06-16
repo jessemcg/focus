@@ -4203,8 +4203,8 @@ class Focus(Adw.Application):
 
         self._page_number_entry = Gtk.Entry()
         self._page_number_entry.add_css_class("focus-page-number-entry")
-        self._page_number_entry.set_width_chars(9)
-        self._page_number_entry.set_max_width_chars(12)
+        self._page_number_entry.set_width_chars(6)
+        self._page_number_entry.set_max_width_chars(8)
         self._page_number_entry.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
         self._page_number_entry.set_alignment(1.0)
         self._page_number_entry.set_valign(Gtk.Align.CENTER)
