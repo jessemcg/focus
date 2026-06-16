@@ -2607,16 +2607,16 @@ button.focus-right-scroll-zone:active {
 }
 
 button.focus-right-scroll-zone label.focus-right-scroll-label {
-  color: rgba(95, 95, 95, 0.00);
+  color: alpha(@window_fg_color, 0.00);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   transition: color 120ms ease;
 }
 
 button.focus-right-scroll-zone:hover label.focus-right-scroll-label,
 button.focus-right-scroll-zone.hover label.focus-right-scroll-label,
 button.focus-right-scroll-zone:active label.focus-right-scroll-label {
-  color: rgba(95, 95, 95, 0.62);
+  color: alpha(@window_fg_color, 0.62);
 }
 
 .ai-output-frame {
@@ -3282,11 +3282,6 @@ class Focus(Adw.Application):
         self._image_preview_rail: Gtk.Box | None = None
         self._image_preview_button: Gtk.Button | None = None
         self._image_preview_picture: Gtk.Picture | None = None
-        self._image_scroll_overlay: Gtk.Overlay | None = None
-        self._image_right_scroll_zone: Gtk.Button | None = None
-        self._image_right_scroll_zone_scroll_controller: Gtk.EventControllerScroll | None = None
-        self._image_right_scroll_active = False
-        self._image_motion_controller: Gtk.EventControllerMotion | None = None
         self._grep_entry: Gtk.Entry | None = None
         self._center_label: Gtk.Label | None = None
         self._split_view: Adw.NavigationSplitView | None = None
@@ -3778,49 +3773,6 @@ class Focus(Adw.Application):
         self._image_scroller.set_min_content_height(0)
         self._image_scroller.set_size_request(-1, 0)
         self._image_scroller.set_child(self._image_fixed)
-        self._image_motion_controller = Gtk.EventControllerMotion()
-        self._image_motion_controller.connect("motion", self._on_image_motion)
-        self._image_motion_controller.connect("enter", self._on_image_motion)
-        self._image_motion_controller.connect("leave", self._on_image_leave)
-        self._image_scroller.add_controller(self._image_motion_controller)
-
-        self._image_scroll_overlay = Gtk.Overlay()
-        self._image_scroll_overlay.set_hexpand(True)
-        self._image_scroll_overlay.set_vexpand(True)
-        self._image_scroll_overlay.set_child(self._image_scroller)
-
-        self._image_right_scroll_zone = Gtk.Button()
-        self._image_right_scroll_zone.add_css_class("flat")
-        self._image_right_scroll_zone.add_css_class("focus-right-scroll-zone")
-        self._image_right_scroll_zone.set_halign(Gtk.Align.END)
-        self._image_right_scroll_zone.set_valign(Gtk.Align.FILL)
-        self._image_right_scroll_zone.set_hexpand(False)
-        self._image_right_scroll_zone.set_vexpand(True)
-        self._image_right_scroll_zone.set_margin_start(0)
-        self._image_right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-        self._image_right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-        self._image_right_scroll_zone.set_margin_end(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-        self._image_right_scroll_zone.set_can_target(True)
-        self._image_right_scroll_zone.set_focus_on_click(False)
-        image_right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
-        image_right_scroll_label.add_css_class("focus-right-scroll-label")
-        image_right_scroll_label.set_halign(Gtk.Align.CENTER)
-        image_right_scroll_label.set_valign(Gtk.Align.END)
-        image_right_scroll_label.set_vexpand(True)
-        image_right_scroll_label.set_margin_bottom(12)
-        self._image_right_scroll_zone.set_child(image_right_scroll_label)
-        self._image_right_scroll_zone.connect("clicked", self._on_image_right_scroll_zone_clicked)
-
-        self._image_right_scroll_zone_scroll_controller = Gtk.EventControllerScroll.new(
-            Gtk.EventControllerScrollFlags.VERTICAL
-        )
-        self._image_right_scroll_zone_scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        self._image_right_scroll_zone_scroll_controller.connect("scroll", self._on_image_right_scroll_zone_scroll)
-        self._image_right_scroll_zone.add_controller(self._image_right_scroll_zone_scroll_controller)
-        self._image_scroll_overlay.add_overlay(self._image_right_scroll_zone)
-        if hasattr(self._image_scroll_overlay, "set_overlay_pass_through"):
-            self._image_scroll_overlay.set_overlay_pass_through(self._image_right_scroll_zone, False)
-        GLib.idle_add(self._refresh_image_right_scroll_zone_geometry)
 
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         content_box.set_hexpand(True)
@@ -3840,7 +3792,7 @@ class Focus(Adw.Application):
         self._content_stack.set_hhomogeneous(False)
         self._content_stack.set_vhomogeneous(False)
         self._content_stack.add_named(self._text_mode_box, "text")
-        self._content_stack.add_named(self._image_scroll_overlay, "image")
+        self._content_stack.add_named(self._image_scroller, "image")
         self._content_stack.set_visible_child_name("text")
 
         self._content_overlay = Gtk.Overlay()
@@ -6204,46 +6156,6 @@ class Focus(Adw.Application):
             self.textview.set_cursor_from_name(None)
         self._set_right_scroll_active(False)
 
-    def _on_image_motion(
-        self,
-        _controller: Gtk.EventControllerMotion,
-        _x: float,
-        _y: float,
-    ) -> None:
-        if not self._image_scroller:
-            return
-
-    def _sync_image_right_scroll_zone_geometry(
-        self, width: int, height: int
-    ) -> tuple[float, float, float, float]:
-        right = max(0.0, float(width))
-        zone_width = IMAGE_PREVIEW_RAIL_WIDTH
-        if right > 0:
-            zone_width = min(zone_width, max(1, int(round(right))))
-        left = max(0.0, right - zone_width)
-        top = 0.0
-        bottom = max(0.0, float(height))
-
-        if self._image_right_scroll_zone:
-            self._image_right_scroll_zone.set_size_request(zone_width, -1)
-            self._image_right_scroll_zone.set_margin_start(0)
-            self._image_right_scroll_zone.set_margin_top(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-            self._image_right_scroll_zone.set_margin_bottom(RIGHT_SCROLL_ZONE_EDGE_MARGIN)
-            self._image_right_scroll_zone.set_margin_end(0)
-        return left, right, top, bottom
-
-    def _refresh_image_right_scroll_zone_geometry(self) -> bool:
-        if not self._image_scroller:
-            return False
-        self._sync_image_right_scroll_zone_geometry(
-            self._image_scroller.get_width(),
-            self._image_scroller.get_height(),
-        )
-        return False
-
-    def _on_image_leave(self, _controller: Gtk.EventControllerMotion) -> None:
-        self._set_image_right_scroll_active(False)
-
     def _on_textview_click(
         self,
         gesture: Gtk.GestureClick,
@@ -7007,10 +6919,6 @@ class Focus(Adw.Application):
         current = self._content_stack.get_visible_child_name()
         if current != target:
             self._content_stack.set_visible_child_name(target)
-        if self._show_image:
-            GLib.idle_add(self._refresh_image_right_scroll_zone_geometry)
-        else:
-            self._set_image_right_scroll_active(False)
 
     def _sync_show_image_action(self) -> None:
         if not self._show_image_action:
@@ -7893,7 +7801,11 @@ class Focus(Adw.Application):
         attached = attach_scroll_controller(self.scroller)
         if not attached:
             attach_scroll_controller(self.win)
-        attach_scroll_controller(self._image_scroller)
+        if self._image_scroller:
+            image_scroll_controller = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
+            image_scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            image_scroll_controller.connect("scroll", self._on_image_scroll)
+            self._image_scroller.add_controller(image_scroll_controller)
 
         key_ctrl = Gtk.EventControllerKey.new()
         key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -8501,6 +8413,15 @@ class Focus(Adw.Application):
             return True
         return False
 
+    def _on_image_scroll(self, _ctrl: Gtk.EventControllerScroll, _dx: float, dy: float) -> bool:
+        if dy > 0:
+            self._go_next()
+            return True
+        if dy < 0:
+            self._go_prev()
+            return True
+        return False
+
     def _on_key(self, _ctrl: Gtk.EventControllerKey, keyval: int, keycode: int, state: int) -> bool:  # noqa: ARG002
         key = Gdk.keyval_name(keyval)
         if key in ("g", "G") and (state & Gdk.ModifierType.CONTROL_MASK):
@@ -8651,35 +8572,10 @@ class Focus(Adw.Application):
         else:
             self._right_scroll_zone.remove_css_class("hover")
 
-    def _set_image_right_scroll_active(self, active: bool) -> None:
-        if self._image_right_scroll_active == active:
-            return
-        self._image_right_scroll_active = active
-        if not self._image_right_scroll_zone:
-            return
-        if active:
-            self._image_right_scroll_zone.add_css_class("hover")
-        else:
-            self._image_right_scroll_zone.remove_css_class("hover")
-
     def _on_right_scroll_zone_clicked(self, _button: Gtk.Button) -> None:
         self._go_next()
 
     def _on_right_scroll_zone_scroll(
-        self, _ctrl: Gtk.EventControllerScroll, _dx: float, dy: float
-    ) -> bool:
-        if dy > 0:
-            self._go_next()
-            return True
-        if dy < 0:
-            self._go_prev()
-            return True
-        return False
-
-    def _on_image_right_scroll_zone_clicked(self, _button: Gtk.Button) -> None:
-        self._go_next()
-
-    def _on_image_right_scroll_zone_scroll(
         self, _ctrl: Gtk.EventControllerScroll, _dx: float, dy: float
     ) -> bool:
         if dy > 0:
