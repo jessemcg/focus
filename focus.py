@@ -211,12 +211,15 @@ RECORD_FONT_FAMILY_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Merriweather", '"Merriweather", "Noto Serif", "Liberation Serif", serif'),
     ("Source Sans 3", '"Source Sans 3", "Noto Sans", "Liberation Sans", sans-serif'),
     (
-        "Century Schoolbook",
-        '"Century Schoolbook", "TeX Gyre Schola", "New Century Schoolbook", '
+        "TeX Gyre Schola",
+        '"TeX Gyre Schola", "New Century Schoolbook", '
         '"Century Schoolbook L", "URW Schoolbook L", serif',
     ),
 )
 DEFAULT_RECORD_FONT_FAMILY_NAME = RECORD_FONT_FAMILY_OPTIONS[0][0]
+LEGACY_RECORD_FONT_FAMILY_ALIASES = {
+    "Century Schoolbook": "TeX Gyre Schola",
+}
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
@@ -1564,6 +1567,7 @@ def _coerce_bool_config(value: Any, default: bool) -> bool:
 
 def _normalize_record_font_family_name(value: Any) -> str:
     normalized = str(value or "").strip()
+    normalized = LEGACY_RECORD_FONT_FAMILY_ALIASES.get(normalized, normalized)
     for name, _css in RECORD_FONT_FAMILY_OPTIONS:
         if normalized == name:
             return name
