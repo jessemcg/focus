@@ -4037,6 +4037,16 @@ class Focus(Adw.Application):
         menu_icon = self._choose_icon("view-more-symbolic", "open-menu-symbolic")
         summary_row.insert(self._summary_progress_label, -1)
 
+        self._summary_search_entry = Gtk.SearchEntry()
+        self._summary_search_entry.set_placeholder_text("Search summary")
+        self._summary_search_entry.set_width_chars(24)
+        self._summary_search_entry.set_max_width_chars(40)
+        self._summary_search_entry.set_hexpand(True)
+        self._summary_search_entry.set_valign(Gtk.Align.CENTER)
+        self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
+        self._summary_search_entry.connect("activate", self._on_summary_search_activate)
+        summary_row.insert(self._summary_search_entry, -1)
+
         ai_overflow_button = Gtk.MenuButton()
         ai_overflow_button.add_css_class("flat")
         ai_overflow_button.set_valign(Gtk.Align.CENTER)
@@ -6335,11 +6345,6 @@ class Focus(Adw.Application):
         table = self._summary_buffer.get_tag_table()
         if table is None:
             return
-        grep_color = (
-            self._ai_settings.grep_highlight_color
-            if self._ai_settings
-            else DEFAULT_MATCH_COLOR
-        )
         if self._summary_search_tag is None:
             tag = table.lookup("summary-search-match")
             if tag is None:
@@ -6354,12 +6359,12 @@ class Focus(Adw.Application):
             if tag is None:
                 tag = self._summary_buffer.create_tag(
                     "summary-search-current",
-                    background=grep_color,
+                    background="#f4b26b",
                     foreground="#2b1600",
                 )
             self._summary_search_current_tag = tag
         if self._summary_search_current_tag is not None:
-            self._summary_search_current_tag.set_property("background", grep_color)
+            self._summary_search_current_tag.set_property("background", "#f4b26b")
 
     def _clear_summary_search_tags(self) -> None:
         if not self._summary_buffer:
