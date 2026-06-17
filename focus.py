@@ -3111,6 +3111,25 @@ def format_grep_status_text(
     return f"Search: hit {current_index + 1}/{total_hits}"
 
 
+def next_grep_match_index(
+    current_index: int,
+    total_hits: int,
+    direction: int,
+    *,
+    wrap: bool,
+) -> int | None:
+    if direction == 0 or total_hits <= 0:
+        return None
+    if current_index < 0 or current_index >= total_hits:
+        return 0 if direction > 0 else total_hits - 1
+    next_index = current_index + direction
+    if 0 <= next_index < total_hits:
+        return next_index
+    if wrap:
+        return 0 if direction > 0 else total_hits - 1
+    return None
+
+
 def format_current_page_citation_for_clipboard(
     page: int,
     transcript_index: TranscriptPageIndex,
@@ -7791,19 +7810,19 @@ class Focus(Adw.Application):
         except OSError:
             return
 
-    def _navigate_grep_match(self, direction: int) -> bool:
+    def _navigate_grep_match(self, direction: int, *, wrap: bool = False) -> bool:
         if direction == 0 or not self._grep_active or not self._grep_match_order:
             return False
         count = len(self._grep_match_order)
-        current = self._grep_current_match_index
-        if current < 0 or current >= count:
-            current = 0 if direction > 0 else count - 1
-        else:
-            next_index = current + direction
-            if next_index < 0 or next_index >= count:
-                self._edge_flash()
-                return True
-            current = next_index
+        current = next_grep_match_index(
+            self._grep_current_match_index,
+            count,
+            direction,
+            wrap=wrap,
+        )
+        if current is None:
+            self._edge_flash()
+            return True
         self._grep_current_match_index = current
         target_page, _hit_index = self._grep_match_order[current]
         if target_page in self.pages and (
@@ -7917,11 +7936,11 @@ class Focus(Adw.Application):
         self.add_action(focus_grep)
 
         grep_next_hit = Gio.SimpleAction.new("grep_next_hit", None)
-        grep_next_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(1))
+        grep_next_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(1, wrap=True))
         self.add_action(grep_next_hit)
 
         grep_prev_hit = Gio.SimpleAction.new("grep_prev_hit", None)
-        grep_prev_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(-1))
+        grep_prev_hit.connect("activate", lambda _a, _p: self._navigate_grep_match(-1, wrap=True))
         self.add_action(grep_prev_hit)
 
         insert_current_page_citation = Gio.SimpleAction.new(
@@ -8459,7 +8478,7 @@ class Focus(Adw.Application):
         key = Gdk.keyval_name(keyval)
         if key in ("g", "G") and (state & Gdk.ModifierType.CONTROL_MASK):
             direction = -1 if (state & Gdk.ModifierType.SHIFT_MASK) else 1
-            if self._navigate_grep_match(direction):
+            if self._navigate_grep_match(direction, wrap=True):
                 return True
         if key == "Up":
             self._go_prev(); return True

@@ -17,6 +17,7 @@ from focus import (
     format_current_page_citation_for_clipboard,
     format_page_citation_range_for_clipboard,
     format_grep_status_text,
+    next_grep_match_index,
     normalize_text_for_search_with_map,
     preprocess_phrase,
     split_span_at_line_breaks,
@@ -100,6 +101,21 @@ def test_grep_status_text_reports_global_hit_position() -> None:
     match_order = [(41, 0), (41, 1), (55, 0)]
 
     assert format_grep_status_text(match_order, 2) == "Search: hit 3/3"
+
+
+def test_next_grep_match_index_keeps_bounded_navigation_at_edges() -> None:
+    assert next_grep_match_index(0, 3, -1, wrap=False) is None
+    assert next_grep_match_index(2, 3, 1, wrap=False) is None
+
+
+def test_next_grep_match_index_wraps_shortcut_navigation_at_edges() -> None:
+    assert next_grep_match_index(0, 3, -1, wrap=True) == 2
+    assert next_grep_match_index(2, 3, 1, wrap=True) == 0
+
+
+def test_next_grep_match_index_moves_inside_result_range() -> None:
+    assert next_grep_match_index(1, 3, -1, wrap=False) == 0
+    assert next_grep_match_index(1, 3, 1, wrap=True) == 2
 
 
 def _label(file_page: int, citation_label: str) -> TranscriptPageLabel:
