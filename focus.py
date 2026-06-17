@@ -5927,7 +5927,9 @@ class Focus(Adw.Application):
             self._minute_order_button.set_child(
                 self._build_header_icon("go-previous-symbolic", "edit-undo-symbolic")
             )
-            self._minute_order_button.set_tooltip_text("Return to the RT page you came from")
+            self._minute_order_button.set_tooltip_text(
+                "Return to the RT page you came from (Ctrl+Shift+M)"
+            )
             self._minute_order_button.set_sensitive(True)
             self._minute_order_button.add_css_class("focus-minute-order-active")
             return
@@ -5936,7 +5938,9 @@ class Focus(Adw.Application):
         self._minute_order_button.set_child(
             self._build_header_icon("text-x-generic-symbolic", "document-open-symbolic")
         )
-        self._minute_order_button.set_tooltip_text("Open the minute order for this RT page")
+        self._minute_order_button.set_tooltip_text(
+            "Open the minute order for this RT page (Ctrl+Shift+M)"
+        )
         self._minute_order_button.set_sensitive(target is not None)
         if target is not None:
             self._minute_order_button.add_css_class("focus-minute-order-active")
@@ -8133,6 +8137,13 @@ class Focus(Adw.Application):
         )
         self.add_action(toggle_ai_panel)
 
+        toggle_minute_order = Gio.SimpleAction.new("toggle_minute_order", None)
+        toggle_minute_order.connect(
+            "activate",
+            lambda _a, _p: self._toggle_minute_order_view(),
+        )
+        self.add_action(toggle_minute_order)
+
         focus_grep = Gio.SimpleAction.new("focus_grep", None)
         focus_grep.connect("activate", lambda _a, _p: self._focus_grep_entry())
         self.add_action(focus_grep)
@@ -8206,6 +8217,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
         self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>a"])
+        self.set_accels_for_action("app.toggle_minute_order", ["<Primary><Shift>m"])
         self.set_accels_for_action("app.show_shortcuts", ["F1"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
 
@@ -8235,6 +8247,12 @@ class Focus(Adw.Application):
         )
         navigation_group.append(
             Gtk.ShortcutsShortcut(title="Toggle image view", accelerator="<Primary>I")
+        )
+        navigation_group.append(
+            Gtk.ShortcutsShortcut(
+                title="Open or return from minute order",
+                accelerator="<Primary><Shift>M",
+            )
         )
         navigation_group.append(
             Gtk.ShortcutsShortcut(title="Print current page image", accelerator="<Primary>P")
@@ -8712,6 +8730,9 @@ class Focus(Adw.Application):
         self._go_next()
 
     def _on_minute_order_clicked(self, _button: Gtk.Button) -> None:
+        self._toggle_minute_order_view()
+
+    def _toggle_minute_order_view(self) -> None:
         if not self.pages:
             return
         if self._viewing_return_minute_order() and self._minute_order_return_page is not None:
