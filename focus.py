@@ -1034,6 +1034,26 @@ def find_minute_order_boundary_for_transcript_page(
     )
 
 
+def record_boundary_date_for_page(
+    page: int | None,
+    hearing_boundaries: Sequence[RecordBoundary],
+    minute_boundaries: Sequence[RecordBoundary],
+) -> str:
+    if page is None:
+        return ""
+    minute = next(
+        (boundary for boundary in minute_boundaries if boundary.contains(page)),
+        None,
+    )
+    if minute:
+        return minute.date
+    hearing = next(
+        (boundary for boundary in hearing_boundaries if boundary.contains(page)),
+        None,
+    )
+    return hearing.date if hearing else ""
+
+
 def should_show_minute_order_return(
     current_page: int | None,
     return_page: int | None,
@@ -3453,6 +3473,7 @@ class Focus(Adw.Application):
 
         self._page_back_one_button: Gtk.Button | None = None
         self._page_forward_one_button: Gtk.Button | None = None
+        self._record_boundary_date_label: Gtk.Label | None = None
         self._page_number_entry: Gtk.Entry | None = None
         self._page_jump_popover: Gtk.Popover | None = None
         self._page_total_label: Gtk.Label | None = None
@@ -4369,6 +4390,14 @@ class Focus(Adw.Application):
         text_controls.set_halign(Gtk.Align.FILL)
 
         paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+
+        self._record_boundary_date_label = Gtk.Label(label="")
+        self._record_boundary_date_label.add_css_class("dim-label")
+        self._record_boundary_date_label.set_xalign(1.0)
+        self._record_boundary_date_label.set_valign(Gtk.Align.CENTER)
+        self._record_boundary_date_label.set_tooltip_text("Boundary date")
+        self._record_boundary_date_label.set_visible(False)
+        paginator.append(self._record_boundary_date_label)
 
         self._page_number_entry = Gtk.Entry()
         self._page_number_entry.add_css_class("focus-page-number-entry")
@@ -5947,6 +5976,20 @@ class Focus(Adw.Application):
         else:
             self._minute_order_button.remove_css_class("focus-minute-order-active")
 
+    def _refresh_record_boundary_date_label(self) -> None:
+        if not self._record_boundary_date_label:
+            return
+        date_text = record_boundary_date_for_page(
+            self._current_page_number(),
+            self._hearing_boundaries,
+            self._minute_boundaries,
+        )
+        self._record_boundary_date_label.set_text(date_text)
+        self._record_boundary_date_label.set_visible(bool(date_text))
+        self._record_boundary_date_label.set_tooltip_text(
+            f"Boundary date: {date_text}" if date_text else "Boundary date"
+        )
+
     def _current_page_entry_text(self) -> str:
         current_page = self._current_page_number()
         entry_text, _detail_text = format_page_nav_labels(
@@ -7382,6 +7425,7 @@ class Focus(Adw.Application):
             self._page_number_entry.set_sensitive(bool(self.pages))
         self._refresh_transcript_breakdown_button()
         self._refresh_minute_order_button()
+        self._refresh_record_boundary_date_label()
         if self._page_total_label and self._page_number_entry:
             if self.pages and 0 <= self.current_index < len(self.pages):
                 current_page = self.pages[self.current_index]

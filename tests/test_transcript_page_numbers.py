@@ -11,6 +11,7 @@ from focus import (
     load_record_boundaries,
     load_transcript_page_index,
     parse_transcript_page_jump_query,
+    record_boundary_date_for_page,
     should_show_minute_order_return,
 )
 
@@ -244,6 +245,44 @@ def test_load_record_boundaries_handles_missing_or_malformed_files(tmp_path) -> 
 
     assert load_record_boundaries(missing) == ()
     assert load_record_boundaries(malformed) == ()
+
+
+def test_record_boundary_date_for_hearing_page() -> None:
+    hearing_boundaries = (RecordBoundary("April 10, 2018", 22, 43),)
+    minute_boundaries = (RecordBoundary("April 10, 2018", 904, 906),)
+
+    assert (
+        record_boundary_date_for_page(22, hearing_boundaries, minute_boundaries)
+        == "April 10, 2018"
+    )
+
+
+def test_record_boundary_date_for_minute_order_page() -> None:
+    hearing_boundaries = (RecordBoundary("April 10, 2018", 22, 43),)
+    minute_boundaries = (RecordBoundary("April 10, 2018", 904, 906),)
+
+    assert (
+        record_boundary_date_for_page(905, hearing_boundaries, minute_boundaries)
+        == "April 10, 2018"
+    )
+
+
+def test_record_boundary_date_prefers_minute_boundary_if_ranges_overlap() -> None:
+    hearing_boundaries = (RecordBoundary("Hearing Date", 22, 43),)
+    minute_boundaries = (RecordBoundary("Minute Date", 40, 42),)
+
+    assert (
+        record_boundary_date_for_page(41, hearing_boundaries, minute_boundaries)
+        == "Minute Date"
+    )
+
+
+def test_record_boundary_date_is_empty_outside_boundaries() -> None:
+    hearing_boundaries = (RecordBoundary("April 10, 2018", 22, 43),)
+    minute_boundaries = (RecordBoundary("April 10, 2018", 904, 906),)
+
+    assert record_boundary_date_for_page(100, hearing_boundaries, minute_boundaries) == ""
+    assert record_boundary_date_for_page(None, hearing_boundaries, minute_boundaries) == ""
 
 
 def test_find_minute_order_boundary_for_matched_rt_page(tmp_path) -> None:
