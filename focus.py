@@ -2551,6 +2551,7 @@ listbox.focus-sidebar-listview row {
   transition: background-color 120ms ease;
   border-radius: 12px;
   padding: 0;
+  margin-right: 8px;
 }
 
 .focus-sidebar-row.focus-sidebar-category {
@@ -2566,7 +2567,7 @@ listbox.focus-sidebar-listview row {
   background-color: alpha(@window_fg_color, 0.05);
   margin-top: 4px;
   margin-bottom: 4px;
-  margin-left: 10px;
+  margin-left: 4px;
 }
 
 .focus-sidebar-row.focus-sidebar-top-level:hover,
@@ -3946,12 +3947,9 @@ class Focus(Adw.Application):
         self._image_scroller.set_size_request(-1, 0)
         self._image_scroller.set_child(self._image_fixed)
 
-        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content_box.set_hexpand(True)
         content_box.set_vexpand(True)
-        content_box.set_margin_start(12)
-        content_box.set_margin_end(12)
-        content_box.set_margin_top(5)
 
         self._image_icon_name_on = self._choose_icon(*IMAGE_ICON_ON_CHOICES)
         self._image_icon_name_off = self._image_icon_name_on
@@ -4376,12 +4374,19 @@ class Focus(Adw.Application):
         self._main_root = main_root
         main_root.append(self._ai_panel_revealer)
 
+        document_shell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        document_shell.set_hexpand(True)
+        document_shell.set_vexpand(True)
+        document_shell.set_margin_start(12)
+        document_shell.set_margin_end(12)
+        document_shell.set_margin_top(5)
+
         text_controls = Gtk.CenterBox()
         text_controls.set_hexpand(True)
         text_controls.set_valign(Gtk.Align.CENTER)
         text_controls.set_halign(Gtk.Align.FILL)
 
-        paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
 
         self._page_number_entry = Gtk.Entry()
         self._page_number_entry.add_css_class("focus-page-number-entry")
@@ -4419,19 +4424,21 @@ class Focus(Adw.Application):
         paginator.append(self._transcript_breakdown_button)
         self._refresh_transcript_breakdown_button()
 
-        self._minute_order_button = Gtk.Button(label="Minute order")
+        self._minute_order_button = Gtk.Button()
         self._minute_order_button.add_css_class("flat")
-        self._minute_order_button.add_css_class("no-bold")
         self._minute_order_button.set_valign(Gtk.Align.CENTER)
+        self._minute_order_button.set_child(
+            self._build_header_icon("text-x-generic-symbolic", "document-open-symbolic")
+        )
         self._minute_order_button.set_tooltip_text("Open the minute order for this RT page")
         self._minute_order_button.set_sensitive(False)
         self._minute_order_button.connect("clicked", self._on_minute_order_clicked)
         paginator.append(self._minute_order_button)
 
-        trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trailing_controls.set_valign(Gtk.Align.CENTER)
         trailing_controls.set_halign(Gtk.Align.END)
-        trailing_controls.set_margin_start(10)
+        trailing_controls.set_margin_start(4)
         trailing_controls.append(paginator)
 
         self._show_image_icon = Gtk.Image.new_from_icon_name(self._image_icon_name_off)
@@ -4443,12 +4450,12 @@ class Focus(Adw.Application):
         self._show_image_button.set_tooltip_text("Enable image view (Ctrl+I)")
         self._show_image_button.connect("toggled", self._on_show_image_button_toggled)
 
-        grep_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        grep_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         grep_controls.set_valign(Gtk.Align.CENTER)
 
         self._grep_entry = Gtk.Entry()
-        self._grep_entry.set_width_chars(32)
-        self._grep_entry.set_max_width_chars(48)
+        self._grep_entry.set_width_chars(20)
+        self._grep_entry.set_max_width_chars(30)
         self._grep_entry.set_hexpand(True)
         self._grep_entry.set_placeholder_text("Search record")
         self._grep_entry.connect("activate", self._on_grep_entry_activate)
@@ -4535,7 +4542,7 @@ class Focus(Adw.Application):
         trailing_controls.append(self._show_image_button)
         text_controls.set_end_widget(trailing_controls)
 
-        content_box.append(text_controls)
+        document_shell.append(text_controls)
         self._update_show_image_toggle_button()
         self._update_page_nav_buttons()
 
@@ -4558,7 +4565,7 @@ class Focus(Adw.Application):
         sidebar_root.add_css_class("focus-sidebar")
 
         sidebar_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        sidebar_container.set_margin_top(42)
+        sidebar_container.set_margin_top(0)
         sidebar_container.set_margin_bottom(8)
         sidebar_container.set_margin_start(0)
         sidebar_container.set_margin_end(0)
@@ -4616,7 +4623,8 @@ class Focus(Adw.Application):
         if self._split_view:
             self._split_view.set_sidebar(self._split_sidebar_page)
 
-        main_root.append(self._split_view)
+        document_shell.append(self._split_view)
+        main_root.append(document_shell)
         toolbar.set_content(main_root)
         self._ensure_ai_panel_resize_tracking()
         self._reset_embedded_ai_panel_sizing()
@@ -5912,14 +5920,18 @@ class Focus(Adw.Application):
             return
         self._sync_minute_order_return_state()
         if self._viewing_return_minute_order():
-            self._minute_order_button.set_label("Back to RT")
+            self._minute_order_button.set_child(
+                self._build_header_icon("go-previous-symbolic", "edit-undo-symbolic")
+            )
             self._minute_order_button.set_tooltip_text("Return to the RT page you came from")
             self._minute_order_button.set_sensitive(True)
             self._minute_order_button.add_css_class("focus-minute-order-active")
             return
 
         target = self._current_minute_order_boundary()
-        self._minute_order_button.set_label("Minute order")
+        self._minute_order_button.set_child(
+            self._build_header_icon("text-x-generic-symbolic", "document-open-symbolic")
+        )
         self._minute_order_button.set_tooltip_text("Open the minute order for this RT page")
         self._minute_order_button.set_sensitive(target is not None)
         if target is not None:
