@@ -534,6 +534,11 @@ def _model_looks_deepseek(model_id: str) -> bool:
     return "deepseek" in normalized
 
 
+def _api_url_looks_fireworks(api_url: str) -> bool:
+    normalized = (api_url or "").strip().lower()
+    return "fireworks.ai" in normalized
+
+
 def _apply_disable_reasoning_to_body(
     body: dict[str, Any],
     *,
@@ -548,7 +553,20 @@ def _apply_disable_reasoning_to_body(
         body["thinking"] = {"type": "disabled"}
     else:
         body["reasoning_effort"] = "none"
+
+
+def _apply_priority_service_tier_to_body(
+    body: dict[str, Any],
+    *,
+    api_url: str,
+    priority_service_tier: bool,
+) -> None:
+    if priority_service_tier and _api_url_looks_fireworks(api_url):
+        body["service_tier"] = "priority"
+
+
 AI_VIEW_FILE = "show-file"
+
 
 def _normalize_rag_provider(value: str) -> str:
     provider = (value or "").strip().lower()
@@ -1622,6 +1640,7 @@ class ModelProfile:
     model_id: str
     api_key: str
     disable_reasoning: bool
+    priority_service_tier: bool
 
     def display_name(self) -> str:
         return self.nickname.strip() or _default_profile_nickname(self.key)
@@ -1639,6 +1658,7 @@ class LlmCredentials:
     model_id: str
     api_key: str
     disable_reasoning: bool
+    priority_service_tier: bool = False
     profile: ModelProfile | None = None
 
     def is_configured(self) -> bool:
@@ -1719,6 +1739,7 @@ class AiSettings:
                 model_id=profile.model_id.strip(),
                 api_key=profile.api_key.strip(),
                 disable_reasoning=bool(profile.disable_reasoning),
+                priority_service_tier=bool(profile.priority_service_tier),
                 profile=profile,
             )
         return LlmCredentials(
@@ -1882,6 +1903,7 @@ def _sanitize_model_profile(raw: Any, key: str, fallback_nickname: str) -> Model
         model_id=str(data.get("model_id", "") or "").strip(),
         api_key=str(data.get("api_key", "") or "").strip(),
         disable_reasoning=_coerce_bool_config(data.get("disable_reasoning"), DEFAULT_DISABLE_REASONING),
+        priority_service_tier=_coerce_bool_config(data.get("priority_service_tier"), False),
     )
 
 
@@ -1901,6 +1923,7 @@ def _legacy_profile(
         model_id=model_id.strip(),
         api_key=api_key.strip(),
         disable_reasoning=bool(disable_reasoning),
+        priority_service_tier=False,
     )
 
 
@@ -2230,6 +2253,7 @@ def save_ai_settings(settings: AiSettings) -> None:
             "model_id": profile.model_id,
             "api_key": profile.api_key,
             "disable_reasoning": bool(profile.disable_reasoning),
+            "priority_service_tier": bool(profile.priority_service_tier),
         }
         for profile in settings.model_profiles[: len(MODEL_PROFILE_IDS)]
     ]
@@ -9558,6 +9582,7 @@ class Focus(Adw.Application):
             user_payload = self._compose_rag_payload(case_details, context_text, question_text)
             request_model_id = rag_model
             disable_reasoning = credentials.disable_reasoning
+            priority_service_tier = credentials.priority_service_tier
             llm_request = {
                 "model": request_model_id,
                 "stream": True,
@@ -9570,6 +9595,11 @@ class Focus(Adw.Application):
                 llm_request,
                 model_id=request_model_id,
                 disable_reasoning=disable_reasoning,
+            )
+            _apply_priority_service_tier_to_body(
+                llm_request,
+                api_url=rag_api_url,
+                priority_service_tier=priority_service_tier,
             )
             audit_record: dict[str, Any] = {
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -9612,6 +9642,7 @@ class Focus(Adw.Application):
                 api_url=rag_api_url,
                 api_key=rag_api_key,
                 disable_reasoning=disable_reasoning,
+                priority_service_tier=priority_service_tier,
                 include_reasoning=False,
             )
 
@@ -10166,6 +10197,7 @@ class Focus(Adw.Application):
         model_id = credentials.model_id
         api_key = credentials.api_key
         disable_reasoning = credentials.disable_reasoning
+        priority_service_tier = credentials.priority_service_tier
 
         self._stop_ai_stream_if_running()
         state.ai_cancel_event = threading.Event()
@@ -10198,6 +10230,7 @@ class Focus(Adw.Application):
                 api_url=api_url,
                 api_key=api_key,
                 disable_reasoning=disable_reasoning,
+                priority_service_tier=priority_service_tier,
             )
 
         state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
@@ -10301,6 +10334,7 @@ class Focus(Adw.Application):
         api_url: str,
         api_key: str | None = None,
         disable_reasoning: bool = False,
+        priority_service_tier: bool = False,
         include_reasoning: bool = False,
     ) -> None:
         headers = {
@@ -10321,6 +10355,11 @@ class Focus(Adw.Application):
             body,
             model_id=model_id,
             disable_reasoning=disable_reasoning,
+        )
+        _apply_priority_service_tier_to_body(
+            body,
+            api_url=api_url,
+            priority_service_tier=priority_service_tier,
         )
         attempted_without_thinking = False
         attempted_without_reasoning_effort = False
@@ -10570,6 +10609,7 @@ class ModelProfileEditorWidgets:
     model_row: Adw.EntryRow
     api_key_row: Adw.EntryRow
     disable_reasoning_row: Adw.SwitchRow
+    priority_service_tier_row: Adw.SwitchRow
 
 
 class FocusCommandsWindow(Adw.ApplicationWindow):
@@ -11016,6 +11056,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             disable_reasoning_row.set_active(bool(profile.disable_reasoning))
             group.add(disable_reasoning_row)
 
+            priority_service_tier_row = Adw.SwitchRow(title="Priority")
+            priority_service_tier_row.set_active(bool(profile.priority_service_tier))
+            group.add(priority_service_tier_row)
+
             self._model_profile_editors[profile.key] = ModelProfileEditorWidgets(
                 nickname_row=nickname_row,
                 abbreviation_row=abbreviation_row,
@@ -11023,6 +11067,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 model_row=model_row,
                 api_key_row=api_key_row,
                 disable_reasoning_row=disable_reasoning_row,
+                priority_service_tier_row=priority_service_tier_row,
             )
             page_box.append(group)
 
@@ -11467,6 +11512,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                     model_id=widgets.model_row.get_text().strip(),
                     api_key=widgets.api_key_row.get_text().strip(),
                     disable_reasoning=bool(widgets.disable_reasoning_row.get_active()),
+                    priority_service_tier=bool(widgets.priority_service_tier_row.get_active()),
                 )
             )
         task_profile_defaults = {
