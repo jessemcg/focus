@@ -234,7 +234,7 @@ DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
 DEFAULT_PRINT_FONT_FAMILY = "Century Schoolbook"
 DEFAULT_PRINT_FONT_SIZE_PT = 12
 DEFAULT_PRINT_MARGIN_IN = 1.0
-SIDEBAR_TREE_INDENT = 10
+SIDEBAR_TREE_INDENT = 4
 SIDEBAR_ACTIVE_SCROLL_MARGIN = 24
 AI_OUTPUT_MIN_HEIGHT = 140
 AI_OUTPUT_MAX_HEIGHT = 480
@@ -2547,91 +2547,73 @@ listbox.focus-sidebar-listview row {
 }
 
 .focus-sidebar-row {
-  min-height: 0px;
+  min-height: 22px;
   transition: background-color 120ms ease;
-  border-radius: 12px;
-  padding: 0;
-  margin-right: 8px;
+  border-radius: 4px;
+  padding: 3px 2px 3px 0;
+  margin-right: 4px;
+  border-bottom: 1px solid alpha(@window_fg_color, 0.06);
 }
 
-.focus-sidebar-row.focus-sidebar-category {
+.focus-sidebar-row.focus-sidebar-category,
+.focus-sidebar-row.focus-sidebar-category.focus-sidebar-category-expanded,
+.focus-sidebar-row.focus-sidebar-top-level {
   background-color: transparent;
 }
 
+.focus-sidebar-row:hover,
 .focus-sidebar-row.focus-sidebar-category:hover,
-.focus-sidebar-row.focus-sidebar-category.focus-sidebar-category-expanded {
-  background-color: transparent;
+.focus-sidebar-row.focus-sidebar-bookmark:hover {
+  background-color: alpha(@window_fg_color, 0.045);
 }
 
 .focus-sidebar-row.focus-sidebar-top-level {
-  background-color: alpha(@window_fg_color, 0.05);
-  margin-top: 4px;
-  margin-bottom: 4px;
-  margin-left: 4px;
-}
-
-.focus-sidebar-row.focus-sidebar-top-level:hover,
-.focus-sidebar-row.focus-sidebar-top-level.focus-sidebar-category-expanded {
-  background-color: alpha(@window_fg_color, 0.08);
+  margin-left: 0;
 }
 
 .focus-sidebar-row.focus-sidebar-category-active,
 .focus-sidebar-row.focus-sidebar-category-active:hover,
-.focus-sidebar-row.focus-sidebar-category-active.focus-sidebar-category-expanded {
-  background-color: alpha(@window_fg_color, 0.06);
+.focus-sidebar-row.focus-sidebar-category-active.focus-sidebar-category-expanded,
+.focus-sidebar-row.focus-sidebar-bookmark-active,
+.focus-sidebar-row.focus-sidebar-bookmark-active:hover {
+  background-color: transparent;
 }
 
-.focus-sidebar-row.focus-sidebar-category .title,
-.focus-sidebar-row.focus-sidebar-category label,
-.focus-sidebar-row.focus-sidebar-bookmark .title,
-.focus-sidebar-row.focus-sidebar-bookmark label,
+.focus-sidebar-title,
 .focus-sidebar-expand-button {
   color: alpha(@window_fg_color, 0.62);
 }
 
-.focus-sidebar-row.focus-sidebar-category-active .title,
-.focus-sidebar-row.focus-sidebar-category-active label,
-.focus-sidebar-row.focus-sidebar-category-active:hover .title,
-.focus-sidebar-row.focus-sidebar-category-active:hover label {
+.focus-sidebar-row.focus-sidebar-category-active .focus-sidebar-title,
+.focus-sidebar-row.focus-sidebar-category-active:hover .focus-sidebar-title,
+.focus-sidebar-row.focus-sidebar-bookmark-active .focus-sidebar-title,
+.focus-sidebar-row.focus-sidebar-bookmark-active:hover .focus-sidebar-title {
   color: alpha(@window_fg_color, 0.82);
 }
 
 .focus-sidebar-row.focus-sidebar-bookmark {
   background-color: transparent;
-  padding-top: 4px;
-  padding-bottom: 4px;
-  margin-top: 2px;
-  margin-bottom: 2px;
 }
 
-.focus-sidebar-row.focus-sidebar-bookmark:hover {
-  background-color: alpha(@window_fg_color, 0.04);
+.focus-sidebar-active-marker {
+  min-width: 2px;
+  border-radius: 999px;
+  background-color: transparent;
 }
 
-.focus-sidebar-row.focus-sidebar-bookmark-active,
-.focus-sidebar-row.focus-sidebar-bookmark-active:hover {
-  background-color: alpha(@window_fg_color, 0.08);
-}
-
-.focus-sidebar-row.focus-sidebar-bookmark-active .title,
-.focus-sidebar-row.focus-sidebar-bookmark-active label,
-.focus-sidebar-row.focus-sidebar-bookmark-active:hover .title,
-.focus-sidebar-row.focus-sidebar-bookmark-active:hover label {
-  color: alpha(@window_fg_color, 0.85);
+.focus-sidebar-row.focus-sidebar-category-active .focus-sidebar-active-marker,
+.focus-sidebar-row.focus-sidebar-bookmark-active .focus-sidebar-active-marker {
+  background-color: @accent_color;
 }
 
 .focus-sidebar-expand-button {
-  min-height: 28px;
-  min-width: 28px;
+  min-height: 20px;
+  min-width: 20px;
   padding: 0;
-  margin-right: -4px;
+  margin-right: 0;
   border-radius: 999px;
   background: transparent;
   box-shadow: none;
-}
-
-.focus-sidebar-row .title {
-  margin-left: -2px;
 }
 
 entry.focus-page-number-entry {
@@ -2639,8 +2621,8 @@ entry.focus-page-number-entry {
 }
 
 .focus-sidebar-row.focus-sidebar-category {
-  padding-top: 0px;
-  padding-bottom: 0px;
+  padding-top: 1px;
+  padding-bottom: 1px;
 }
 
 .focus-sidebar-expand-button:hover,
@@ -5226,24 +5208,43 @@ class Focus(Adw.Application):
         row_widget = Gtk.ListBoxRow()
         row_widget.set_activatable(True)
         row_widget.add_css_class("focus-sidebar-listbox-row")
-        action_row = Adw.ActionRow()
-        action_row.add_css_class("flat")
-        action_row.add_css_class("focus-sidebar-row")
-        action_row.set_use_markup(False)
-        action_row.set_activatable(False)
-        action_row.set_hexpand(True)
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        row_box.add_css_class("focus-sidebar-row")
+        row_box.set_hexpand(True)
+        row_box.set_valign(Gtk.Align.CENTER)
+
+        active_marker = Gtk.Box()
+        active_marker.add_css_class("focus-sidebar-active-marker")
+        active_marker.set_size_request(2, -1)
+        active_marker.set_valign(Gtk.Align.FILL)
+        row_box.append(active_marker)
+
         arrow_icon = Gtk.Image.new_from_icon_name("pan-end-symbolic")
         arrow_button = Gtk.ToggleButton()
         arrow_button.add_css_class("focus-sidebar-expand-button")
         arrow_button.set_child(arrow_icon)
         arrow_button.set_focus_on_click(False)
         arrow_button.set_valign(Gtk.Align.CENTER)
-        arrow_button.set_visible(False)
         arrow_button._focus_list_item = row_widget  # type: ignore[attr-defined]
         arrow_button.connect("toggled", self._on_sidebar_expand_button_toggled)
-        action_row.add_prefix(arrow_button)
-        row_widget.set_child(action_row)
-        row_widget._focus_row = action_row  # type: ignore[attr-defined]
+        row_box.append(arrow_button)
+
+        title_label = Gtk.Label()
+        title_label.add_css_class("focus-sidebar-title")
+        title_label.set_xalign(0.0)
+        title_label.set_hexpand(True)
+        title_label.set_single_line_mode(False)
+        title_label.set_wrap(True)
+        title_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        title_label.set_lines(2)
+        title_label.set_ellipsize(Pango.EllipsizeMode.END)
+        title_label.set_valign(Gtk.Align.CENTER)
+        row_box.append(title_label)
+
+        row_widget.set_child(row_box)
+        row_widget._focus_row = row_box  # type: ignore[attr-defined]
+        row_widget._focus_title_label = title_label  # type: ignore[attr-defined]
+        row_widget._focus_active_marker = active_marker  # type: ignore[attr-defined]
         row_widget._focus_arrow_button = arrow_button  # type: ignore[attr-defined]
         row_widget._focus_arrow_icon = arrow_icon  # type: ignore[attr-defined]
         row_widget._focus_arrow_guard = False  # type: ignore[attr-defined]
@@ -5255,10 +5256,16 @@ class Focus(Adw.Application):
         return row_widget
 
     def _bind_sidebar_row(self, list_row: Gtk.ListBoxRow, tree_row: Gtk.TreeListRow) -> None:
-        action_row = getattr(list_row, "_focus_row", None)
+        row_box = getattr(list_row, "_focus_row", None)
+        title_label = getattr(list_row, "_focus_title_label", None)
         arrow_button = getattr(list_row, "_focus_arrow_button", None)
         arrow_icon = getattr(list_row, "_focus_arrow_icon", None)
-        if action_row is None or arrow_button is None or arrow_icon is None:
+        if (
+            not isinstance(row_box, Gtk.Widget)
+            or not isinstance(title_label, Gtk.Label)
+            or arrow_button is None
+            or arrow_icon is None
+        ):
             return
         previous_row = getattr(list_row, "_focus_tree_row", None)
         previous_handler = getattr(list_row, "_focus_tree_handler", None)
@@ -5271,31 +5278,25 @@ class Focus(Adw.Application):
         handler_id = tree_row.connect("notify::expanded", self._on_sidebar_tree_row_expanded, list_row)
         list_row._focus_tree_handler = handler_id  # type: ignore[attr-defined]
         depth = max(tree_row.get_depth(), 0)
-        action_row.set_margin_start(depth * SIDEBAR_TREE_INDENT)
+        row_box.set_margin_start(depth * SIDEBAR_TREE_INDENT)
         item = tree_row.get_item()
         if not isinstance(item, FocusSidebarItem):
-            action_row.set_title("")
-            action_row.set_subtitle("")
+            title_label.set_text("")
             arrow_button.set_visible(False)
             return
-        action_row.remove_css_class("focus-sidebar-category")
-        action_row.remove_css_class("focus-sidebar-bookmark")
-        action_row.remove_css_class("focus-sidebar-category-expanded")
-        action_row.remove_css_class("focus-sidebar-category-active")
-        action_row.remove_css_class("focus-sidebar-top-level")
+        row_box.remove_css_class("focus-sidebar-category")
+        row_box.remove_css_class("focus-sidebar-bookmark")
+        row_box.remove_css_class("focus-sidebar-category-expanded")
+        row_box.remove_css_class("focus-sidebar-category-active")
+        row_box.remove_css_class("focus-sidebar-bookmark-active")
+        row_box.remove_css_class("focus-sidebar-top-level")
         if item.kind == "category":
-            action_row.add_css_class("focus-sidebar-category")
+            row_box.add_css_class("focus-sidebar-category")
         else:
-            action_row.add_css_class("focus-sidebar-bookmark")
+            row_box.add_css_class("focus-sidebar-bookmark")
         if depth == 0:
-            action_row.add_css_class("focus-sidebar-top-level")
-        action_row.set_title(item.title)
-        if item.kind == "bookmark" and item.page is not None:
-            action_row.set_subtitle(
-                format_toc_page_subtitle(item.page, self._transcript_page_index)
-            )
-        else:
-            action_row.set_subtitle("")
+            row_box.add_css_class("focus-sidebar-top-level")
+        title_label.set_text(item.title)
         self._update_sidebar_row_expand_widgets(list_row, tree_row)
         self._update_sidebar_row_active_state(list_row)
 
@@ -5335,12 +5336,12 @@ class Focus(Adw.Application):
         return False
 
     def _update_sidebar_row_active_state(self, list_row: Gtk.ListBoxRow) -> bool:
-        action_row = getattr(list_row, "_focus_row", None)
+        row_box = getattr(list_row, "_focus_row", None)
         tree_row = getattr(list_row, "_focus_tree_row", None)
-        if not isinstance(action_row, Adw.ActionRow) or not isinstance(tree_row, Gtk.TreeListRow):
+        if not isinstance(row_box, Gtk.Widget) or not isinstance(tree_row, Gtk.TreeListRow):
             return False
-        action_row.remove_css_class("focus-sidebar-bookmark-active")
-        action_row.remove_css_class("focus-sidebar-category-active")
+        row_box.remove_css_class("focus-sidebar-bookmark-active")
+        row_box.remove_css_class("focus-sidebar-category-active")
         if not self.pages or not (0 <= self.current_index < len(self.pages)):
             return False
         current_page = self.pages[self.current_index]
@@ -5350,14 +5351,14 @@ class Focus(Adw.Application):
             and item.kind == "bookmark"
             and item.page == current_page
         ):
-            action_row.add_css_class("focus-sidebar-bookmark-active")
+            row_box.add_css_class("focus-sidebar-bookmark-active")
             return True
         if (
             isinstance(item, FocusSidebarItem)
             and item.kind == "category"
             and self._sidebar_item_contains_page(item, current_page)
         ):
-            action_row.add_css_class("focus-sidebar-category-active")
+            row_box.add_css_class("focus-sidebar-category-active")
         return False
 
     def _sync_sidebar_active_page(self, *, scroll: bool = False) -> None:
@@ -5411,6 +5412,8 @@ class Focus(Adw.Application):
             return
         if tree_row.is_expandable():
             arrow_button.set_visible(True)
+            arrow_button.set_can_target(True)
+            arrow_button.set_opacity(1.0)
             list_row._focus_arrow_guard = True  # type: ignore[attr-defined]
             try:
                 arrow_button.set_active(tree_row.get_expanded())
@@ -5419,14 +5422,15 @@ class Focus(Adw.Application):
             expanded = tree_row.get_expanded()
             icon_name = "pan-down-symbolic" if expanded else "pan-end-symbolic"
             arrow_icon.set_from_icon_name(icon_name)
-            if isinstance(row, Adw.ActionRow):
+            if isinstance(row, Gtk.Widget):
                 if expanded:
                     row.add_css_class("focus-sidebar-category-expanded")
                 else:
                     row.remove_css_class("focus-sidebar-category-expanded")
         else:
             arrow_button.set_visible(False)
-            if isinstance(row, Adw.ActionRow):
+            arrow_button.set_can_target(False)
+            if isinstance(row, Gtk.Widget):
                 row.remove_css_class("focus-sidebar-category-expanded")
 
     def _on_sidebar_expand_button_toggled(self, button: Gtk.ToggleButton) -> None:
