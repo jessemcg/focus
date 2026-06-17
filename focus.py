@@ -188,6 +188,8 @@ REPORTS_SUMMARY_CANDIDATES = (
 )
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
 MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
+HEARING_BOUNDARIES_MANIFEST_KEY = "hearing_boundaries"
+MINUTES_BOUNDARIES_MANIFEST_KEY = "minutes_boundaries"
 HEARING_SUMMARY_MANIFEST_KEYS = ("consolidated_hearings", "summarized_hearings")
 REPORTS_SUMMARY_MANIFEST_KEYS = ("consolidated_reports", "summarized_reports")
 SUMMARY_SOURCE_MINUTES = "minutes"
@@ -780,11 +782,23 @@ class RecordLayout:
     text_dir: Path
     images_dir: Path
     toc_path: Path
+    hearing_boundaries_path: Path
+    minutes_boundaries_path: Path
     transcript_page_numbers_path: Path
     transcript_page_number_series_path: Path
     rag_vector_dir: Path | None
     rag_case_overview_path: Path | None
     is_record_prep: bool
+
+
+@dataclass(frozen=True)
+class RecordBoundary:
+    date: str
+    start_page: int
+    end_page: int
+
+    def contains(self, page: int) -> bool:
+        return self.start_page <= page <= self.end_page
 
 
 @dataclass(frozen=True)
@@ -953,6 +967,79 @@ def _transcript_page_number_series_path(
         _path_from_manifest(files.get("transcript_page_number_series"), root)
         or root / "artifacts" / "transcript_page_number_series.md"
     )
+
+
+def _record_boundary_path(
+    root: Path,
+    manifest: dict[str, Any],
+    manifest_key: str,
+    fallback_name: str,
+) -> Path:
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    return (
+        _path_from_manifest(files.get(manifest_key), root)
+        or root / "artifacts" / fallback_name
+    )
+
+
+def load_record_boundaries(path: Path) -> tuple[RecordBoundary, ...]:
+    if not path.exists():
+        return ()
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(data, list):
+        return ()
+    boundaries: list[RecordBoundary] = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        boundary_date = str(entry.get("date") or "").strip()
+        start_page = _coerce_positive_int(entry.get("start_page"))
+        end_page = _coerce_positive_int(entry.get("end_page"))
+        if not boundary_date or start_page is None or end_page is None:
+            continue
+        if end_page < start_page:
+            start_page, end_page = end_page, start_page
+        boundaries.append(
+            RecordBoundary(
+                date=boundary_date,
+                start_page=start_page,
+                end_page=end_page,
+            )
+        )
+    return tuple(boundaries)
+
+
+def find_minute_order_boundary_for_transcript_page(
+    page: int,
+    transcript_index: TranscriptPageIndex,
+    hearing_boundaries: Sequence[RecordBoundary],
+    minute_boundaries: Sequence[RecordBoundary],
+) -> RecordBoundary | None:
+    label = transcript_index.by_file_page.get(page)
+    if not label or label.record_type.upper() != "RT":
+        return None
+    hearing = next(
+        (boundary for boundary in hearing_boundaries if boundary.contains(page)),
+        None,
+    )
+    if not hearing:
+        return None
+    return next(
+        (boundary for boundary in minute_boundaries if boundary.date == hearing.date),
+        None,
+    )
+
+
+def should_show_minute_order_return(
+    current_page: int | None,
+    return_page: int | None,
+    return_boundary: RecordBoundary | None,
+) -> bool:
+    return current_page is not None and return_page is not None
 
 
 def load_transcript_page_index(path: Path) -> TranscriptPageIndex:
@@ -1429,6 +1516,18 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
     text_dir = _path_from_manifest(dirs.get("text_pages"), root) or root / "text_pages"
     images_dir = _path_from_manifest(dirs.get("image_pages"), root) or root / "image_pages"
     toc_path = _path_from_manifest(files.get("toc"), root) or root / "artifacts" / "toc.txt"
+    hearing_boundaries_path = _record_boundary_path(
+        root,
+        manifest,
+        HEARING_BOUNDARIES_MANIFEST_KEY,
+        "hearing_boundaries.json",
+    )
+    minutes_boundaries_path = _record_boundary_path(
+        root,
+        manifest,
+        MINUTES_BOUNDARIES_MANIFEST_KEY,
+        "minutes_boundaries.json",
+    )
     transcript_page_numbers_path = _transcript_page_numbers_path(root, manifest)
     transcript_page_number_series_path = _transcript_page_number_series_path(root, manifest)
     rag_vector_dir = (
@@ -1444,6 +1543,8 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
         text_dir=text_dir,
         images_dir=images_dir,
         toc_path=toc_path,
+        hearing_boundaries_path=hearing_boundaries_path,
+        minutes_boundaries_path=minutes_boundaries_path,
         transcript_page_numbers_path=transcript_page_numbers_path,
         transcript_page_number_series_path=transcript_page_number_series_path,
         rag_vector_dir=rag_vector_dir,
@@ -1466,6 +1567,8 @@ def _resolve_record_layout(root: Path) -> RecordLayout:
         text_dir=text_dir,
         images_dir=images_dir,
         toc_path=toc_path,
+        hearing_boundaries_path=root / "artifacts" / "hearing_boundaries.json",
+        minutes_boundaries_path=root / "artifacts" / "minutes_boundaries.json",
         transcript_page_numbers_path=root / "artifacts" / "transcript_page_numbers.json",
         transcript_page_number_series_path=root / "artifacts" / "transcript_page_number_series.md",
         rag_vector_dir=None,
@@ -1640,7 +1743,7 @@ class ModelProfile:
     model_id: str
     api_key: str
     disable_reasoning: bool
-    priority_service_tier: bool
+    priority_service_tier: bool = False
 
     def display_name(self) -> str:
         return self.nickname.strip() or _default_profile_nickname(self.key)
@@ -2713,6 +2816,15 @@ button.focus-citation-range-active image {
   color: @window_fg_color;
 }
 
+button.focus-minute-order-active,
+button.focus-minute-order-active:hover,
+button.focus-minute-order-active:active {
+  background-color: alpha(@window_fg_color, 0.08);
+  color: @window_fg_color;
+  background-image: none;
+  box-shadow: none;
+}
+
 button.focus-filter-chip,
 button.focus-filter-chip:hover,
 button.focus-filter-chip:active {
@@ -3311,6 +3423,10 @@ class Focus(Adw.Application):
         self.pages: list[int] = []
         self.page_to_path: dict[int, Path] = {}
         self._transcript_page_index = TranscriptPageIndex({}, {}, {})
+        self._hearing_boundaries: tuple[RecordBoundary, ...] = ()
+        self._minute_boundaries: tuple[RecordBoundary, ...] = ()
+        self._minute_order_return_page: int | None = None
+        self._minute_order_return_boundary: RecordBoundary | None = None
         self.current_index: int = 0
 
         self.win: Adw.ApplicationWindow | None = None
@@ -3358,6 +3474,7 @@ class Focus(Adw.Application):
         self._page_jump_popover: Gtk.Popover | None = None
         self._page_total_label: Gtk.Label | None = None
         self._transcript_breakdown_button: Gtk.Button | None = None
+        self._minute_order_button: Gtk.Button | None = None
         self._current_page_citation_button: Gtk.Button | None = None
         self._page_citation_range_button: Gtk.Button | None = None
         self._page_citation_range_icon: Gtk.Image | None = None
@@ -3539,6 +3656,14 @@ class Focus(Adw.Application):
         self._transcript_page_index = load_transcript_page_index(
             self._record_layout.transcript_page_numbers_path
         )
+        self._hearing_boundaries = load_record_boundaries(
+            self._record_layout.hearing_boundaries_path
+        )
+        self._minute_boundaries = load_record_boundaries(
+            self._record_layout.minutes_boundaries_path
+        )
+        self._minute_order_return_page = None
+        self._minute_order_return_boundary = None
         text_dir = self.text_dir
         if not text_dir.exists():
             return
@@ -4293,6 +4418,15 @@ class Focus(Adw.Application):
         )
         paginator.append(self._transcript_breakdown_button)
         self._refresh_transcript_breakdown_button()
+
+        self._minute_order_button = Gtk.Button(label="Minute order")
+        self._minute_order_button.add_css_class("flat")
+        self._minute_order_button.add_css_class("no-bold")
+        self._minute_order_button.set_valign(Gtk.Align.CENTER)
+        self._minute_order_button.set_tooltip_text("Open the minute order for this RT page")
+        self._minute_order_button.set_sensitive(False)
+        self._minute_order_button.connect("clicked", self._on_minute_order_clicked)
+        paginator.append(self._minute_order_button)
 
         trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         trailing_controls.set_valign(Gtk.Align.CENTER)
@@ -5743,6 +5877,56 @@ class Focus(Adw.Application):
             return None
         return self._transcript_page_index.by_file_page.get(current_page)
 
+    def _current_minute_order_boundary(self) -> RecordBoundary | None:
+        current_page = self._current_page_number()
+        if current_page is None:
+            return None
+        boundary = find_minute_order_boundary_for_transcript_page(
+            current_page,
+            self._transcript_page_index,
+            self._hearing_boundaries,
+            self._minute_boundaries,
+        )
+        if boundary is None or boundary.start_page not in self.page_to_path:
+            return None
+        return boundary
+
+    def _viewing_return_minute_order(self) -> bool:
+        current_page = self._current_page_number()
+        return should_show_minute_order_return(
+            current_page,
+            self._minute_order_return_page,
+            self._minute_order_return_boundary,
+        )
+
+    def _sync_minute_order_return_state(self) -> None:
+        if self._minute_order_return_page is None:
+            return
+        if self._viewing_return_minute_order():
+            return
+        self._minute_order_return_page = None
+        self._minute_order_return_boundary = None
+
+    def _refresh_minute_order_button(self) -> None:
+        if not self._minute_order_button:
+            return
+        self._sync_minute_order_return_state()
+        if self._viewing_return_minute_order():
+            self._minute_order_button.set_label("Back to RT")
+            self._minute_order_button.set_tooltip_text("Return to the RT page you came from")
+            self._minute_order_button.set_sensitive(True)
+            self._minute_order_button.add_css_class("focus-minute-order-active")
+            return
+
+        target = self._current_minute_order_boundary()
+        self._minute_order_button.set_label("Minute order")
+        self._minute_order_button.set_tooltip_text("Open the minute order for this RT page")
+        self._minute_order_button.set_sensitive(target is not None)
+        if target is not None:
+            self._minute_order_button.add_css_class("focus-minute-order-active")
+        else:
+            self._minute_order_button.remove_css_class("focus-minute-order-active")
+
     def _current_page_entry_text(self) -> str:
         current_page = self._current_page_number()
         entry_text, _detail_text = format_page_nav_labels(
@@ -7177,6 +7361,7 @@ class Focus(Adw.Application):
         if self._page_number_entry:
             self._page_number_entry.set_sensitive(bool(self.pages))
         self._refresh_transcript_breakdown_button()
+        self._refresh_minute_order_button()
         if self._page_total_label and self._page_number_entry:
             if self.pages and 0 <= self.current_index < len(self.pages):
                 current_page = self.pages[self.current_index]
@@ -7342,6 +7527,7 @@ class Focus(Adw.Application):
             self._set_show_image(False, silent=True)
             return
         page = self.pages[self.current_index]
+        self._sync_minute_order_return_state()
         path = self.page_to_path.get(page)
         if not path or not path.exists():
             display_text, highlight_spans = self._render_page_display(
@@ -8508,6 +8694,25 @@ class Focus(Adw.Application):
 
     def _on_page_forward_one_clicked(self, _button: Gtk.Button) -> None:
         self._go_next()
+
+    def _on_minute_order_clicked(self, _button: Gtk.Button) -> None:
+        if not self.pages:
+            return
+        if self._viewing_return_minute_order() and self._minute_order_return_page is not None:
+            return_page = self._minute_order_return_page
+            self._minute_order_return_page = None
+            self._minute_order_return_boundary = None
+            self._show_page_from_link(str(return_page))
+            return
+
+        current_page = self._current_page_number()
+        target = self._current_minute_order_boundary()
+        if current_page is None or target is None:
+            self._transient_toast("No matching minute order for this page.")
+            return
+        self._minute_order_return_page = current_page
+        self._minute_order_return_boundary = target
+        self._show_page_from_link(str(target.start_page))
 
     def _on_page_number_activate(self, entry: Gtk.Entry) -> None:
         if not self.pages:
