@@ -8740,6 +8740,7 @@ class Focus(Adw.Application):
             self._minute_order_return_page = None
             self._minute_order_return_boundary = None
             self._show_page_from_link(str(return_page))
+            self._set_show_image(False, silent=True)
             return
 
         current_page = self._current_page_number()
@@ -8750,6 +8751,7 @@ class Focus(Adw.Application):
         self._minute_order_return_page = current_page
         self._minute_order_return_boundary = target
         self._show_page_from_link(str(target.start_page))
+        self._set_show_image(True)
 
     def _on_page_number_activate(self, entry: Gtk.Entry) -> None:
         if not self.pages:
