@@ -177,25 +177,54 @@ TASK_PROFILE_KEYS = (
 )
 SUMMARY_DIR_NAME = "summaries"
 HEARING_SUMMARY_CANDIDATES = (
-    "summarized_hearings_consolidated.txt",
+    "summarized_hearings_organized.txt",
+    "hearing_sum_organized.txt",
+    "hearings_sum_organized.txt",
+    "hearing_summary_organized.txt",
     "hearing_sum.txt",
+    "hearings_sum.txt",
     "hearing_summary.txt",
+    "summarized_hearings.txt",
+    "summarized_hearings_consolidated.txt",
 )
 REPORTS_SUMMARY_CANDIDATES = (
-    "summarized_reports_consolidated.txt",
+    "summarized_reports_organized.txt",
+    "reports_sum_organized.txt",
+    "report_sum_organized.txt",
+    "reports_summary_organized.txt",
     "reports_sum.txt",
+    "report_sum.txt",
     "reports_summary.txt",
+    "summarized_reports.txt",
+    "summarized_reports_consolidated.txt",
 )
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
 MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
 HEARING_BOUNDARIES_MANIFEST_KEY = "hearing_boundaries"
 MINUTES_BOUNDARIES_MANIFEST_KEY = "minutes_boundaries"
-HEARING_SUMMARY_MANIFEST_KEYS = ("consolidated_hearings", "summarized_hearings")
-REPORTS_SUMMARY_MANIFEST_KEYS = ("consolidated_reports", "summarized_reports")
+HEARING_SUMMARY_MANIFEST_KEYS = (
+    "organized_hearings",
+    "summarized_hearings",
+    "consolidated_hearings",
+)
+REPORTS_SUMMARY_MANIFEST_KEYS = (
+    "organized_reports",
+    "summarized_reports",
+    "consolidated_reports",
+)
 SUMMARY_SOURCE_MINUTES = "minutes"
 SUMMARY_SOURCE_HEARING = "hearing"
 SUMMARY_SOURCE_REPORTS = "reports"
 SUMMARY_BOOKMARKS_FILENAME = "summary_bookmarks.json"
+
+
+def _summary_file_priority(path: Path) -> tuple[int, str]:
+    name = path.name.casefold()
+    if "organized" in name:
+        return (0, name)
+    if "consolidated" in name:
+        return (2, name)
+    return (1, name)
 
 # =====================
 # UI Defaults
@@ -9446,12 +9475,12 @@ class Focus(Adw.Application):
         if not summaries_dir.exists():
             self._ai_transient_toast(f"Summaries folder not found: {summaries_dir}")
             return None
-        for name in candidates:
-            path = summaries_dir / name
-            if path.exists():
-                return path
         matches: list[Path] = []
         try:
+            for name in candidates:
+                path = summaries_dir / name
+                if path.is_file():
+                    matches.append(path)
             for item in summaries_dir.iterdir():
                 if not item.is_file():
                     continue
@@ -9465,30 +9494,10 @@ class Focus(Adw.Application):
                 self._ai_transient_toast(f"Could not read summaries folder: {exc}")
             return None
         if matches:
-            return sorted(
-                matches,
-                key=lambda path: (
-                    "consolidated" not in path.name.casefold(),
-                    path.name,
-                ),
-            )[0]
+            return sorted(set(matches), key=_summary_file_priority)[0]
         if show_toast:
             self._ai_transient_toast(f"{label} summary not found in {summaries_dir}")
         return None
-
-    def _load_summary_from_summaries_dir(
-        self,
-        label: str,
-        candidates: tuple[str, ...],
-        keywords: tuple[str, ...],
-        source: str,
-    ) -> None:
-        self._ensure_ai_panel_visible()
-        self._set_ai_view(AI_VIEW_FILE)
-        path = self._find_summary_in_dir(label, candidates, keywords, show_toast=True)
-        if not path:
-            return
-        self._load_summary_from_path(path, source=source)
 
     def _load_summary_from_manifest(
         self,
@@ -9518,6 +9527,51 @@ class Focus(Adw.Application):
             return
         self._load_summary_from_path(summary_path, source=source)
 
+    def _find_summary_in_manifest(
+        self,
+        manifest_path: Path | None,
+        file_keys: tuple[str, ...],
+    ) -> Path | None:
+        if not manifest_path:
+            return None
+        manifest = _read_manifest_file(manifest_path)
+        files = (
+            manifest.get("files")
+            if isinstance(manifest, dict) and isinstance(manifest.get("files"), dict)
+            else {}
+        )
+        for file_key in file_keys:
+            summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
+            if summary_path and summary_path.exists():
+                return summary_path
+        return None
+
+    def _find_preferred_summary_path(
+        self,
+        label: str,
+        manifest_path: Path | None,
+        file_keys: tuple[str, ...],
+        candidates: tuple[str, ...],
+        keywords: tuple[str, ...],
+        *,
+        show_toast: bool = True,
+    ) -> Path | None:
+        matches: list[Path] = []
+        manifest_summary = self._find_summary_in_manifest(manifest_path, file_keys)
+        if manifest_summary:
+            matches.append(manifest_summary)
+        directory_summary = self._find_summary_in_dir(
+            label,
+            candidates,
+            keywords,
+            show_toast=show_toast and manifest_summary is None,
+        )
+        if directory_summary:
+            matches.append(directory_summary)
+        if not matches:
+            return None
+        return sorted(set(matches), key=_summary_file_priority)[0]
+
     def _on_minutes_summary_clicked(self, _button: Gtk.Button) -> None:
         manifest_path = _find_manifest_near_path(self.input_dir)
         if not manifest_path:
@@ -9534,47 +9588,27 @@ class Focus(Adw.Application):
 
     def _on_hearing_summary_clicked(self, _button: Gtk.Button) -> None:
         manifest_path = _find_manifest_near_path(self.input_dir)
-        if manifest_path:
-            manifest = _read_manifest_file(manifest_path)
-            files = (
-                manifest.get("files")
-                if isinstance(manifest, dict) and isinstance(manifest.get("files"), dict)
-                else {}
-            )
-            summary_path = None
-            for file_key in HEARING_SUMMARY_MANIFEST_KEYS:
-                summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
-                if summary_path and summary_path.exists():
-                    self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_HEARING)
-                    return
-        self._load_summary_from_summaries_dir(
+        summary_path = self._find_preferred_summary_path(
             "Hearing",
+            manifest_path,
+            HEARING_SUMMARY_MANIFEST_KEYS,
             HEARING_SUMMARY_CANDIDATES,
             ("hearing",),
-            SUMMARY_SOURCE_HEARING,
         )
+        if summary_path:
+            self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_HEARING)
 
     def _on_reports_summary_clicked(self, _button: Gtk.Button) -> None:
         manifest_path = _find_manifest_near_path(self.input_dir)
-        if manifest_path:
-            manifest = _read_manifest_file(manifest_path)
-            files = (
-                manifest.get("files")
-                if isinstance(manifest, dict) and isinstance(manifest.get("files"), dict)
-                else {}
-            )
-            summary_path = None
-            for file_key in REPORTS_SUMMARY_MANIFEST_KEYS:
-                summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
-                if summary_path and summary_path.exists():
-                    self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_REPORTS)
-                    return
-        self._load_summary_from_summaries_dir(
+        summary_path = self._find_preferred_summary_path(
             "Reports",
+            manifest_path,
+            REPORTS_SUMMARY_MANIFEST_KEYS,
             REPORTS_SUMMARY_CANDIDATES,
             ("report", "reports"),
-            SUMMARY_SOURCE_REPORTS,
         )
+        if summary_path:
+            self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_REPORTS)
 
     def _auto_load_summary_file(self) -> None:
         if self._auto_loading_summary:
@@ -9596,21 +9630,14 @@ class Focus(Adw.Application):
                         show_toast=False,
                     )
                     return
-            hearing: Path | None = None
-            if manifest_path and manifest:
-                files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-                for file_key in HEARING_SUMMARY_MANIFEST_KEYS:
-                    summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
-                    if summary_path and summary_path.exists():
-                        hearing = summary_path
-                        break
-            if hearing is None:
-                hearing = self._find_summary_in_dir(
-                    "Hearing",
-                    HEARING_SUMMARY_CANDIDATES,
-                    ("hearing",),
-                    show_toast=False,
-                )
+            hearing = self._find_preferred_summary_path(
+                "Hearing",
+                manifest_path,
+                HEARING_SUMMARY_MANIFEST_KEYS,
+                HEARING_SUMMARY_CANDIDATES,
+                ("hearing",),
+                show_toast=False,
+            )
             if hearing:
                 self._load_summary_from_path(
                     hearing,
@@ -9619,21 +9646,14 @@ class Focus(Adw.Application):
                     show_toast=False,
                 )
                 return
-            reports: Path | None = None
-            if manifest_path and manifest:
-                files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-                for file_key in REPORTS_SUMMARY_MANIFEST_KEYS:
-                    summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
-                    if summary_path and summary_path.exists():
-                        reports = summary_path
-                        break
-            if reports is None:
-                reports = self._find_summary_in_dir(
-                    "Reports",
-                    REPORTS_SUMMARY_CANDIDATES,
-                    ("report", "reports"),
-                    show_toast=False,
-                )
+            reports = self._find_preferred_summary_path(
+                "Reports",
+                manifest_path,
+                REPORTS_SUMMARY_MANIFEST_KEYS,
+                REPORTS_SUMMARY_CANDIDATES,
+                ("report", "reports"),
+                show_toast=False,
+            )
             if reports:
                 self._load_summary_from_path(
                     reports,
