@@ -2620,6 +2620,16 @@ listbox.focus-sidebar-listview row {
   margin-left: 0;
 }
 
+.focus-sidebar-row.focus-sidebar-top-level.focus-sidebar-category-expanded {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.focus-sidebar-row.focus-sidebar-top-level.focus-sidebar-category-expanded .focus-sidebar-title {
+  color: alpha(@window_fg_color, 0.76);
+  font-weight: 600;
+}
+
 .focus-sidebar-row.focus-sidebar-category-active,
 .focus-sidebar-row.focus-sidebar-category-active:hover,
 .focus-sidebar-row.focus-sidebar-category-active.focus-sidebar-category-expanded,
