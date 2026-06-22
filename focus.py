@@ -35,8 +35,10 @@ import os
 import re
 import shutil
 import shlex
+import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -54,6 +56,15 @@ gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Adw, Gio, GLib, Gdk, GdkPixbuf, GObject, Gtk, Pango  # type: ignore
 from gi.repository import PangoCairo  # type: ignore
+
+Vte = None  # type: ignore[assignment]
+try:
+    gi.require_version("Vte", "3.91")
+    from gi.repository import Vte as VteModule  # type: ignore
+
+    Vte = VteModule  # type: ignore[assignment]
+except (ImportError, ValueError):
+    Vte = None  # type: ignore[assignment]
 
 # =====================
 # Configuration
@@ -106,6 +117,9 @@ CONFIG_KEY_RAG_DISABLE_REASONING = "rag_disable_reasoning"
 CONFIG_KEY_RAG_DEEP_DISABLE_REASONING = "rag_deep_disable_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
+CONFIG_KEY_CODEX_AGENT_PROFILE = "codex_agent_profile"
+CONFIG_KEY_CODEX_AGENT_BIN = "codex_agent_bin"
+CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY = "codex_agent_fireworks_key"
 CONFIG_KEY_MODEL_PROFILES = "model_profiles"
 CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
@@ -155,6 +169,9 @@ RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX = "## Record Excerpt"
 RAG_PROVIDER_VOYAGE = "voyage"
 RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
+DEFAULT_CODEX_AGENT_PROFILE = "fireworks"
+DEFAULT_CODEX_AGENT_BIN = "codex"
+FOCUS_RECORD_AGENT_HELPER = Path(__file__).resolve().parent / "scripts" / "focus_record_agent.py"
 UNSET_PROFILE_LABEL = "Legacy credentials"
 MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3", "profile4")
 DEFAULT_MODEL_PROFILE_NICKNAMES = {
@@ -201,6 +218,7 @@ REPORTS_SUMMARY_CANDIDATES = (
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
 MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
 HEARING_BOUNDARIES_MANIFEST_KEY = "hearing_boundaries"
+REPORT_BOUNDARIES_MANIFEST_KEY = "report_boundaries"
 MINUTES_BOUNDARIES_MANIFEST_KEY = "minutes_boundaries"
 HEARING_SUMMARY_MANIFEST_KEYS = (
     "organized_hearings",
@@ -276,6 +294,52 @@ AI_BLOCKQUOTE_RIGHT_MARGIN = 12
 AI_BLOCKQUOTE_INDENT = 0
 AI_BLOCKQUOTE_SPACING_PX = 4
 CASE_TOOLS_ICON_CHOICES = ("preferences-system-symbolic", "applications-system-symbolic")
+FOCUS_TERMINAL_DARK_FOREGROUND = "#f2f4f8"
+FOCUS_TERMINAL_DARK_BACKGROUND = "#3d3d3d"
+FOCUS_TERMINAL_DARK_SELECTION = "#3d536b"
+FOCUS_TERMINAL_DARK_CURSOR = "#8ab4f8"
+FOCUS_TERMINAL_DARK_CURSOR_FOREGROUND = "#111318"
+FOCUS_TERMINAL_DARK_PALETTE = (
+    "#3d3d3d",
+    "#f66151",
+    "#8ff0a4",
+    "#f6d32d",
+    "#99c1f1",
+    "#dc8add",
+    "#62a0ea",
+    "#f2f4f8",
+    "#77767b",
+    "#ff7b63",
+    "#a5f5b8",
+    "#f8e45c",
+    "#c0d5ff",
+    "#e9a6e9",
+    "#8cc7ff",
+    "#ffffff",
+)
+FOCUS_TERMINAL_LIGHT_FOREGROUND = "#20242c"
+FOCUS_TERMINAL_LIGHT_BACKGROUND = "#f5f5f5"
+FOCUS_TERMINAL_LIGHT_SELECTION = "#d7e4f5"
+FOCUS_TERMINAL_LIGHT_CURSOR = "#1f66d1"
+FOCUS_TERMINAL_LIGHT_CURSOR_FOREGROUND = "#ffffff"
+FOCUS_TERMINAL_LIGHT_PALETTE = (
+    "#f5f5f5",
+    "#c01c28",
+    "#2ec27e",
+    "#a2734c",
+    "#1c71d8",
+    "#9841bb",
+    "#0f9ac8",
+    "#20242c",
+    "#77767b",
+    "#e01b24",
+    "#26a269",
+    "#c88800",
+    "#3584e4",
+    "#9141ac",
+    "#1a9dc9",
+    "#000000",
+)
 
 
 @dataclass(frozen=True)
@@ -370,7 +434,7 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
                 "Grep",
                 "Insert current page citation",
                 "insert_current_page_citation",
-                "<Primary><Shift>C",
+                "<Primary><Alt><Shift>C",
                 "Insert the current page citation in Prose, or copy it if Prose is unavailable.",
             ),
             FocusCommand(
@@ -552,6 +616,7 @@ IMAGE_PREVIEW_THUMB_WIDTH = IMAGE_PREVIEW_RAIL_WIDTH
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_EXTRACT = "extract"
 AI_VIEW_QA = "qa"
+AI_VIEW_AGENT_QA = "agent-qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
 
 
@@ -812,9 +877,11 @@ class RecordLayout:
     images_dir: Path
     toc_path: Path
     hearing_boundaries_path: Path
+    report_boundaries_path: Path
     minutes_boundaries_path: Path
     transcript_page_numbers_path: Path
     transcript_page_number_series_path: Path
+    source_map_path: Path
     rag_vector_dir: Path | None
     rag_case_overview_path: Path | None
     is_record_prep: bool
@@ -995,6 +1062,16 @@ def _transcript_page_number_series_path(
     return (
         _path_from_manifest(files.get("transcript_page_number_series"), root)
         or root / "artifacts" / "transcript_page_number_series.md"
+    )
+
+
+def _source_map_path(root: Path, manifest: dict[str, Any]) -> Path:
+    files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+    paths = manifest.get("paths") if isinstance(manifest.get("paths"), dict) else {}
+    return (
+        _path_from_manifest(files.get("source_map"), root)
+        or _path_from_manifest(paths.get("source_map"), root)
+        or root / "artifacts" / "source_map.json"
     )
 
 
@@ -1571,6 +1648,12 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
         HEARING_BOUNDARIES_MANIFEST_KEY,
         "hearing_boundaries.json",
     )
+    report_boundaries_path = _record_boundary_path(
+        root,
+        manifest,
+        REPORT_BOUNDARIES_MANIFEST_KEY,
+        "report_boundaries.json",
+    )
     minutes_boundaries_path = _record_boundary_path(
         root,
         manifest,
@@ -1579,6 +1662,7 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
     )
     transcript_page_numbers_path = _transcript_page_numbers_path(root, manifest)
     transcript_page_number_series_path = _transcript_page_number_series_path(root, manifest)
+    source_map_path = _source_map_path(root, manifest)
     rag_vector_dir = (
         _path_from_manifest(rag.get("vector_database"), root)
         or root / "rag" / "vector_database"
@@ -1593,9 +1677,11 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
         images_dir=images_dir,
         toc_path=toc_path,
         hearing_boundaries_path=hearing_boundaries_path,
+        report_boundaries_path=report_boundaries_path,
         minutes_boundaries_path=minutes_boundaries_path,
         transcript_page_numbers_path=transcript_page_numbers_path,
         transcript_page_number_series_path=transcript_page_number_series_path,
+        source_map_path=source_map_path,
         rag_vector_dir=rag_vector_dir,
         rag_case_overview_path=rag_case_overview_path,
         is_record_prep=True,
@@ -1617,9 +1703,11 @@ def _resolve_record_layout(root: Path) -> RecordLayout:
         images_dir=images_dir,
         toc_path=toc_path,
         hearing_boundaries_path=root / "artifacts" / "hearing_boundaries.json",
+        report_boundaries_path=root / "artifacts" / "report_boundaries.json",
         minutes_boundaries_path=root / "artifacts" / "minutes_boundaries.json",
         transcript_page_numbers_path=root / "artifacts" / "transcript_page_numbers.json",
         transcript_page_number_series_path=root / "artifacts" / "transcript_page_number_series.md",
+        source_map_path=root / "artifacts" / "source_map.json",
         rag_vector_dir=None,
         rag_case_overview_path=None,
         is_record_prep=False,
@@ -1671,6 +1759,43 @@ def _coerce_color_value(value: Any, default: str) -> str:
     except Exception:
         return default
     return default
+
+
+def _rgba_color(spec: str) -> Gdk.RGBA:
+    color = Gdk.RGBA()
+    if not color.parse(spec):
+        raise ValueError(f"Invalid color: {spec}")
+    return color
+
+
+def _apply_focus_terminal_theme(terminal: Any) -> None:
+    dark = Adw.StyleManager.get_default().get_dark()
+    if dark:
+        foreground_spec = FOCUS_TERMINAL_DARK_FOREGROUND
+        background_spec = FOCUS_TERMINAL_DARK_BACKGROUND
+        selection_spec = FOCUS_TERMINAL_DARK_SELECTION
+        cursor_spec = FOCUS_TERMINAL_DARK_CURSOR
+        cursor_foreground_spec = FOCUS_TERMINAL_DARK_CURSOR_FOREGROUND
+        palette_specs = FOCUS_TERMINAL_DARK_PALETTE
+    else:
+        foreground_spec = FOCUS_TERMINAL_LIGHT_FOREGROUND
+        background_spec = FOCUS_TERMINAL_LIGHT_BACKGROUND
+        selection_spec = FOCUS_TERMINAL_LIGHT_SELECTION
+        cursor_spec = FOCUS_TERMINAL_LIGHT_CURSOR
+        cursor_foreground_spec = FOCUS_TERMINAL_LIGHT_CURSOR_FOREGROUND
+        palette_specs = FOCUS_TERMINAL_LIGHT_PALETTE
+
+    foreground = _rgba_color(foreground_spec)
+    background = _rgba_color(background_spec)
+    palette = [_rgba_color(spec) for spec in palette_specs]
+    terminal.set_colors(foreground, background, palette)
+    terminal.set_color_background(background)
+    terminal.set_color_foreground(foreground)
+    terminal.set_clear_background(True)
+    terminal.set_color_cursor(_rgba_color(cursor_spec))
+    terminal.set_color_cursor_foreground(_rgba_color(cursor_foreground_spec))
+    terminal.set_color_highlight(_rgba_color(selection_spec))
+    terminal.set_color_highlight_foreground(foreground)
 
 
 def prune_deprecated_summary_bookmarking_config() -> None:
@@ -1860,6 +1985,9 @@ class AiSettings:
     search_chip_color: str
     model_profiles: list[ModelProfile] = field(default_factory=list)
     task_profile_defaults: dict[str, str | None] = field(default_factory=dict)
+    codex_agent_profile: str = DEFAULT_CODEX_AGENT_PROFILE
+    codex_agent_bin: str = DEFAULT_CODEX_AGENT_BIN
+    codex_agent_fireworks_key: str = ""
 
     def profile_by_key(self, profile_key: str | None) -> ModelProfile | None:
         normalized = (profile_key or "").strip()
@@ -2242,6 +2370,7 @@ class FocusViewState:
             AI_VIEW_SUMMARIZE: "",
             AI_VIEW_EXTRACT: "",
             AI_VIEW_QA: "",
+            AI_VIEW_AGENT_QA: "",
             AI_VIEW_RAG_AUDIT: "",
         }
     )
@@ -2256,6 +2385,7 @@ class FocusViewState:
     ai_range_autofilled: bool = True
     extract_range_text: str = ""
     rag_question_text: str = ""
+    agent_question_text: str = ""
     rag_filter_chip_text: str = ""
     sidebar_expanded: list[str] = field(default_factory=list)
     summary_loaded_path: Path | None = None
@@ -2327,6 +2457,18 @@ def load_ai_settings() -> AiSettings:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     speech_rag_source_file = str(config.get(CONFIG_KEY_SPEECH_RAG_SOURCE_FILE, "") or "")
+    codex_agent_profile = str(
+        config.get(CONFIG_KEY_CODEX_AGENT_PROFILE, DEFAULT_CODEX_AGENT_PROFILE)
+        or DEFAULT_CODEX_AGENT_PROFILE
+    ).strip()
+    codex_agent_bin = str(
+        config.get(CONFIG_KEY_CODEX_AGENT_BIN, DEFAULT_CODEX_AGENT_BIN)
+        or DEFAULT_CODEX_AGENT_BIN
+    ).strip()
+    codex_agent_fireworks_key = str(
+        config.get(CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY, "")
+        or ""
+    ).strip()
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
     grep_highlight_color = _coerce_color_value(
         config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
@@ -2386,6 +2528,9 @@ def load_ai_settings() -> AiSettings:
         search_chip_color=search_chip_color,
         model_profiles=model_profiles,
         task_profile_defaults=task_profile_defaults,
+        codex_agent_profile=codex_agent_profile or DEFAULT_CODEX_AGENT_PROFILE,
+        codex_agent_bin=codex_agent_bin or DEFAULT_CODEX_AGENT_BIN,
+        codex_agent_fireworks_key=codex_agent_fireworks_key,
     )
 
 
@@ -2454,6 +2599,13 @@ def save_ai_settings(settings: AiSettings) -> None:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     config[CONFIG_KEY_SPEECH_RAG_SOURCE_FILE] = settings.speech_rag_source_file
+    config[CONFIG_KEY_CODEX_AGENT_PROFILE] = (
+        settings.codex_agent_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
+    )
+    config[CONFIG_KEY_CODEX_AGENT_BIN] = (
+        settings.codex_agent_bin.strip() or DEFAULT_CODEX_AGENT_BIN
+    )
+    config[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] = settings.codex_agent_fireworks_key.strip()
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
         settings.grep_highlight_color,
@@ -2800,6 +2952,22 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
 
 .ai-output-view {
   background: transparent;
+}
+
+.focus-agent-terminal-frame {
+  border-radius: 8px;
+  background-color: @window_bg_color;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+}
+
+.focus-agent-terminal {
+  border-radius: 8px;
+  padding: 8px;
+  background-color: @window_bg_color;
+  background-image: none;
+  color: @window_fg_color;
 }
 
 .no-bold {
@@ -3547,6 +3715,7 @@ class Focus(Adw.Application):
             AI_VIEW_SUMMARIZE: AiOutputView(),
             AI_VIEW_EXTRACT: AiOutputView(),
             AI_VIEW_QA: AiOutputView(),
+            AI_VIEW_AGENT_QA: AiOutputView(),
             AI_VIEW_RAG_AUDIT: AiOutputView(),
         }
         self._ai_active_view = AI_VIEW_QA
@@ -3652,6 +3821,12 @@ class Focus(Adw.Application):
         self._rag_lock = threading.Lock()
         self._rag_question_entry: Gtk.Entry | None = None
         self._rag_filter_chip: Gtk.Button | None = None
+        self._agent_question_entry: Gtk.Entry | None = None
+        self._agent_terminal: Any | None = None
+        self._agent_terminal_pid: int | None = None
+        self._agent_terminal_active = False
+        self._agent_terminal_closing = False
+        self._agent_terminal_close_button: Gtk.Button | None = None
         self._view_state = FocusViewState()
 
     @property
@@ -4061,6 +4236,13 @@ class Focus(Adw.Application):
         )
         ai_mode_strip.append(qa_mode_button)
 
+        agent_mode_button = self._build_ai_mode_button(
+            "Agent",
+            AI_VIEW_AGENT_QA,
+            "Open an embedded Codex agent for deeper record questions",
+        )
+        ai_mode_strip.append(agent_mode_button)
+
         summarize_mode_button = self._build_ai_mode_button(
             "Sum",
             AI_VIEW_SUMMARIZE,
@@ -4219,6 +4401,70 @@ class Focus(Adw.Application):
         self._rag_filter_chip.set_visible(False)
         self._rag_filter_chip.set_tooltip_text("Auto-detected retrieval filter applied successfully.")
 
+        agent_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        agent_view.set_hexpand(True)
+        agent_view.set_vexpand(True)
+        agent_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        agent_controls.set_hexpand(True)
+        agent_controls.set_valign(Gtk.Align.CENTER)
+
+        self._agent_question_entry = Gtk.Entry()
+        self._agent_question_entry.set_hexpand(True)
+        self._agent_question_entry.set_placeholder_text("Agent question")
+        self._agent_question_entry.connect("activate", self._on_agent_question_activate)
+        agent_controls.append(self._agent_question_entry)
+
+        agent_launch_button = Gtk.Button(label="Launch")
+        agent_launch_button.add_css_class("flat")
+        agent_launch_button.add_css_class("no-bold")
+        agent_launch_button.set_valign(Gtk.Align.CENTER)
+        agent_launch_button.connect("clicked", self._on_agent_launch_clicked)
+        agent_controls.append(agent_launch_button)
+
+        agent_close_button = Gtk.Button(label="Close")
+        agent_close_button.add_css_class("flat")
+        agent_close_button.add_css_class("no-bold")
+        agent_close_button.set_valign(Gtk.Align.CENTER)
+        agent_close_button.set_sensitive(False)
+        agent_close_button.connect("clicked", self._on_agent_terminal_close_clicked)
+        agent_controls.append(agent_close_button)
+        self._agent_terminal_close_button = agent_close_button
+        agent_view.append(agent_controls)
+
+        if Vte is not None:
+            agent_terminal_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            agent_terminal_frame.set_hexpand(True)
+            agent_terminal_frame.set_vexpand(True)
+            agent_terminal_frame.set_size_request(-1, 260)
+            agent_terminal_frame.add_css_class("focus-agent-terminal-frame")
+            agent_terminal_frame.set_overflow(Gtk.Overflow.HIDDEN)
+
+            agent_terminal = Vte.Terminal()
+            agent_terminal.set_hexpand(True)
+            agent_terminal.set_vexpand(True)
+            agent_terminal.add_css_class("focus-agent-terminal")
+            _apply_focus_terminal_theme(agent_terminal)
+            terminal_key_controller = Gtk.EventControllerKey()
+            terminal_key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            terminal_key_controller.connect("key-pressed", self._on_agent_terminal_key_pressed)
+            agent_terminal.add_controller(terminal_key_controller)
+            agent_terminal.connect("child-exited", self._on_agent_terminal_child_exited)
+            agent_terminal_frame.append(agent_terminal)
+            agent_view.append(agent_terminal_frame)
+            self._agent_terminal = agent_terminal
+        else:
+            agent_missing = Gtk.Label(
+                label=(
+                    "Embedded terminal support requires GTK4 VTE "
+                    "(gir1.2-vte-3.91 and libvte-2.91-gtk4-0)."
+                ),
+                xalign=0,
+            )
+            agent_missing.set_wrap(True)
+            agent_missing.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            agent_missing.add_css_class("dim-label")
+            agent_view.append(agent_missing)
+
         rag_audit_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rag_audit_view.set_hexpand(True)
         rag_audit_view.set_vexpand(True)
@@ -4352,6 +4598,7 @@ class Focus(Adw.Application):
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_EXTRACT)
             self._ai_controls_stack.add_named(qa_controls, AI_VIEW_QA)
+            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_AGENT_QA)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_RAG_AUDIT)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
@@ -4401,6 +4648,7 @@ class Focus(Adw.Application):
         self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
         self._ai_view_stack.add_titled(extract_view, AI_VIEW_EXTRACT, "Extract")
         self._ai_view_stack.add_titled(qa_view, AI_VIEW_QA, "Q & A")
+        self._ai_view_stack.add_titled(agent_view, AI_VIEW_AGENT_QA, "Agent")
         self._ai_view_stack.add_titled(rag_audit_view, AI_VIEW_RAG_AUDIT, "RAG Audit")
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
         self._ai_view_stack.set_visible_child_name(AI_VIEW_QA)
@@ -4542,7 +4790,7 @@ class Focus(Adw.Application):
         self._current_page_citation_button.add_css_class("flat")
         self._current_page_citation_button.set_valign(Gtk.Align.CENTER)
         self._current_page_citation_button.set_tooltip_text(
-            "Insert current page citation in Prose (Ctrl+Shift+C)"
+            "Insert current page citation in Prose (Ctrl+Alt+Shift+C)"
         )
         self._current_page_citation_button.set_sensitive(False)
         self._current_page_citation_button.set_child(
@@ -4765,6 +5013,8 @@ class Focus(Adw.Application):
         )
         if active_view == AI_VIEW_FILE:
             return self._summary_scroller, bool(self._summary_raw.strip())
+        if active_view == AI_VIEW_AGENT_QA:
+            return None, False
         output_state = self._ai_outputs.get(active_view or "")
         if output_state is None:
             return None, False
@@ -5000,6 +5250,8 @@ class Focus(Adw.Application):
             state.extract_range_text = self._extract_range_entry.get_text()
         if self._rag_question_entry:
             state.rag_question_text = self._rag_question_entry.get_text()
+        if self._agent_question_entry:
+            state.agent_question_text = self._agent_question_entry.get_text()
         if self._rag_filter_chip and self._rag_filter_chip.get_visible():
             state.rag_filter_chip_text = self._rag_filter_chip.get_label() or ""
         else:
@@ -8290,7 +8542,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.grep_prev_hit", ["<Primary><Shift>g"])
         self.set_accels_for_action(
             "app.insert_current_page_citation",
-            ["<Primary><Shift>c"],
+            ["<Primary><Alt><Shift>c"],
         )
         self.set_accels_for_action(
             "app.insert_page_citation_range",
@@ -8355,7 +8607,7 @@ class Focus(Adw.Application):
         search_group.append(
             Gtk.ShortcutsShortcut(
                 title="Insert current page citation",
-                accelerator="<Primary><Shift>C",
+                accelerator="<Primary><Alt><Shift>C",
             )
         )
         search_group.append(
@@ -9388,6 +9640,242 @@ class Focus(Adw.Application):
 
     def _on_rag_question_activate(self, _entry: Gtk.Entry) -> None:
         self._submit_rag_question()
+
+    def _on_agent_question_activate(self, _entry: Gtk.Entry) -> None:
+        self._launch_agent_question()
+
+    def _on_agent_launch_clicked(self, _button: Gtk.Button) -> None:
+        self._launch_agent_question()
+
+    def _focus_agent_question_entry(self) -> None:
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_AGENT_QA)
+        if self._agent_question_entry:
+            self._agent_question_entry.grab_focus()
+            self._agent_question_entry.select_region(0, -1)
+
+    def _agent_terminal_unavailable(self) -> None:
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_AGENT_QA)
+        self._ai_transient_toast(
+            "Install gir1.2-vte-3.91 and libvte-2.91-gtk4-0 to use the embedded Agent terminal."
+        )
+
+    def _agent_python_path(self) -> str:
+        venv_python = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
+        if venv_python.is_file():
+            return str(venv_python)
+        return sys.executable or "python3"
+
+    def _compose_agent_prompt(self, question: str) -> str:
+        layout = self._record_layout
+        current_page = self._current_page_number()
+        current_label = self._current_transcript_page_label()
+        page_context = ""
+        if current_page is not None:
+            label = current_label.citation_label if current_label else f"file page {current_page:04d}"
+            page_context = f"\nCurrent Focus page: {label} (text page {current_page:04d})."
+        source_map = layout.source_map_path
+        report_boundaries = layout.report_boundaries_path
+        hearing_boundaries = layout.hearing_boundaries_path
+        minutes_boundaries = layout.minutes_boundaries_path
+        vector_dir = layout.rag_vector_dir or (layout.root / "rag" / "vector_database")
+        case_overview = layout.rag_case_overview_path or (layout.root / "rag" / "case_overview.txt")
+        helper = FOCUS_RECORD_AGENT_HELPER
+        python_path = self._agent_python_path()
+        return (
+            "You are answering a legal record question inside the Focus transcript browser.\n\n"
+            f"Question:\n{question.strip()}\n\n"
+            "Work from the active case bundle and do not modify case files. Use record citations from "
+            "`citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw "
+            "file-page numbers unless you are explicitly explaining file layout. Make uncertainty explicit.\n\n"
+            "Important paths:\n"
+            f"- Case bundle root: {layout.root}\n"
+            f"- Source map: {source_map}\n"
+            f"- Report boundaries: {report_boundaries}\n"
+            f"- Hearing boundaries: {hearing_boundaries}\n"
+            f"- Minute-order boundaries: {minutes_boundaries}\n"
+            f"- Text pages: {layout.text_dir}\n"
+            f"- Image pages: {layout.images_dir}\n"
+            f"- Optimized chunks: {layout.root / 'artifacts' / 'optimized'}\n"
+            f"- Case overview: {case_overview}\n"
+            f"- Vector database: {vector_dir}\n"
+            f"- Helper CLI: {helper}\n"
+            f"- Preferred Python: {python_path}\n"
+            "- Agent workspace: a temporary writable directory outside the case bundle\n"
+            f"{page_context}\n\n"
+            "Before giving a substantial answer, conduct targeted record searches. Use the source map, "
+            "grep, document metadata, and direct page reads as the primary path for citation-grounded "
+            "answers. Always pass the real case bundle path with `--case-root` because your shell starts "
+            "in a temporary workspace:\n"
+            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} map --json`\n"
+            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} grep \"search phrase\" --json`\n"
+            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} lookup --citation \"CT 6\" --json`\n"
+            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} rag \"question\" --json`\n\n"
+            "Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` "
+            "returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the "
+            "embedding endpoint. Treat those chunks as discovery leads, then verify important citations "
+            "with `grep`, `lookup`, `document`, or direct reads before giving the final answer."
+        )
+
+    def _write_agent_prompt_file(self, prompt: str) -> Path:
+        handle = tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="focus-agent-",
+            suffix=".txt",
+            delete=False,
+        )
+        with handle:
+            handle.write(prompt)
+        return Path(handle.name)
+
+    def _launch_agent_question(self) -> None:
+        if Vte is None or self._agent_terminal is None:
+            self._agent_terminal_unavailable()
+            return
+        if self._agent_terminal_active:
+            self._set_ai_view(AI_VIEW_AGENT_QA)
+            self._agent_terminal.grab_focus()
+            self._ai_transient_toast("Embedded Agent is already running.")
+            return
+        if not self._agent_question_entry:
+            return
+        question = self._agent_question_entry.get_text().strip()
+        if not question:
+            self._ai_transient_toast("Enter a question to launch the Agent.")
+            return
+        self._current_view_state().agent_question_text = question
+        prompt_path = self._write_agent_prompt_file(self._compose_agent_prompt(question))
+        self._start_agent_terminal(prompt_path)
+
+    def _start_agent_terminal(self, prompt_path: Path) -> None:
+        terminal = self._agent_terminal
+        if Vte is None or terminal is None:
+            self._agent_terminal_unavailable()
+            return
+        self._ai_settings = load_ai_settings()
+        settings = self._ai_settings
+        codex_bin = settings.codex_agent_bin.strip() or DEFAULT_CODEX_AGENT_BIN
+        profile = settings.codex_agent_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
+        wrapper = Path(__file__).resolve().parent / "scripts" / "focus-codex-agent-vte.sh"
+        if not wrapper.is_file():
+            self._ai_transient_toast(f"Codex Agent wrapper not found: {wrapper}")
+            return
+        helper = FOCUS_RECORD_AGENT_HELPER
+        if not helper.is_file():
+            self._ai_transient_toast(f"Record Agent helper not found: {helper}")
+            return
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
+                "FOCUS_AGENT_CASE_ROOT": str(self._record_layout.root),
+                "FOCUS_RECORD_AGENT_HELPER": str(helper),
+                "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
+                "FOCUS_CONFIG_FILE": str(CONFIG_FILE),
+                "CODEX_BIN": codex_bin,
+                "CODEX_PROFILE": profile,
+            }
+        )
+        fireworks_key = settings.codex_agent_fireworks_key.strip()
+        if fireworks_key:
+            env["FIREWORKS_KEY"] = fireworks_key
+            env["FIREWORKS_API_KEY"] = fireworks_key
+        argv = ["bash", str(wrapper)]
+        cwd = str(self._record_layout.root)
+        try:
+            terminal.reset(True, True)
+            _apply_focus_terminal_theme(terminal)
+            terminal.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                cwd,
+                argv,
+                [f"{key}={value}" for key, value in env.items()],
+                GLib.SpawnFlags.DEFAULT,
+                None,
+                None,
+                -1,
+                None,
+                self._on_agent_terminal_spawned,
+                None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._ai_transient_toast(f"Unable to start embedded Agent: {exc}")
+            return
+
+        self._agent_terminal_active = True
+        self._agent_terminal_closing = False
+        if self._agent_terminal_close_button:
+            self._agent_terminal_close_button.set_sensitive(True)
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_AGENT_QA)
+        self._update_ai_status(f"Started embedded Agent with profile {profile}.", spinning=False)
+        terminal.grab_focus()
+
+    def _on_agent_terminal_spawned(
+        self,
+        _terminal: Any,
+        pid: int,
+        error: GLib.Error | None,
+        _user_data: object,
+    ) -> None:
+        if error is not None:
+            self._agent_terminal_active = False
+            self._agent_terminal_pid = None
+            if self._agent_terminal_close_button:
+                self._agent_terminal_close_button.set_sensitive(False)
+            self._ai_transient_toast(f"Unable to start embedded Agent: {error.message}")
+            return
+        self._agent_terminal_pid = int(pid)
+
+    def _on_agent_terminal_child_exited(self, _terminal: Any, _status: int) -> None:
+        closing = self._agent_terminal_closing
+        self._agent_terminal_active = False
+        self._agent_terminal_pid = None
+        self._agent_terminal_closing = False
+        if self._agent_terminal_close_button:
+            self._agent_terminal_close_button.set_sensitive(False)
+        message = "Embedded Agent closed." if closing else "Embedded Agent session ended."
+        self._update_ai_status(message, spinning=False)
+
+    def _on_agent_terminal_style_changed(self, *_args: object) -> None:
+        if self._agent_terminal is not None:
+            _apply_focus_terminal_theme(self._agent_terminal)
+
+    def _on_agent_terminal_key_pressed(
+        self,
+        _controller: Gtk.EventControllerKey,
+        keyval: int,
+        _keycode: int,
+        state: Gdk.ModifierType,
+    ) -> bool:
+        terminal = self._agent_terminal
+        if Vte is None or terminal is None:
+            return False
+        required_modifiers = Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        if state & required_modifiers != required_modifiers:
+            return False
+        if keyval in (Gdk.KEY_C, Gdk.KEY_c):
+            terminal.copy_clipboard_format(Vte.Format.TEXT)
+            return True
+        if keyval in (Gdk.KEY_V, Gdk.KEY_v):
+            terminal.paste_clipboard()
+            return True
+        return False
+
+    def _on_agent_terminal_close_clicked(self, _button: Gtk.Button) -> None:
+        if self._agent_terminal_active and self._agent_terminal_pid is not None:
+            self._agent_terminal_closing = True
+            try:
+                os.kill(self._agent_terminal_pid, signal.SIGTERM)
+            except OSError:
+                pass
+        self._agent_terminal_active = False
+        self._agent_terminal_pid = None
+        if self._agent_terminal_close_button:
+            self._agent_terminal_close_button.set_sensitive(False)
 
     def _on_rag_profile_retry_clicked(
         self,
@@ -10935,6 +11423,9 @@ class RagPromptWidgets:
     isaacus_key_row: Adw.EntryRow
     rag_chunk_row: Adw.SpinRow
     speech_rag_source_row: Adw.EntryRow
+    codex_agent_profile_row: Adw.EntryRow
+    codex_agent_bin_row: Adw.EntryRow
+    codex_agent_fireworks_key_row: Adw.EntryRow
     prompt_buffer: Gtk.TextBuffer
 
 
@@ -11613,6 +12104,17 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         speech_rag_source_row.add_suffix(clear_speech_rag_btn)
         rag_context_group.add(speech_rag_source_row)
 
+        codex_agent_profile_row = Adw.EntryRow(title="Codex Agent Profile")
+        codex_agent_profile_row.set_hexpand(True)
+        rag_context_group.add(codex_agent_profile_row)
+
+        codex_agent_bin_row = Adw.EntryRow(title="Codex executable")
+        codex_agent_bin_row.set_hexpand(True)
+        rag_context_group.add(codex_agent_bin_row)
+
+        codex_agent_fireworks_key_row = self._build_password_row("Codex Fireworks API Key")
+        rag_context_group.add(codex_agent_fireworks_key_row)
+
         voyage_group = Adw.PreferencesGroup(title="Voyage Embeddings")
         voyage_group.add_css_class("list-stack")
         voyage_group.set_hexpand(True)
@@ -11663,6 +12165,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             isaacus_key_row=isaacus_key_row,
             rag_chunk_row=rag_chunk_row,
             speech_rag_source_row=speech_rag_source_row,
+            codex_agent_profile_row=codex_agent_profile_row,
+            codex_agent_bin_row=codex_agent_bin_row,
+            codex_agent_fireworks_key_row=codex_agent_fireworks_key_row,
             prompt_buffer=buffer,
         )
         return page
@@ -11765,6 +12270,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.isaacus_key_row.set_text(settings.isaacus_api_key)
             rag_widgets.rag_chunk_row.set_value(float(settings.rag_chunk_count))
             rag_widgets.speech_rag_source_row.set_text(settings.speech_rag_source_file)
+            rag_widgets.codex_agent_profile_row.set_text(settings.codex_agent_profile)
+            rag_widgets.codex_agent_bin_row.set_text(settings.codex_agent_bin)
+            rag_widgets.codex_agent_fireworks_key_row.set_text(settings.codex_agent_fireworks_key)
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
         if self._ai_font_size_row:
@@ -11872,6 +12380,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_RAG_CHUNK_COUNT,
         )
         speech_rag_source_file = rag_widgets.speech_rag_source_row.get_text()
+        codex_agent_profile = rag_widgets.codex_agent_profile_row.get_text().strip()
+        codex_agent_bin = rag_widgets.codex_agent_bin_row.get_text().strip()
+        codex_agent_fireworks_key = rag_widgets.codex_agent_fireworks_key_row.get_text().strip()
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
@@ -11958,6 +12469,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_deep_disable_reasoning=current_settings.rag_deep_disable_reasoning,
             rag_chunk_count=rag_chunk_count,
             speech_rag_source_file=speech_rag_source_file,
+            codex_agent_profile=codex_agent_profile or DEFAULT_CODEX_AGENT_PROFILE,
+            codex_agent_bin=codex_agent_bin or DEFAULT_CODEX_AGENT_BIN,
+            codex_agent_fireworks_key=codex_agent_fireworks_key,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
