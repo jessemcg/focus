@@ -22,13 +22,16 @@ def _load_helper_module():
 def _write_case_bundle(tmp_path: Path) -> Path:
     root = tmp_path / "case_bundle"
     text_dir = root / "text_pages"
+    image_dir = root / "image_pages"
     artifacts = root / "artifacts"
     vector_dir = root / "rag" / "vector_database"
     text_dir.mkdir(parents=True)
+    image_dir.mkdir(parents=True)
     artifacts.mkdir(parents=True)
     vector_dir.mkdir(parents=True)
     (text_dir / "0001.txt").write_text("Mother attended therapy.\nChild was safe.\n", encoding="utf-8")
     (text_dir / "0002.txt").write_text("The report discusses medication compliance.\n", encoding="utf-8")
+    (image_dir / "0001.png").write_bytes(b"fake png payload")
     (vector_dir / "chroma.sqlite3").write_text("fake sqlite payload", encoding="utf-8")
     source_map = {
         "case_name": "Test Case",
@@ -49,6 +52,9 @@ def _write_case_bundle(tmp_path: Path) -> Path:
                 "file_name": "0001.txt",
                 "file_page": 1,
                 "text_path": "text_pages/0001.txt",
+                "image_path": "image_pages/0001.png",
+                "page_type": "CT_form",
+                "record_type": "CT",
                 "citation_label": "CT 1",
                 "citation_key": "CT:1",
             },

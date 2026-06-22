@@ -41,6 +41,7 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.error
 import urllib.request
 import unicodedata
@@ -120,6 +121,7 @@ CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
 CONFIG_KEY_CODEX_AGENT_PROFILE = "codex_agent_profile"
 CONFIG_KEY_CODEX_AGENT_BIN = "codex_agent_bin"
 CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY = "codex_agent_fireworks_key"
+CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE = "codex_agent_prompt_template"
 CONFIG_KEY_MODEL_PROFILES = "model_profiles"
 CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
@@ -171,7 +173,176 @@ RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
 DEFAULT_CODEX_AGENT_PROFILE = "fireworks"
 DEFAULT_CODEX_AGENT_BIN = "codex"
+CODEX_CONFIG_DIR = Path.home() / ".codex"
 FOCUS_RECORD_AGENT_HELPER = Path(__file__).resolve().parent / "scripts" / "focus_record_agent.py"
+CODEX_CITATION_COMBINATION_RULE = (
+    "To combine citations: group by exact label (`RT`, `2RT`, `CT`, `CRT`, etc.), "
+    "de-duplicate pages, sort pages ascending within each label, compress only truly "
+    "consecutive page runs with a dash, keep different numeric prefixes or labels "
+    "separate, join label groups with semicolons, and put one final period before "
+    "the closing parenthesis. Reporter transcript groups (`RT`, `1RT`, `2RT`, `CRT`, "
+    "or any label used in the source map for reporter's transcript pages) always go "
+    "before CT-family groups, even if the CT cites were found first or appear earlier "
+    "in your notes. Before finalizing, specifically check every combined citation for "
+    "the forbidden pattern `(CT ...; RT ... .)` or `(CT ...; 2RT ... .)` and rewrite it "
+    "so the reporter transcript group comes first, e.g. `(RT 3; CT 243, 250, 252.)`."
+)
+LEGACY_CODEX_CITATION_COMBINATION_RULE = (
+    "To combine citations: group by exact label (`RT`, `2RT`, `CT`, `CRT`, etc.), "
+    "de-duplicate pages, sort pages ascending within each label, compress only truly "
+    "consecutive page runs with a dash, order RT-family labels before CT-family labels, "
+    "keep different numeric prefixes or labels separate, join label groups with "
+    "semicolons, and put one final period before the closing parenthesis."
+)
+DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE = """You are answering a legal record question inside the Focus transcript browser.
+
+Question:
+{question}
+
+Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers, local file paths, `text_pages` filenames, or grep line numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
+
+Important paths:
+- Case bundle root: {case_root}
+- Source map: {source_map}
+- Report boundaries: {report_boundaries}
+- Hearing boundaries: {hearing_boundaries}
+- Minute-order boundaries: {minutes_boundaries}
+- Text pages: {text_pages}
+- Optimized chunks: {optimized_chunks}
+- Case overview: {case_overview}
+- Vector database: {vector_database}
+- Helper CLI: {helper}
+- Preferred Python: {python_path}
+- Agent workspace: a temporary writable directory outside the case bundle
+{current_page_context}
+
+Tool-use compatibility: when you need to run helper or shell commands, do not write assistant-facing narration before the tool call. Run one helper or shell command at a time, wait for results, then summarize only after tool results return.
+
+Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Your shell starts in a temporary workspace, so use this helper command pattern:
+- `"$FOCUS_RECORD_AGENT_PYTHON" "$FOCUS_RECORD_AGENT_HELPER" --case-root "$FOCUS_AGENT_CASE_ROOT" <command> ...`
+
+Available helper commands:
+- `map --json`
+- `grep "search phrase" --json`
+- `lookup --citation "CT 6" --json`
+- `rag "question" --json`
+
+Citation format for final answers:
+- Cite record support the way an appellate lawyer would, using record citations only, such as `(CT 335-343.)`, `(RT 6, 34; CT 140, 190.)`, or `(RT 22-34; CRT 17-22; CT 295-301.)`.
+- Do not cite local paths like `/home/.../text_pages/0313.txt`, filenames like `0313.txt`, or line numbers like `:44:` in the final answer. Use those only as internal search leads.
+- Put citations in the same sentence or paragraph as the factual claim they support.
+- Combine multiple record citations into one parenthetical when they support the same point.
+""".rstrip() + f"""
+- {CODEX_CITATION_COMBINATION_RULE}
+- Never use a dash if the pages are not consecutive. For example, use `(RT 5, 45, 500-503; 2RT 10-11; CT 400, 556.)`, not `(RT 5-45.)`.
+
+Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer."""
+LEGACY_CODEX_AGENT_PROMPT_TEMPLATES = (
+    DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE.replace(
+        CODEX_CITATION_COMBINATION_RULE,
+        LEGACY_CODEX_CITATION_COMBINATION_RULE,
+    ),
+    """You are answering a legal record question inside the Focus transcript browser.
+
+Question:
+{question}
+
+Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers, local file paths, `text_pages` filenames, or grep line numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
+
+Important paths:
+- Case bundle root: {case_root}
+- Source map: {source_map}
+- Report boundaries: {report_boundaries}
+- Hearing boundaries: {hearing_boundaries}
+- Minute-order boundaries: {minutes_boundaries}
+- Text pages: {text_pages}
+- Optimized chunks: {optimized_chunks}
+- Case overview: {case_overview}
+- Vector database: {vector_database}
+- Helper CLI: {helper}
+- Preferred Python: {python_path}
+- Agent workspace: a temporary writable directory outside the case bundle
+{current_page_context}
+
+Tool-use compatibility: when you need to run helper or shell commands, do not write assistant-facing narration before the tool call. Run one helper or shell command at a time, wait for results, then summarize only after tool results return.
+
+Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Always pass the real case bundle path with `--case-root` because your shell starts in a temporary workspace:
+- `{helper_map_command}`
+- `{helper_grep_command}`
+- `{helper_lookup_command}`
+- `{helper_rag_command}`
+
+Citation format for final answers:
+- Cite record support the way an appellate lawyer would, using record citations only, such as `(CT 335-343.)`, `(RT 6, 34; CT 140, 190.)`, or `(RT 22-34; CRT 17-22; CT 295-301.)`.
+- Do not cite local paths like `/home/.../text_pages/0313.txt`, filenames like `0313.txt`, or line numbers like `:44:` in the final answer. Use those only as internal search leads.
+- Put citations in the same sentence or paragraph as the factual claim they support.
+- Combine multiple record citations into one parenthetical when they support the same point.
+- To combine citations: group by exact label (`RT`, `2RT`, `CT`, `CRT`, etc.), de-duplicate pages, sort pages ascending within each label, compress only truly consecutive page runs with a dash, order RT-family labels before CT-family labels, keep different numeric prefixes or labels separate, join label groups with semicolons, and put one final period before the closing parenthesis.
+- Never use a dash if the pages are not consecutive. For example, use `(RT 5, 45, 500-503; 2RT 10-11; CT 400, 556.)`, not `(RT 5-45.)`.
+
+Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer.""",
+    """You are answering a legal record question inside the Focus transcript browser.
+
+Question:
+{question}
+
+Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
+
+Important paths:
+- Case bundle root: {case_root}
+- Source map: {source_map}
+- Report boundaries: {report_boundaries}
+- Hearing boundaries: {hearing_boundaries}
+- Minute-order boundaries: {minutes_boundaries}
+- Text pages: {text_pages}
+- Optimized chunks: {optimized_chunks}
+- Case overview: {case_overview}
+- Vector database: {vector_database}
+- Helper CLI: {helper}
+- Preferred Python: {python_path}
+- Agent workspace: a temporary writable directory outside the case bundle
+{current_page_context}
+
+Tool-use compatibility: when you need to run helper or shell commands, do not write assistant-facing narration before the tool call. Run one helper or shell command at a time, wait for results, then summarize only after tool results return.
+
+Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Always pass the real case bundle path with `--case-root` because your shell starts in a temporary workspace:
+- `{helper_map_command}`
+- `{helper_grep_command}`
+- `{helper_lookup_command}`
+- `{helper_rag_command}`
+
+Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer.""",
+    """You are answering a legal record question inside the Focus transcript browser.
+
+Question:
+{question}
+
+Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
+
+Important paths:
+- Case bundle root: {case_root}
+- Source map: {source_map}
+- Report boundaries: {report_boundaries}
+- Hearing boundaries: {hearing_boundaries}
+- Minute-order boundaries: {minutes_boundaries}
+- Text pages: {text_pages}
+- Image pages: {image_pages}
+- Optimized chunks: {optimized_chunks}
+- Case overview: {case_overview}
+- Vector database: {vector_database}
+- Helper CLI: {helper}
+- Preferred Python: {python_path}
+- Agent workspace: a temporary writable directory outside the case bundle
+{current_page_context}
+
+Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Always pass the real case bundle path with `--case-root` because your shell starts in a temporary workspace:
+- `{helper_map_command}`
+- `{helper_grep_command}`
+- `{helper_lookup_command}`
+- `{helper_rag_command}`
+
+Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer.""",
+)
 UNSET_PROFILE_LABEL = "Legacy credentials"
 MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3", "profile4")
 DEFAULT_MODEL_PROFILE_NICKNAMES = {
@@ -465,10 +636,24 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
             ),
             FocusCommand(
                 "AI Panel",
+                "Focus Agent question box",
+                "focus_agent_question",
+                "D-Bus",
+                "Focus the Agent question box.",
+            ),
+            FocusCommand(
+                "AI Panel",
                 "Submit speech RAG question",
                 "submit_speech_rag_question",
                 "D-Bus",
                 "Read the configured speech text file and submit it as a quick RAG question.",
+            ),
+            FocusCommand(
+                "AI Panel",
+                "Submit speech Agent question",
+                "submit_speech_agent_question",
+                "D-Bus",
+                "Read the configured speech text file and submit it as an Agent question.",
             ),
         ),
     ),
@@ -1988,6 +2173,7 @@ class AiSettings:
     codex_agent_profile: str = DEFAULT_CODEX_AGENT_PROFILE
     codex_agent_bin: str = DEFAULT_CODEX_AGENT_BIN
     codex_agent_fireworks_key: str = ""
+    codex_agent_prompt_template: str = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
 
     def profile_by_key(self, profile_key: str | None) -> ModelProfile | None:
         normalized = (profile_key or "").strip()
@@ -2292,6 +2478,47 @@ def _sanitize_task_profile_defaults(raw: Any) -> dict[str, str | None]:
     return defaults
 
 
+@dataclass(frozen=True)
+class CodexProfileOption:
+    profile: str
+    model: str
+    path: Path
+
+    def display_name(self) -> str:
+        model = self.model.strip()
+        if model:
+            return f"{self.profile} ({model})"
+        return self.profile
+
+
+def discover_fireworks_codex_profiles(codex_config_dir: Path | None = None) -> list[CodexProfileOption]:
+    config_dir = codex_config_dir or CODEX_CONFIG_DIR
+    if not config_dir.is_dir():
+        return []
+    profiles: list[CodexProfileOption] = []
+    for path in sorted(config_dir.glob("*.config.toml")):
+        if not path.is_file():
+            continue
+        try:
+            with path.open("rb") as handle:
+                data = tomllib.load(handle)
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        if str(data.get("model_provider") or "").strip() != "fireworks-ai":
+            continue
+        name = path.name
+        profile = name[: -len(".config.toml")] if name.endswith(".config.toml") else path.stem
+        if profile:
+            profiles.append(
+                CodexProfileOption(
+                    profile=profile,
+                    model=str(data.get("model") or "").strip(),
+                    path=path,
+                )
+            )
+    return profiles
+
+
 def _load_task_profile_defaults_from_config(
     config: dict[str, Any],
     profiles: list[ModelProfile],
@@ -2469,6 +2696,12 @@ def load_ai_settings() -> AiSettings:
         config.get(CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY, "")
         or ""
     ).strip()
+    codex_agent_prompt_template = str(
+        config.get(CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE, DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE)
+        or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+    ).strip()
+    if codex_agent_prompt_template in LEGACY_CODEX_AGENT_PROMPT_TEMPLATES:
+        codex_agent_prompt_template = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
     grep_highlight_color = _coerce_color_value(
         config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
@@ -2531,6 +2764,7 @@ def load_ai_settings() -> AiSettings:
         codex_agent_profile=codex_agent_profile or DEFAULT_CODEX_AGENT_PROFILE,
         codex_agent_bin=codex_agent_bin or DEFAULT_CODEX_AGENT_BIN,
         codex_agent_fireworks_key=codex_agent_fireworks_key,
+        codex_agent_prompt_template=codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE,
     )
 
 
@@ -2606,6 +2840,9 @@ def save_ai_settings(settings: AiSettings) -> None:
         settings.codex_agent_bin.strip() or DEFAULT_CODEX_AGENT_BIN
     )
     config[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] = settings.codex_agent_fireworks_key.strip()
+    config[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] = (
+        settings.codex_agent_prompt_template.strip() or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+    )
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
         settings.grep_highlight_color,
@@ -3826,7 +4063,7 @@ class Focus(Adw.Application):
         self._agent_terminal_pid: int | None = None
         self._agent_terminal_active = False
         self._agent_terminal_closing = False
-        self._agent_terminal_close_button: Gtk.Button | None = None
+        self._agent_terminal_ignore_next_exit = False
         self._view_state = FocusViewState()
 
     @property
@@ -4413,22 +4650,6 @@ class Focus(Adw.Application):
         self._agent_question_entry.set_placeholder_text("Agent question")
         self._agent_question_entry.connect("activate", self._on_agent_question_activate)
         agent_controls.append(self._agent_question_entry)
-
-        agent_launch_button = Gtk.Button(label="Launch")
-        agent_launch_button.add_css_class("flat")
-        agent_launch_button.add_css_class("no-bold")
-        agent_launch_button.set_valign(Gtk.Align.CENTER)
-        agent_launch_button.connect("clicked", self._on_agent_launch_clicked)
-        agent_controls.append(agent_launch_button)
-
-        agent_close_button = Gtk.Button(label="Close")
-        agent_close_button.add_css_class("flat")
-        agent_close_button.add_css_class("no-bold")
-        agent_close_button.set_valign(Gtk.Align.CENTER)
-        agent_close_button.set_sensitive(False)
-        agent_close_button.connect("clicked", self._on_agent_terminal_close_clicked)
-        agent_controls.append(agent_close_button)
-        self._agent_terminal_close_button = agent_close_button
         agent_view.append(agent_controls)
 
         if Vte is not None:
@@ -8454,12 +8675,26 @@ class Focus(Adw.Application):
         focus_rag_question.connect("activate", lambda _a, _p: self._focus_rag_question_entry())
         self.add_action(focus_rag_question)
 
+        focus_agent_question = Gio.SimpleAction.new("focus_agent_question", None)
+        focus_agent_question.connect(
+            "activate",
+            lambda _a, _p: self._focus_agent_question_entry(),
+        )
+        self.add_action(focus_agent_question)
+
         submit_speech_rag_question = Gio.SimpleAction.new("submit_speech_rag_question", None)
         submit_speech_rag_question.connect(
             "activate",
             lambda _a, _p: self._submit_speech_rag_question(),
         )
         self.add_action(submit_speech_rag_question)
+
+        submit_speech_agent_question = Gio.SimpleAction.new("submit_speech_agent_question", None)
+        submit_speech_agent_question.connect(
+            "activate",
+            lambda _a, _p: self._submit_speech_agent_question(),
+        )
+        self.add_action(submit_speech_agent_question)
 
         focus_page_number = Gio.SimpleAction.new("focus_page_number", None)
         focus_page_number.connect("activate", lambda _a, _p: self._focus_page_number_entry())
@@ -9644,9 +9879,6 @@ class Focus(Adw.Application):
     def _on_agent_question_activate(self, _entry: Gtk.Entry) -> None:
         self._launch_agent_question()
 
-    def _on_agent_launch_clicked(self, _button: Gtk.Button) -> None:
-        self._launch_agent_question()
-
     def _focus_agent_question_entry(self) -> None:
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
@@ -9683,40 +9915,39 @@ class Focus(Adw.Application):
         case_overview = layout.rag_case_overview_path or (layout.root / "rag" / "case_overview.txt")
         helper = FOCUS_RECORD_AGENT_HELPER
         python_path = self._agent_python_path()
-        return (
-            "You are answering a legal record question inside the Focus transcript browser.\n\n"
-            f"Question:\n{question.strip()}\n\n"
-            "Work from the active case bundle and do not modify case files. Use record citations from "
-            "`citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw "
-            "file-page numbers unless you are explicitly explaining file layout. Make uncertainty explicit.\n\n"
-            "Important paths:\n"
-            f"- Case bundle root: {layout.root}\n"
-            f"- Source map: {source_map}\n"
-            f"- Report boundaries: {report_boundaries}\n"
-            f"- Hearing boundaries: {hearing_boundaries}\n"
-            f"- Minute-order boundaries: {minutes_boundaries}\n"
-            f"- Text pages: {layout.text_dir}\n"
-            f"- Image pages: {layout.images_dir}\n"
-            f"- Optimized chunks: {layout.root / 'artifacts' / 'optimized'}\n"
-            f"- Case overview: {case_overview}\n"
-            f"- Vector database: {vector_dir}\n"
-            f"- Helper CLI: {helper}\n"
-            f"- Preferred Python: {python_path}\n"
-            "- Agent workspace: a temporary writable directory outside the case bundle\n"
-            f"{page_context}\n\n"
-            "Before giving a substantial answer, conduct targeted record searches. Use the source map, "
-            "grep, document metadata, and direct page reads as the primary path for citation-grounded "
-            "answers. Always pass the real case bundle path with `--case-root` because your shell starts "
-            "in a temporary workspace:\n"
-            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} map --json`\n"
-            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} grep \"search phrase\" --json`\n"
-            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} lookup --citation \"CT 6\" --json`\n"
-            f"- `{shlex.quote(python_path)} {shlex.quote(str(helper))} --case-root {shlex.quote(str(layout.root))} rag \"question\" --json`\n\n"
-            "Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` "
-            "returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the "
-            "embedding endpoint. Treat those chunks as discovery leads, then verify important citations "
-            "with `grep`, `lookup`, `document`, or direct reads before giving the final answer."
+        template = self._ai_settings.codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+        helper_prefix = (
+            f"{shlex.quote(python_path)} {shlex.quote(str(helper))} "
+            f"--case-root {shlex.quote(str(layout.root))}"
         )
+        values = {
+            "question": question.strip(),
+            "case_root": str(layout.root),
+            "source_map": str(source_map),
+            "report_boundaries": str(report_boundaries),
+            "hearing_boundaries": str(hearing_boundaries),
+            "minutes_boundaries": str(minutes_boundaries),
+            "text_pages": str(layout.text_dir),
+            "image_pages": str(layout.images_dir),
+            "optimized_chunks": str(layout.root / "artifacts" / "optimized"),
+            "case_overview": str(case_overview),
+            "vector_database": str(vector_dir),
+            "helper": str(helper),
+            "python_path": python_path,
+            "current_page_context": page_context,
+            "helper_command_prefix": (
+                '"$FOCUS_RECORD_AGENT_PYTHON" "$FOCUS_RECORD_AGENT_HELPER" '
+                '--case-root "$FOCUS_AGENT_CASE_ROOT"'
+            ),
+            "helper_map_command": f"{helper_prefix} map --json",
+            "helper_grep_command": f'{helper_prefix} grep "search phrase" --json',
+            "helper_lookup_command": f'{helper_prefix} lookup --citation "CT 6" --json',
+            "helper_rag_command": f'{helper_prefix} rag "question" --json',
+        }
+        try:
+            return template.format_map(values)
+        except (KeyError, ValueError):
+            return DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE.format_map(values)
 
     def _write_agent_prompt_file(self, prompt: str) -> Path:
         handle = tempfile.NamedTemporaryFile(
@@ -9734,17 +9965,14 @@ class Focus(Adw.Application):
         if Vte is None or self._agent_terminal is None:
             self._agent_terminal_unavailable()
             return
-        if self._agent_terminal_active:
-            self._set_ai_view(AI_VIEW_AGENT_QA)
-            self._agent_terminal.grab_focus()
-            self._ai_transient_toast("Embedded Agent is already running.")
-            return
         if not self._agent_question_entry:
             return
         question = self._agent_question_entry.get_text().strip()
         if not question:
             self._ai_transient_toast("Enter a question to launch the Agent.")
             return
+        self._stop_agent_terminal()
+        self._ai_settings = load_ai_settings()
         self._current_view_state().agent_question_text = question
         prompt_path = self._write_agent_prompt_file(self._compose_agent_prompt(question))
         self._start_agent_terminal(prompt_path)
@@ -9807,8 +10035,6 @@ class Focus(Adw.Application):
 
         self._agent_terminal_active = True
         self._agent_terminal_closing = False
-        if self._agent_terminal_close_button:
-            self._agent_terminal_close_button.set_sensitive(True)
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
         self._update_ai_status(f"Started embedded Agent with profile {profile}.", spinning=False)
@@ -9824,19 +10050,19 @@ class Focus(Adw.Application):
         if error is not None:
             self._agent_terminal_active = False
             self._agent_terminal_pid = None
-            if self._agent_terminal_close_button:
-                self._agent_terminal_close_button.set_sensitive(False)
             self._ai_transient_toast(f"Unable to start embedded Agent: {error.message}")
             return
         self._agent_terminal_pid = int(pid)
 
     def _on_agent_terminal_child_exited(self, _terminal: Any, _status: int) -> None:
+        if self._agent_terminal_ignore_next_exit:
+            self._agent_terminal_ignore_next_exit = False
+            if self._agent_terminal_active:
+                return
         closing = self._agent_terminal_closing
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
         self._agent_terminal_closing = False
-        if self._agent_terminal_close_button:
-            self._agent_terminal_close_button.set_sensitive(False)
         message = "Embedded Agent closed." if closing else "Embedded Agent session ended."
         self._update_ai_status(message, spinning=False)
 
@@ -9865,17 +10091,16 @@ class Focus(Adw.Application):
             return True
         return False
 
-    def _on_agent_terminal_close_clicked(self, _button: Gtk.Button) -> None:
+    def _stop_agent_terminal(self) -> None:
         if self._agent_terminal_active and self._agent_terminal_pid is not None:
             self._agent_terminal_closing = True
+            self._agent_terminal_ignore_next_exit = True
             try:
                 os.kill(self._agent_terminal_pid, signal.SIGTERM)
             except OSError:
                 pass
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
-        if self._agent_terminal_close_button:
-            self._agent_terminal_close_button.set_sensitive(False)
 
     def _on_rag_profile_retry_clicked(
         self,
@@ -9925,6 +10150,36 @@ class Focus(Adw.Application):
         if self._rag_question_entry:
             self._rag_question_entry.set_text(question)
         self._start_rag_question(question, deep=False)
+
+    def _submit_speech_agent_question(self) -> None:
+        settings = load_ai_settings()
+        raw_path = settings.speech_rag_source_file.strip()
+        if not raw_path:
+            self._ai_transient_toast("Set the speech-to-text question file in Settings.")
+            self._ensure_ai_panel_visible()
+            return
+        source_path = Path(raw_path).expanduser().resolve(strict=False)
+        if not source_path.exists() or not source_path.is_file():
+            self._ai_transient_toast(f"Speech question file not found: {source_path}")
+            self._ensure_ai_panel_visible()
+            return
+        try:
+            raw_question = source_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            self._ai_transient_toast(f"Could not read speech question file: {exc}")
+            self._ensure_ai_panel_visible()
+            return
+        question = _normalize_speech_rag_question_text(raw_question)
+        if not question:
+            self._ai_transient_toast("Speech question file is empty.")
+            self._ensure_ai_panel_visible()
+            return
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_AGENT_QA)
+        self._current_view_state().agent_question_text = question
+        if self._agent_question_entry:
+            self._agent_question_entry.set_text(question)
+        self._launch_agent_question()
 
     def _format_rag_filter_chip_text(self, filter_details: dict[str, str] | None) -> str | None:
         if not filter_details:
@@ -11423,7 +11678,13 @@ class RagPromptWidgets:
     isaacus_key_row: Adw.EntryRow
     rag_chunk_row: Adw.SpinRow
     speech_rag_source_row: Adw.EntryRow
-    codex_agent_profile_row: Adw.EntryRow
+    prompt_buffer: Gtk.TextBuffer
+
+
+@dataclass
+class AgentSettingsWidgets:
+    profile_dropdown: Gtk.DropDown
+    profile_values: list[str]
     codex_agent_bin_row: Adw.EntryRow
     codex_agent_fireworks_key_row: Adw.EntryRow
     prompt_buffer: Gtk.TextBuffer
@@ -11539,7 +11800,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._summary_emphasis_color_control: Gtk.Widget | None = None
         self._search_chip_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
-        self._prompt_editors: dict[str, SummarizationPromptWidgets | RagPromptWidgets] = {}
+        self._prompt_editors: dict[
+            str,
+            SummarizationPromptWidgets | RagPromptWidgets | AgentSettingsWidgets,
+        ] = {}
         self._model_profiles: list[ModelProfile] = list(app._ai_settings.model_profiles)
         self._model_profile_editors: dict[str, ModelProfileEditorWidgets] = {}
         self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
@@ -11709,6 +11973,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             ("range", "Page Range Summarization", self._build_summarization_prompt_page),
             ("extract", "Extract Information", self._build_summarization_prompt_page),
             ("rag", "RAG Answer Prompt", self._build_rag_prompt_page),
+            ("agent", "Agent", self._build_agent_settings_page),
         ]
         first_row: Gtk.ListBoxRow | None = None
         for key, title, builder in prompt_definitions:
@@ -11829,6 +12094,36 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         dropdown.set_selected(self._profile_dropdown_selected_index(settings, task_key))
         dropdown.set_hexpand(False)
         return dropdown
+
+    def _codex_profile_options(self, selected_profile: str) -> list[CodexProfileOption]:
+        options = discover_fireworks_codex_profiles()
+        selected = selected_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
+        if selected and not any(option.profile == selected for option in options):
+            options.insert(0, CodexProfileOption(selected, "", CODEX_CONFIG_DIR / f"{selected}.config.toml"))
+        if not options:
+            options.append(
+                CodexProfileOption(
+                    DEFAULT_CODEX_AGENT_PROFILE,
+                    "",
+                    CODEX_CONFIG_DIR / f"{DEFAULT_CODEX_AGENT_PROFILE}.config.toml",
+                )
+            )
+        return options
+
+    def _build_codex_profile_dropdown(
+        self,
+        settings: AiSettings,
+    ) -> tuple[Gtk.DropDown, list[str]]:
+        options = self._codex_profile_options(settings.codex_agent_profile)
+        values = [option.profile for option in options]
+        dropdown = Gtk.DropDown(model=Gtk.StringList.new([option.display_name() for option in options]))
+        selected_profile = settings.codex_agent_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
+        if selected_profile in values:
+            dropdown.set_selected(values.index(selected_profile))
+        else:
+            dropdown.set_selected(0)
+        dropdown.set_hexpand(False)
+        return dropdown, values
 
     def _build_model_profiles_page(self, _key: str, title: str) -> Gtk.Widget:
         page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -12104,17 +12399,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         speech_rag_source_row.add_suffix(clear_speech_rag_btn)
         rag_context_group.add(speech_rag_source_row)
 
-        codex_agent_profile_row = Adw.EntryRow(title="Codex Agent Profile")
-        codex_agent_profile_row.set_hexpand(True)
-        rag_context_group.add(codex_agent_profile_row)
-
-        codex_agent_bin_row = Adw.EntryRow(title="Codex executable")
-        codex_agent_bin_row.set_hexpand(True)
-        rag_context_group.add(codex_agent_bin_row)
-
-        codex_agent_fireworks_key_row = self._build_password_row("Codex Fireworks API Key")
-        rag_context_group.add(codex_agent_fireworks_key_row)
-
         voyage_group = Adw.PreferencesGroup(title="Voyage Embeddings")
         voyage_group.add_css_class("list-stack")
         voyage_group.set_hexpand(True)
@@ -12165,7 +12449,64 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             isaacus_key_row=isaacus_key_row,
             rag_chunk_row=rag_chunk_row,
             speech_rag_source_row=speech_rag_source_row,
-            codex_agent_profile_row=codex_agent_profile_row,
+            prompt_buffer=buffer,
+        )
+        return page
+
+    def _build_agent_settings_page(self, key: str, title: str) -> Gtk.Widget:
+        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        page_box.set_margin_top(12)
+        page_box.set_margin_bottom(12)
+        page_box.set_margin_start(12)
+        page_box.set_margin_end(12)
+        page_box.set_vexpand(True)
+
+        title_label = Gtk.Label(label=title, xalign=0)
+        title_label.add_css_class("title-3")
+        page_box.append(title_label)
+
+        settings = load_ai_settings()
+        launch_group = Adw.PreferencesGroup(title="Codex Agent")
+        launch_group.add_css_class("list-stack")
+        launch_group.set_hexpand(True)
+        page_box.append(launch_group)
+
+        profile_row = Adw.ActionRow(
+            title="Fireworks Profile",
+            subtitle="Profiles are read from ~/.codex/*.config.toml.",
+        )
+        profile_row.set_activatable(False)
+        profile_dropdown, profile_values = self._build_codex_profile_dropdown(settings)
+        profile_row.add_suffix(profile_dropdown)
+        profile_row.set_activatable_widget(profile_dropdown)
+        launch_group.add(profile_row)
+
+        codex_agent_bin_row = Adw.EntryRow(title="Codex executable")
+        codex_agent_bin_row.set_hexpand(True)
+        launch_group.add(codex_agent_bin_row)
+
+        codex_agent_fireworks_key_row = self._build_password_row("Codex Fireworks API Key")
+        launch_group.add(codex_agent_fireworks_key_row)
+
+        prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        prompt_section.set_hexpand(True)
+        prompt_section.set_vexpand(True)
+        prompt_label = Gtk.Label(label="Prompt template", xalign=0)
+        prompt_label.add_css_class("dim-label")
+        prompt_section.append(prompt_label)
+        prompt_scroller, buffer = self._build_prompt_editor(DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE)
+        prompt_section.append(prompt_scroller)
+        page_box.append(prompt_section)
+
+        page = Gtk.ScrolledWindow()
+        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        page.set_hexpand(True)
+        page.set_vexpand(True)
+        page.set_child(page_box)
+
+        self._prompt_editors[key] = AgentSettingsWidgets(
+            profile_dropdown=profile_dropdown,
+            profile_values=profile_values,
             codex_agent_bin_row=codex_agent_bin_row,
             codex_agent_fireworks_key_row=codex_agent_fireworks_key_row,
             prompt_buffer=buffer,
@@ -12232,6 +12573,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         range_widgets = self._prompt_editors.get("range")
         extract_widgets = self._prompt_editors.get("extract")
         rag_widgets = self._prompt_editors.get("rag")
+        agent_widgets = self._prompt_editors.get("agent")
 
         if isinstance(page_widgets, SummarizationPromptWidgets):
             page_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
@@ -12270,10 +12612,18 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.isaacus_key_row.set_text(settings.isaacus_api_key)
             rag_widgets.rag_chunk_row.set_value(float(settings.rag_chunk_count))
             rag_widgets.speech_rag_source_row.set_text(settings.speech_rag_source_file)
-            rag_widgets.codex_agent_profile_row.set_text(settings.codex_agent_profile)
-            rag_widgets.codex_agent_bin_row.set_text(settings.codex_agent_bin)
-            rag_widgets.codex_agent_fireworks_key_row.set_text(settings.codex_agent_fireworks_key)
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
+
+        if isinstance(agent_widgets, AgentSettingsWidgets):
+            profile_dropdown, profile_values = self._build_codex_profile_dropdown(settings)
+            agent_widgets.profile_values[:] = profile_values
+            agent_widgets.profile_dropdown.set_model(profile_dropdown.get_model())
+            agent_widgets.profile_dropdown.set_selected(profile_dropdown.get_selected())
+            agent_widgets.codex_agent_bin_row.set_text(settings.codex_agent_bin)
+            agent_widgets.codex_agent_fireworks_key_row.set_text(settings.codex_agent_fireworks_key)
+            agent_widgets.prompt_buffer.set_text(
+                settings.codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+            )
 
         if self._ai_font_size_row:
             _, ai_font, _ = self.app.get_font_preferences()
@@ -12327,6 +12677,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         range_widgets = self._prompt_editors.get("range")
         extract_widgets = self._prompt_editors.get("extract")
         rag_widgets = self._prompt_editors.get("rag")
+        agent_widgets = self._prompt_editors.get("agent")
         if not isinstance(page_widgets, SummarizationPromptWidgets):
             return
         if not isinstance(range_widgets, SummarizationPromptWidgets):
@@ -12334,6 +12685,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if not isinstance(extract_widgets, SummarizationPromptWidgets):
             return
         if not isinstance(rag_widgets, RagPromptWidgets):
+            return
+        if not isinstance(agent_widgets, AgentSettingsWidgets):
             return
 
         current_settings = load_ai_settings()
@@ -12380,14 +12733,19 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_RAG_CHUNK_COUNT,
         )
         speech_rag_source_file = rag_widgets.speech_rag_source_row.get_text()
-        codex_agent_profile = rag_widgets.codex_agent_profile_row.get_text().strip()
-        codex_agent_bin = rag_widgets.codex_agent_bin_row.get_text().strip()
-        codex_agent_fireworks_key = rag_widgets.codex_agent_fireworks_key_row.get_text().strip()
+        codex_profile_index = int(agent_widgets.profile_dropdown.get_selected())
+        if 0 <= codex_profile_index < len(agent_widgets.profile_values):
+            codex_agent_profile = agent_widgets.profile_values[codex_profile_index]
+        else:
+            codex_agent_profile = DEFAULT_CODEX_AGENT_PROFILE
+        codex_agent_bin = agent_widgets.codex_agent_bin_row.get_text().strip()
+        codex_agent_fireworks_key = agent_widgets.codex_agent_fireworks_key_row.get_text().strip()
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
         extract_prompt = self._prompt_text(extract_widgets.prompt_buffer).strip()
         rag_prompt = self._prompt_text(rag_widgets.prompt_buffer).strip()
+        codex_agent_prompt_template = self._prompt_text(agent_widgets.prompt_buffer).strip()
         highlight_phrases = (
             _normalize_highlight_phrases(self._prompt_text(self._highlight_phrases_buffer))
             if self._highlight_phrases_buffer is not None
@@ -12472,6 +12830,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             codex_agent_profile=codex_agent_profile or DEFAULT_CODEX_AGENT_PROFILE,
             codex_agent_bin=codex_agent_bin or DEFAULT_CODEX_AGENT_BIN,
             codex_agent_fireworks_key=codex_agent_fireworks_key,
+            codex_agent_prompt_template=(
+                codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+            ),
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,

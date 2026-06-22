@@ -47,7 +47,9 @@ def test_focus_command_items_cover_shortcut_actions_once() -> None:
         "insert_page_citation_range",
         "toggle_ai_panel",
         "focus_rag_question",
+        "focus_agent_question",
         "submit_speech_rag_question",
+        "submit_speech_agent_question",
         "show_shortcuts",
     ]
 
