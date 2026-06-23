@@ -11807,7 +11807,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         view = Adw.ToolbarView()
         header = Adw.HeaderBar()
         header.add_css_class("flat")
-        header.set_title_widget(Gtk.Label(label="Settings", xalign=0))
+        header.set_title_widget(Adw.WindowTitle(title="Settings"))
         view.add_top_bar(header)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
