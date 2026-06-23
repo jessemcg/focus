@@ -3893,7 +3893,7 @@ class Focus(Adw.Application):
         self._image_preview_button: Gtk.Button | None = None
         self._image_preview_picture: Gtk.Picture | None = None
         self._grep_entry: Gtk.Entry | None = None
-        self._center_label: Gtk.Label | None = None
+        self._title_widget: Adw.WindowTitle | None = None
         self._split_view: Adw.NavigationSplitView | None = None
         self._toc_sidebar_revealer: Gtk.Revealer | None = None
         self._toc_sidebar_overlay: Gtk.Overlay | None = None
@@ -4196,7 +4196,7 @@ class Focus(Adw.Application):
             self._load_current()
             self._persist_active_view_state()
         else:
-            self._set_window_title("No pages found", "No pages found")
+            self._set_window_title("No pages found")
             self._set_text("No .txt pages found in:\n" + str(self.text_dir))
         if self.win:
             self.win.present()
@@ -4247,13 +4247,8 @@ class Focus(Adw.Application):
 
         header.pack_start(left_box)
 
-        center_wrapper = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        center_wrapper.set_hexpand(True)
-        center_wrapper.set_halign(Gtk.Align.CENTER)
-        center_wrapper.set_valign(Gtk.Align.CENTER)
-        self._center_label = Gtk.Label()
-        center_wrapper.append(self._center_label)
-        header.set_title_widget(center_wrapper)
+        self._title_widget = Adw.WindowTitle(title="Focus")
+        header.set_title_widget(self._title_widget)
 
         # Hamburger menu on the right
         menu_model = Gio.Menu()
@@ -5480,28 +5475,19 @@ class Focus(Adw.Application):
         state.summary_loaded_path = self._summary_loaded_path
         state.summary_active_source = self._summary_active_source
 
-    def _set_window_title(
-        self,
-        subtitle: str | None = None,
-        window_suffix: str | None = None,
-    ) -> None:
+    def _set_window_title(self, window_suffix: str | None = None) -> None:
         case_name = self._case_name
+        title_text = "Focus"
+        if case_name:
+            title_text = f"{title_text} - {case_name}"
         if self.win:
-            title = "Focus"
-            if case_name:
-                title = f"{title} - {case_name}"
+            win_title = title_text
             if window_suffix:
-                title = f"{title} - {window_suffix}"
-            self.win.set_title(title)
-        if self._center_label:
-            label_markup = "<b>Focus</b>"
-            if case_name:
-                safe_case = GLib.markup_escape_text(case_name)
-                label_markup = f"{label_markup} - {safe_case}"
-            if subtitle:
-                safe_subtitle = GLib.markup_escape_text(subtitle)
-                label_markup = f"{label_markup} - {safe_subtitle}"
-            self._center_label.set_markup(label_markup)
+                win_title = f"{win_title} - {window_suffix}"
+            self.win.set_title(win_title)
+        if self._title_widget:
+            self._title_widget.set_title(title_text)
+            self._title_widget.set_subtitle("")
 
     def _set_text(self, text: str, highlights: list[tuple[int, int]] | None = None) -> None:
         if not self.textview:
@@ -7978,10 +7964,10 @@ class Focus(Adw.Application):
         self._update_page_nav_buttons()
         self._update_grep_hit_navigation()
         if not self.pages:
-            self._set_window_title("No pages found", "No pages found")
+            self._set_window_title("No pages found")
             return
         page = self.pages[self.current_index]
-        self._set_window_title(None, f"Page {page:04d}")
+        self._set_window_title(f"Page {page:04d}")
 
     def _read_page_text(self, page: int) -> tuple[str, str, list[int]]:
         if (
@@ -9242,7 +9228,7 @@ class Focus(Adw.Application):
             self._load_current()
             self._persist_active_view_state()
         else:
-            self._set_window_title("No pages found", "No pages found")
+            self._set_window_title("No pages found")
             self._set_text("No .txt pages found in:\n" + str(self.text_dir))
 
     def _on_scroll(self, ctrl: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:

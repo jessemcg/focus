@@ -10,7 +10,6 @@ Focus is a Libadwaita GTK4 app for browsing court transcript text files with fas
 - Page jump (Ctrl+E), transcript citation-page jump, gap-tolerant grep (Ctrl+F), and TOC sidebar for navigation
 - Grep matches render in red and navigate hit-by-hit while keeping one transcript page visible
 - Toggle image view for page scans (Ctrl+I) when images are available
-- Dual view buttons to keep two independent browsing states side by side
 - AI panel with page/range summaries, RAG Q&A, and a summary-file viewer
 - Markdown-style formatting for `*italic*`, `**bold**`, and `#`/`##`/`###` headings in transcript and summary text
 
