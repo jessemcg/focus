@@ -3272,6 +3272,19 @@ button.focus-minute-order-active:active {
   box-shadow: none;
 }
 
+button.focus-minute-order-return-active,
+button.focus-minute-order-return-active:hover,
+button.focus-minute-order-return-active:active {
+  background-color: __SEARCH_CHIP_COLOR__;
+  color: #1f2937;
+  background-image: none;
+  box-shadow: none;
+}
+
+button.focus-minute-order-return-active image {
+  color: #1f2937;
+}
+
 button.focus-filter-chip,
 button.focus-filter-chip:hover,
 button.focus-filter-chip:active {
@@ -6127,6 +6140,11 @@ class Focus(Adw.Application):
             "label.focus-search-chip { "
             f"background-color: {search_chip_color}; "
             "}"
+            "button.focus-minute-order-return-active, "
+            "button.focus-minute-order-return-active:hover, "
+            "button.focus-minute-order-return-active:active { "
+            f"background-color: {search_chip_color}; "
+            "}"
         ).encode()
         try:
             self._color_provider.load_from_data(css)
@@ -6459,9 +6477,11 @@ class Focus(Adw.Application):
             )
             self._minute_order_button.set_sensitive(True)
             self._minute_order_button.add_css_class("focus-minute-order-active")
+            self._minute_order_button.add_css_class("focus-minute-order-return-active")
             return
 
         target = self._current_minute_order_boundary()
+        self._minute_order_button.remove_css_class("focus-minute-order-return-active")
         self._minute_order_button.set_child(
             self._build_header_icon("text-x-generic-symbolic", "document-open-symbolic")
         )
