@@ -3253,14 +3253,14 @@ button.focus-ai-view-active image {
 button.focus-citation-range-active,
 button.focus-citation-range-active:hover,
 button.focus-citation-range-active:active {
-  background-color: alpha(@window_fg_color, 0.08);
-  color: @window_fg_color;
+  background-color: __SEARCH_CHIP_COLOR__;
+  color: #1f2937;
   background-image: none;
   box-shadow: none;
 }
 
 button.focus-citation-range-active image {
-  color: @window_fg_color;
+  color: #1f2937;
 }
 
 button.focus-minute-order-active,
@@ -6140,6 +6140,9 @@ class Focus(Adw.Application):
             "label.focus-search-chip { "
             f"background-color: {search_chip_color}; "
             "}"
+            "button.focus-citation-range-active, "
+            "button.focus-citation-range-active:hover, "
+            "button.focus-citation-range-active:active, "
             "button.focus-minute-order-return-active, "
             "button.focus-minute-order-return-active:hover, "
             "button.focus-minute-order-return-active:active { "
