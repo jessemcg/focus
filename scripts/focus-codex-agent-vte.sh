@@ -14,7 +14,12 @@ fi
 
 workspace_parent="$cache_root/focus-agent-workspaces"
 mkdir -p "$workspace_parent"
-workspace="$(mktemp -d "$workspace_parent/workspace.XXXXXX")"
+if [[ -n "${FOCUS_AGENT_WORKSPACE:-}" ]]; then
+  workspace="$FOCUS_AGENT_WORKSPACE"
+  mkdir -p "$workspace"
+else
+  workspace="$(mktemp -d "$workspace_parent/workspace.XXXXXX")"
+fi
 
 cleanup() {
   rm -rf "$workspace"

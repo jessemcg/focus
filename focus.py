@@ -803,6 +803,9 @@ AI_VIEW_EXTRACT = "extract"
 AI_VIEW_QA = "qa"
 AI_VIEW_AGENT_QA = "agent-qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
+AGENT_SUBVIEW_ANSWER = "answer"
+AGENT_SUBVIEW_SESSION = "session"
+CODEX_SESSION_LOG_GLOB = "*/*/*/rollout-*.jsonl"
 
 
 def _model_looks_kimi(model_id: str) -> bool:
@@ -3770,6 +3773,97 @@ def append_page_citation_to_selected_text(
     return f"{stripped_text} {citation}"
 
 
+def _codex_text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") not in {"output_text", "text"}:
+            continue
+        text = item.get("text")
+        if isinstance(text, str):
+            parts.append(text)
+    return "".join(parts).strip()
+
+
+def extract_latest_codex_final_answer_from_jsonl(path: Path) -> str:
+    latest = ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("type") == "event_msg":
+            event = payload.get("payload")
+            if isinstance(event, dict) and event.get("type") == "task_complete":
+                text = event.get("last_agent_message")
+                if isinstance(text, str) and text.strip():
+                    latest = text.strip()
+            continue
+        if not isinstance(payload, dict) or payload.get("type") != "response_item":
+            continue
+        item = payload.get("payload")
+        if not isinstance(item, dict):
+            continue
+        if (
+            item.get("type") != "message"
+            or item.get("role") != "assistant"
+            or item.get("phase") != "final_answer"
+        ):
+            continue
+        text = _codex_text_from_content(item.get("content"))
+        if text:
+            latest = text
+    return latest
+
+
+def codex_session_log_matches_cwd(path: Path, cwd: Path) -> bool:
+    wanted = str(cwd)
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict) or payload.get("type") != "session_meta":
+                    continue
+                meta = payload.get("payload")
+                return isinstance(meta, dict) and meta.get("cwd") == wanted
+    except OSError:
+        return False
+    return False
+
+
+def find_latest_codex_session_log_for_cwd(sessions_root: Path, cwd: Path) -> Path | None:
+    if not sessions_root.is_dir():
+        return None
+    try:
+        candidates = sorted(
+            sessions_root.glob(CODEX_SESSION_LOG_GLOB),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    for candidate in candidates:
+        if candidate.is_file() and codex_session_log_matches_cwd(candidate, cwd):
+            return candidate
+    return None
+
+
 def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:
     if not text:
         return
@@ -4072,6 +4166,17 @@ class Focus(Adw.Application):
         self._rag_question_entry: Gtk.Entry | None = None
         self._rag_filter_chip: Gtk.Button | None = None
         self._agent_question_entry: Gtk.Entry | None = None
+        self._agent_subview_host: Gtk.Box | None = None
+        self._agent_subview_name = AGENT_SUBVIEW_SESSION
+        self._agent_answer_scroller: Gtk.ScrolledWindow | None = None
+        self._agent_session_widget: Gtk.Widget | None = None
+        self._agent_answer_button: Gtk.ToggleButton | None = None
+        self._agent_session_button: Gtk.ToggleButton | None = None
+        self._agent_subview_toggle_guard = False
+        self._agent_answer_poll_id: int | None = None
+        self._agent_workspace_path: Path | None = None
+        self._agent_session_log_path: Path | None = None
+        self._agent_last_answer_text = ""
         self._agent_terminal: Any | None = None
         self._agent_terminal_pid: int | None = None
         self._agent_terminal_active = False
@@ -4658,7 +4763,34 @@ class Focus(Adw.Application):
         self._agent_question_entry.set_placeholder_text("Agent question")
         self._agent_question_entry.connect("activate", self._on_agent_question_activate)
         agent_controls.append(self._agent_question_entry)
+
+        agent_subview_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        agent_subview_strip.add_css_class("focus-pill-group")
+        agent_subview_strip.set_valign(Gtk.Align.CENTER)
+
+        self._agent_answer_button = self._build_agent_subview_button(
+            "Answer",
+            AGENT_SUBVIEW_ANSWER,
+            "Show the latest linked Agent final answer",
+        )
+        agent_subview_strip.append(self._agent_answer_button)
+
+        self._agent_session_button = self._build_agent_subview_button(
+            "Session",
+            AGENT_SUBVIEW_SESSION,
+            "Show the embedded Agent terminal session",
+        )
+        agent_subview_strip.append(self._agent_session_button)
+        agent_controls.append(agent_subview_strip)
         agent_view.append(agent_controls)
+
+        self._agent_subview_host = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._agent_subview_host.set_hexpand(True)
+        self._agent_subview_host.set_vexpand(True)
+
+        agent_answer_scroller = self._build_ai_output_view(AI_VIEW_AGENT_QA)
+        self._agent_answer_scroller = agent_answer_scroller
+        self._agent_subview_host.append(agent_answer_scroller)
 
         if Vte is not None:
             agent_terminal_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -4679,7 +4811,8 @@ class Focus(Adw.Application):
             agent_terminal.add_controller(terminal_key_controller)
             agent_terminal.connect("child-exited", self._on_agent_terminal_child_exited)
             agent_terminal_frame.append(agent_terminal)
-            agent_view.append(agent_terminal_frame)
+            self._agent_session_widget = agent_terminal_frame
+            self._agent_subview_host.append(agent_terminal_frame)
             self._agent_terminal = agent_terminal
         else:
             agent_missing = Gtk.Label(
@@ -4692,7 +4825,11 @@ class Focus(Adw.Application):
             agent_missing.set_wrap(True)
             agent_missing.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
             agent_missing.add_css_class("dim-label")
-            agent_view.append(agent_missing)
+            self._agent_session_widget = agent_missing
+            self._agent_subview_host.append(agent_missing)
+
+        agent_view.append(self._agent_subview_host)
+        self._set_agent_subview(AGENT_SUBVIEW_SESSION)
 
         rag_audit_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rag_audit_view.set_hexpand(True)
@@ -5243,10 +5380,13 @@ class Focus(Adw.Application):
         if active_view == AI_VIEW_FILE:
             return self._summary_scroller, bool(self._summary_raw.strip())
         if active_view == AI_VIEW_AGENT_QA:
-            return None, False
+            if self._agent_subview_name != AGENT_SUBVIEW_ANSWER:
+                return None, False
         output_state = self._ai_outputs.get(active_view or "")
         if output_state is None:
             return None, False
+        if active_view == AI_VIEW_AGENT_QA:
+            return output_state.scroller, True
         return output_state.scroller, bool(output_state.raw.strip())
 
     def _embedded_ai_output_min_height(self, max_height: int) -> int:
@@ -5401,6 +5541,7 @@ class Focus(Adw.Application):
     def _reset_view_states(self) -> None:
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
+        self._stop_agent_answer_polling()
         self._view_state = FocusViewState()
         self._current_view_state().sidebar_visible = self._toc_sidebar_visible
         self._current_view_state().ai_panel_visible = bool(
@@ -5415,6 +5556,8 @@ class Focus(Adw.Application):
         for ai_state in self._ai_outputs.values():
             ai_state.raw = ""
             self._apply_ai_output_links("", ai_state)
+        self._agent_workspace_path = None
+        self._agent_last_answer_text = ""
         self._set_rag_filter_chip(None)
         self._sync_show_image_action()
 
@@ -6313,6 +6456,69 @@ class Focus(Adw.Application):
         button.connect("toggled", self._on_summary_mode_button_toggled, source)
         self._summary_source_buttons[source] = button
         return button
+
+    def _build_agent_subview_button(
+        self,
+        label: str,
+        subview_name: str,
+        tooltip: str,
+    ) -> Gtk.ToggleButton:
+        button = Gtk.ToggleButton(label=label)
+        button.add_css_class("flat")
+        button.add_css_class("no-bold")
+        button.add_css_class("focus-pill-segment")
+        button.set_valign(Gtk.Align.CENTER)
+        button.set_tooltip_text(tooltip)
+        button.connect("toggled", self._on_agent_subview_button_toggled, subview_name)
+        return button
+
+    def _set_agent_subview(self, subview_name: str) -> None:
+        target = (
+            subview_name
+            if subview_name in {AGENT_SUBVIEW_ANSWER, AGENT_SUBVIEW_SESSION}
+            else AGENT_SUBVIEW_SESSION
+        )
+        self._agent_subview_name = target
+        if self._agent_answer_scroller:
+            self._agent_answer_scroller.set_visible(target == AGENT_SUBVIEW_ANSWER)
+            if target == AGENT_SUBVIEW_ANSWER:
+                self._agent_answer_scroller.set_min_content_height(
+                    EMBEDDED_AI_OUTPUT_MIN_HEIGHT
+                )
+                self._agent_answer_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
+        if self._agent_session_widget:
+            self._agent_session_widget.set_visible(target == AGENT_SUBVIEW_SESSION)
+        self._agent_subview_toggle_guard = True
+        try:
+            for name, button in (
+                (AGENT_SUBVIEW_ANSWER, self._agent_answer_button),
+                (AGENT_SUBVIEW_SESSION, self._agent_session_button),
+            ):
+                if not button:
+                    continue
+                active = name == target
+                button.set_active(active)
+                if active:
+                    button.add_css_class("focus-ai-view-active")
+                else:
+                    button.remove_css_class("focus-ai-view-active")
+        finally:
+            self._agent_subview_toggle_guard = False
+        if self._ai_panel_revealer and self._ai_panel_revealer.get_reveal_child():
+            self._update_embedded_ai_panel_height(force=True)
+
+    def _on_agent_subview_button_toggled(
+        self,
+        button: Gtk.ToggleButton,
+        subview_name: str,
+    ) -> None:
+        if self._agent_subview_toggle_guard:
+            return
+        if not button.get_active():
+            if self._agent_subview_name == subview_name:
+                self._set_agent_subview(subview_name)
+            return
+        self._set_agent_subview(subview_name)
 
     def _profile_dropdown_labels(
         self,
@@ -9513,6 +9719,8 @@ class Focus(Adw.Application):
         return self._get_buffer_selection(self.textview.get_buffer())
 
     def _get_ai_panel_selection(self) -> str:
+        if self._ai_active_view == AI_VIEW_AGENT_QA:
+            return self._get_agent_panel_selection()
         buffer = None
         if self._ai_active_view == AI_VIEW_FILE:
             buffer = self._summary_buffer
@@ -9521,6 +9729,20 @@ class Focus(Adw.Application):
             if state:
                 buffer = state.buffer
         return self._get_buffer_selection(buffer)
+
+    def _get_agent_panel_selection(self) -> str:
+        if (
+            self._agent_subview_name == AGENT_SUBVIEW_SESSION
+            and Vte is not None
+            and self._agent_terminal is not None
+        ):
+            try:
+                selected = self._agent_terminal.get_text_selected(Vte.Format.TEXT)
+            except Exception:
+                selected = None
+            return (selected or "").strip()
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        return self._get_buffer_selection(state.buffer if state else None)
 
     def _get_buffer_selection(self, buffer: Gtk.TextBuffer | None) -> str:
         if not buffer:
@@ -9908,6 +10130,66 @@ class Focus(Adw.Application):
             return str(venv_python)
         return sys.executable or "python3"
 
+    def _codex_home(self) -> Path:
+        return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
+
+    def _codex_sessions_root(self) -> Path:
+        return self._codex_home() / "sessions"
+
+    def _create_agent_workspace(self) -> Path:
+        cache_root = Path(
+            os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")
+        ).expanduser()
+        parent = cache_root / "focus-agent-workspaces"
+        parent.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="workspace.", dir=parent))
+
+    def _clear_agent_answer(self) -> None:
+        self._agent_last_answer_text = ""
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        if state:
+            state.raw = ""
+            self._apply_ai_output_links("", state)
+        self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = ""
+
+    def _stop_agent_answer_polling(self) -> None:
+        if self._agent_answer_poll_id is not None:
+            GLib.source_remove(self._agent_answer_poll_id)
+            self._agent_answer_poll_id = None
+        self._agent_session_log_path = None
+
+    def _start_agent_answer_polling(self) -> None:
+        self._stop_agent_answer_polling()
+        if self._agent_workspace_path is None:
+            return
+        self._agent_answer_poll_id = GLib.timeout_add(1200, self._poll_agent_answer)
+        self._poll_agent_answer()
+
+    def _poll_agent_answer(self) -> bool:
+        workspace = self._agent_workspace_path
+        if workspace is None:
+            self._agent_answer_poll_id = None
+            return False
+        if self._agent_session_log_path is None:
+            self._agent_session_log_path = find_latest_codex_session_log_for_cwd(
+                self._codex_sessions_root(),
+                workspace,
+            )
+        if self._agent_session_log_path is not None:
+            answer = extract_latest_codex_final_answer_from_jsonl(self._agent_session_log_path)
+            if answer and answer != self._agent_last_answer_text:
+                self._agent_last_answer_text = answer
+                state = self._get_ai_output_state(AI_VIEW_AGENT_QA)
+                state.raw = answer
+                self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = answer
+                self._apply_ai_output_links(answer, state)
+                self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
+                self._update_ai_status("Agent final answer mirrored.", spinning=False)
+        keep_polling = self._agent_terminal_active
+        if not keep_polling:
+            self._agent_answer_poll_id = None
+        return keep_polling
+
     def _compose_agent_prompt(self, question: str) -> str:
         layout = self._record_layout
         current_page = self._current_page_number()
@@ -9981,6 +10263,9 @@ class Focus(Adw.Application):
             self._ai_transient_toast("Enter a question to launch the Agent.")
             return
         self._stop_agent_terminal()
+        self._stop_agent_answer_polling()
+        self._clear_agent_answer()
+        self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._ai_settings = load_ai_settings()
         self._current_view_state().agent_question_text = question
         prompt_path = self._write_agent_prompt_file(self._compose_agent_prompt(question))
@@ -10004,11 +10289,20 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Record Agent helper not found: {helper}")
             return
 
+        try:
+            workspace = self._create_agent_workspace()
+        except OSError as exc:
+            self._ai_transient_toast(f"Unable to create Agent workspace: {exc}")
+            return
+        self._agent_workspace_path = workspace
+        self._agent_session_log_path = None
+
         env = os.environ.copy()
         env.update(
             {
                 "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
                 "FOCUS_AGENT_CASE_ROOT": str(self._record_layout.root),
+                "FOCUS_AGENT_WORKSPACE": str(workspace),
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
                 "FOCUS_CONFIG_FILE": str(CONFIG_FILE),
@@ -10046,6 +10340,8 @@ class Focus(Adw.Application):
         self._agent_terminal_closing = False
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
+        self._set_agent_subview(AGENT_SUBVIEW_SESSION)
+        self._start_agent_answer_polling()
         self._update_ai_status(f"Started embedded Agent with profile {profile}.", spinning=False)
         terminal.grab_focus()
 
@@ -10059,6 +10355,10 @@ class Focus(Adw.Application):
         if error is not None:
             self._agent_terminal_active = False
             self._agent_terminal_pid = None
+            if self._agent_answer_poll_id is not None:
+                GLib.source_remove(self._agent_answer_poll_id)
+                self._agent_answer_poll_id = None
+            self._poll_agent_answer()
             self._ai_transient_toast(f"Unable to start embedded Agent: {error.message}")
             return
         self._agent_terminal_pid = int(pid)
@@ -10072,6 +10372,10 @@ class Focus(Adw.Application):
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
         self._agent_terminal_closing = False
+        if self._agent_answer_poll_id is not None:
+            GLib.source_remove(self._agent_answer_poll_id)
+            self._agent_answer_poll_id = None
+        self._poll_agent_answer()
         message = "Embedded Agent closed." if closing else "Embedded Agent session ended."
         self._update_ai_status(message, spinning=False)
 
