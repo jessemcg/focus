@@ -854,7 +854,6 @@ class Focus(Adw.Application):
             agent_terminal_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             agent_terminal_frame.set_hexpand(True)
             agent_terminal_frame.set_vexpand(True)
-            agent_terminal_frame.set_size_request(-1, 260)
             agent_terminal_frame.add_css_class("focus-agent-terminal-frame")
             agent_terminal_frame.set_overflow(Gtk.Overflow.HIDDEN)
 
@@ -1444,7 +1443,7 @@ class Focus(Adw.Application):
         if output_state is None:
             return None, False
         if active_view == AI_VIEW_AGENT_QA:
-            return output_state.scroller, True
+            return output_state.scroller, bool(output_state.raw.strip())
         return output_state.scroller, bool(output_state.raw.strip())
 
     def _embedded_ai_output_min_height(self, max_height: int) -> int:
@@ -2530,6 +2529,22 @@ class Focus(Adw.Application):
         button.connect("toggled", self._on_agent_subview_button_toggled, subview_name)
         return button
 
+    def _agent_session_has_content(self) -> bool:
+        return bool(self._agent_terminal_active or Vte is None)
+
+    def _sync_agent_session_widget_visibility(self) -> None:
+        if not self._agent_session_widget:
+            return
+        show_session = (
+            self._agent_subview_name == AGENT_SUBVIEW_SESSION
+            and self._agent_session_has_content()
+        )
+        self._agent_session_widget.set_visible(show_session)
+        if show_session and self._agent_terminal_active:
+            self._agent_session_widget.set_size_request(-1, 260)
+        else:
+            self._agent_session_widget.set_size_request(-1, -1)
+
     def _set_agent_subview(self, subview_name: str) -> None:
         target = (
             subview_name
@@ -2544,8 +2559,7 @@ class Focus(Adw.Application):
                     EMBEDDED_AI_OUTPUT_MIN_HEIGHT
                 )
                 self._agent_answer_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
-        if self._agent_session_widget:
-            self._agent_session_widget.set_visible(target == AGENT_SUBVIEW_SESSION)
+        self._sync_agent_session_widget_visibility()
         self._agent_subview_toggle_guard = True
         try:
             for name, button in (
@@ -6209,6 +6223,7 @@ class Focus(Adw.Application):
             state.raw = ""
             self._apply_ai_output_links("", state)
         self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = ""
+        self._queue_embedded_ai_panel_height_update()
 
     def _stop_agent_answer_polling(self) -> None:
         if self._agent_answer_poll_id is not None:
@@ -6243,6 +6258,7 @@ class Focus(Adw.Application):
                 self._apply_ai_output_links(answer, state)
                 self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
                 self._update_ai_status("Agent final answer mirrored.", spinning=False)
+                self._queue_embedded_ai_panel_height_update()
         keep_polling = self._agent_terminal_active
         if not keep_polling:
             self._agent_answer_poll_id = None
@@ -6417,6 +6433,8 @@ class Focus(Adw.Application):
                 GLib.source_remove(self._agent_answer_poll_id)
                 self._agent_answer_poll_id = None
             self._poll_agent_answer()
+            self._sync_agent_session_widget_visibility()
+            self._queue_embedded_ai_panel_height_update()
             self._ai_transient_toast(f"Unable to start embedded Agent: {error.message}")
             return
         self._agent_terminal_pid = int(pid)
@@ -6434,6 +6452,8 @@ class Focus(Adw.Application):
             GLib.source_remove(self._agent_answer_poll_id)
             self._agent_answer_poll_id = None
         self._poll_agent_answer()
+        self._sync_agent_session_widget_visibility()
+        self._queue_embedded_ai_panel_height_update()
         message = "Embedded Agent closed." if closing else "Embedded Agent session ended."
         self._update_ai_status(message, spinning=False)
 
@@ -6472,6 +6492,8 @@ class Focus(Adw.Application):
                 pass
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
+        self._sync_agent_session_widget_visibility()
+        self._queue_embedded_ai_panel_height_update()
 
     def _on_rag_profile_retry_clicked(
         self,
