@@ -1,6 +1,6 @@
 from datetime import date
 
-from focus import DEFAULT_EXTRACT_PROMPT, compose_extract_information_prompt
+from focus.core import DEFAULT_EXTRACT_PROMPT, compose_extract_information_prompt
 
 
 def test_compose_extract_prompt_includes_current_date() -> None:

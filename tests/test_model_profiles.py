@@ -1,7 +1,7 @@
 import json
 
-import focus
-from focus import (
+import focus.core as focus
+from focus.core import (
     CONFIG_KEY_API_KEY,
     CONFIG_KEY_API_URL,
     CONFIG_KEY_CODEX_AGENT_BIN,

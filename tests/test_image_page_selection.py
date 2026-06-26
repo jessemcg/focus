@@ -1,4 +1,4 @@
-from focus import parse_image_page_selection
+from focus.core import parse_image_page_selection
 
 
 def test_parse_single_page() -> None:

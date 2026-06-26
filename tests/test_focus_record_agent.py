@@ -7,11 +7,11 @@ from types import SimpleNamespace
 from pathlib import Path
 
 
-HELPER = Path(__file__).resolve().parents[1] / "scripts" / "focus_record_agent.py"
+HELPER = Path(__file__).resolve().parents[1] / "focus" / "agent_helper.py"
 
 
 def _load_helper_module():
-    spec = importlib.util.spec_from_file_location("focus_record_agent_for_tests", HELPER)
+    spec = importlib.util.spec_from_file_location("focus_agent_helper_for_tests", HELPER)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)

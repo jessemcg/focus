@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from focus import (
-    Focus,
+from focus.app import Focus
+from focus.core import (
     HEARING_SUMMARY_CANDIDATES,
     HEARING_SUMMARY_MANIFEST_KEYS,
 )

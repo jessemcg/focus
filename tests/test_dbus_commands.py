@@ -1,6 +1,6 @@
 import shlex
 
-from focus import (
+from focus.core import (
     ACTION_OBJECT_PATH,
     APPLICATION_ID,
     _action_command,

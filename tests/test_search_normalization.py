@@ -1,4 +1,4 @@
-from focus import normalize_text_for_search, normalize_text_for_search_with_map
+from focus.core import normalize_text_for_search, normalize_text_for_search_with_map
 
 
 def test_normalize_text_for_search_standardizes_search_punctuation() -> None:

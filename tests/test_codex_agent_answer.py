@@ -1,7 +1,7 @@
 import json
 import os
 
-from focus import (
+from focus.core import (
     codex_session_log_matches_cwd,
     extract_latest_codex_final_answer_from_jsonl,
     find_latest_codex_session_log_for_cwd,

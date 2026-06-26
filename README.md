@@ -31,7 +31,17 @@ uv sync
 
 ## Run
 ```bash
-uv run python focus.py
+uv run focus
+```
+
+To open a specific record root:
+```bash
+uv run focus /path/to/case_bundle
+```
+
+To point Focus at the currently selected MCGLAW case bundle:
+```bash
+uv run focus refresh-current-case
 ```
 
 ## Test
@@ -69,7 +79,7 @@ case_root/
 ```
 
 ## Configuration
-Settings are stored in `config.json` next to `focus.py`. Key fields include:
+Settings are stored in the project-root `config.json`. Key fields include:
 - `input_dir`: root folder for transcripts
 - `font_size_pt`, `ai_font_size_pt`
 - `highlight_phrases`: newline-separated phrases to highlight
@@ -80,10 +90,16 @@ Settings are stored in `config.json` next to `focus.py`. Key fields include:
 - RAG embeddings: `voyage_api_key`, `voyage_model`
 - Summary file viewer: `summary_file`, `summary_read_positions`
 
-Defaults are defined in `focus.py` if a key is missing.
+Defaults are defined in the package modules if a key is missing.
 
 ## Project structure
-- `focus.py`: application entry point and core UI/logic
+- `focus/`: Python package for the app and helper CLIs
+- `focus/app.py`: Libadwaita GTK application class and main document/AI workflow
+- `focus/core.py`: shared constants, dataclasses, config helpers, record parsing, search, citation, rendering, RAG, and agent utilities
+- `focus/cli.py`: `focus` console command, including app launch and current-case refresh
+- `focus/current_case.py`: currently selected case to Focus `config.json` integration
+- `focus/agent_helper.py`: read-only record helper used by the embedded Codex Agent
+- `focus/ui/`: secondary windows, including settings and D-Bus commands
 - `config.json`: local settings (do not commit secrets)
 - `legacy_versions/`: historical backups (do not edit)
 - `prompts/`: prompt history and change notes

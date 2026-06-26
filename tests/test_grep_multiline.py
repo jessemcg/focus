@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from focus import (
-    Focus,
+from focus.app import Focus
+from focus.core import (
     MAX_BREAKS,
     TranscriptPageIndex,
     TranscriptPageLabel,

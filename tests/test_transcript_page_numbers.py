@@ -1,6 +1,6 @@
 import json
 
-from focus import (
+from focus.core import (
     RecordBoundary,
     TranscriptPageLabel,
     TranscriptPageIndex,

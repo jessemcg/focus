@@ -1,6 +1,6 @@
 import json
 
-from focus import (
+from focus.core import (
     TranscriptPageIndex,
     load_transcript_page_index,
     validate_sum_page_fields,
