@@ -436,11 +436,14 @@ RECORD_FONT_FAMILY_OPTIONS: tuple[tuple[str, str], ...] = (
         '"TeX Gyre Schola", "New Century Schoolbook", '
         '"Century Schoolbook L", "URW Schoolbook L", serif',
     ),
+    (
+        "Century Schoolbook",
+        '"Century Schoolbook", "New Century Schoolbook", '
+        '"Century Schoolbook L", "URW Schoolbook L", "TeX Gyre Schola", serif',
+    ),
 )
 DEFAULT_RECORD_FONT_FAMILY_NAME = RECORD_FONT_FAMILY_OPTIONS[0][0]
-LEGACY_RECORD_FONT_FAMILY_ALIASES = {
-    "Century Schoolbook": "TeX Gyre Schola",
-}
+LEGACY_RECORD_FONT_FAMILY_ALIASES: dict[str, str] = {}
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
