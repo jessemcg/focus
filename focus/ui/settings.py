@@ -24,9 +24,7 @@ class RagPromptWidgets:
 
 @dataclass
 class AgentSettingsWidgets:
-    profile_dropdown: Gtk.DropDown
-    profile_values: list[str]
-    codex_agent_bin_row: Adw.EntryRow
+    codex_agent_command_row: Adw.EntryRow
     codex_agent_fireworks_key_row: Adw.EntryRow
     prompt_buffer: Gtk.TextBuffer
 
@@ -352,36 +350,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         dropdown.set_selected(self._profile_dropdown_selected_index(settings, task_key))
         dropdown.set_hexpand(False)
         return dropdown
-
-    def _codex_profile_options(self, selected_profile: str) -> list[CodexProfileOption]:
-        options = discover_fireworks_codex_profiles()
-        selected = selected_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
-        if selected and not any(option.profile == selected for option in options):
-            options.insert(0, CodexProfileOption(selected, "", CODEX_CONFIG_DIR / f"{selected}.config.toml"))
-        if not options:
-            options.append(
-                CodexProfileOption(
-                    DEFAULT_CODEX_AGENT_PROFILE,
-                    "",
-                    CODEX_CONFIG_DIR / f"{DEFAULT_CODEX_AGENT_PROFILE}.config.toml",
-                )
-            )
-        return options
-
-    def _build_codex_profile_dropdown(
-        self,
-        settings: AiSettings,
-    ) -> tuple[Gtk.DropDown, list[str]]:
-        options = self._codex_profile_options(settings.codex_agent_profile)
-        values = [option.profile for option in options]
-        dropdown = Gtk.DropDown(model=Gtk.StringList.new([option.display_name() for option in options]))
-        selected_profile = settings.codex_agent_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
-        if selected_profile in values:
-            dropdown.set_selected(values.index(selected_profile))
-        else:
-            dropdown.set_selected(0)
-        dropdown.set_hexpand(False)
-        return dropdown, values
 
     def _build_model_profiles_page(self, _key: str, title: str) -> Gtk.Widget:
         page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -729,19 +697,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         launch_group.set_hexpand(True)
         page_box.append(launch_group)
 
-        profile_row = Adw.ActionRow(
-            title="Fireworks Profile",
-            subtitle="Profiles are read from ~/.codex/*.config.toml.",
-        )
-        profile_row.set_activatable(False)
-        profile_dropdown, profile_values = self._build_codex_profile_dropdown(settings)
-        profile_row.add_suffix(profile_dropdown)
-        profile_row.set_activatable_widget(profile_dropdown)
-        launch_group.add(profile_row)
-
-        codex_agent_bin_row = Adw.EntryRow(title="Codex executable")
-        codex_agent_bin_row.set_hexpand(True)
-        launch_group.add(codex_agent_bin_row)
+        codex_agent_command_row = Adw.EntryRow(title="Codex command")
+        codex_agent_command_row.set_hexpand(True)
+        launch_group.add(codex_agent_command_row)
 
         codex_agent_fireworks_key_row = self._build_password_row("Codex Fireworks API Key")
         launch_group.add(codex_agent_fireworks_key_row)
@@ -763,9 +721,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page.set_child(page_box)
 
         self._prompt_editors[key] = AgentSettingsWidgets(
-            profile_dropdown=profile_dropdown,
-            profile_values=profile_values,
-            codex_agent_bin_row=codex_agent_bin_row,
+            codex_agent_command_row=codex_agent_command_row,
             codex_agent_fireworks_key_row=codex_agent_fireworks_key_row,
             prompt_buffer=buffer,
         )
@@ -873,11 +829,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
         if isinstance(agent_widgets, AgentSettingsWidgets):
-            profile_dropdown, profile_values = self._build_codex_profile_dropdown(settings)
-            agent_widgets.profile_values[:] = profile_values
-            agent_widgets.profile_dropdown.set_model(profile_dropdown.get_model())
-            agent_widgets.profile_dropdown.set_selected(profile_dropdown.get_selected())
-            agent_widgets.codex_agent_bin_row.set_text(settings.codex_agent_bin)
+            agent_widgets.codex_agent_command_row.set_text(settings.codex_agent_command)
             agent_widgets.codex_agent_fireworks_key_row.set_text(settings.codex_agent_fireworks_key)
             agent_widgets.prompt_buffer.set_text(
                 settings.codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
@@ -991,12 +943,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_RAG_CHUNK_COUNT,
         )
         speech_rag_source_file = rag_widgets.speech_rag_source_row.get_text()
-        codex_profile_index = int(agent_widgets.profile_dropdown.get_selected())
-        if 0 <= codex_profile_index < len(agent_widgets.profile_values):
-            codex_agent_profile = agent_widgets.profile_values[codex_profile_index]
-        else:
-            codex_agent_profile = DEFAULT_CODEX_AGENT_PROFILE
-        codex_agent_bin = agent_widgets.codex_agent_bin_row.get_text().strip()
+        codex_agent_command = agent_widgets.codex_agent_command_row.get_text().strip()
         codex_agent_fireworks_key = agent_widgets.codex_agent_fireworks_key_row.get_text().strip()
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
@@ -1085,8 +1032,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_deep_disable_reasoning=current_settings.rag_deep_disable_reasoning,
             rag_chunk_count=rag_chunk_count,
             speech_rag_source_file=speech_rag_source_file,
-            codex_agent_profile=codex_agent_profile or DEFAULT_CODEX_AGENT_PROFILE,
-            codex_agent_bin=codex_agent_bin or DEFAULT_CODEX_AGENT_BIN,
+            codex_agent_command=codex_agent_command or DEFAULT_CODEX_AGENT_COMMAND,
             codex_agent_fireworks_key=codex_agent_fireworks_key,
             codex_agent_prompt_template=(
                 codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
@@ -1113,6 +1059,4 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._set_status("Saved. Add RAG API URL, embedding provider credentials, and RAG fields to enable questions.")
         else:
             self._set_status("Saved. Add required fields to enable summaries.")
-
-
 

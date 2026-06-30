@@ -4,10 +4,9 @@ import focus.core as focus
 from focus.core import (
     CONFIG_KEY_API_KEY,
     CONFIG_KEY_API_URL,
-    CONFIG_KEY_CODEX_AGENT_BIN,
+    CONFIG_KEY_CODEX_AGENT_COMMAND,
     CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY,
     CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE,
-    CONFIG_KEY_CODEX_AGENT_PROFILE,
     CONFIG_KEY_MODEL_ID,
     CONFIG_KEY_MODEL_PROFILES,
     CONFIG_KEY_PAGE_API_KEY,
@@ -167,6 +166,7 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     settings.model_profiles[0] = profile
     settings.task_profile_defaults[TASK_PROFILE_PAGE] = "profile1"
     settings.codex_agent_fireworks_key = "fw-test-key"
+    settings.codex_agent_command = "codex --profile fireconnect"
     settings.codex_agent_prompt_template = "Agent prompt: {question}"
 
     save_ai_settings(settings)
@@ -177,8 +177,7 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     assert saved[CONFIG_KEY_API_URL] == "https://profile.example"
     assert saved[CONFIG_KEY_MODEL_ID] == "profile-model"
     assert saved[CONFIG_KEY_API_KEY] == "profile-key"
-    assert saved[CONFIG_KEY_CODEX_AGENT_PROFILE] == focus.DEFAULT_CODEX_AGENT_PROFILE
-    assert saved[CONFIG_KEY_CODEX_AGENT_BIN] == focus.DEFAULT_CODEX_AGENT_BIN
+    assert saved[CONFIG_KEY_CODEX_AGENT_COMMAND] == "codex --profile fireconnect"
     assert saved[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] == "fw-test-key"
     assert saved[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] == "Agent prompt: {question}"
     assert saved[CONFIG_KEY_PAGE_API_URL] == "https://profile.example"
@@ -201,6 +200,24 @@ def test_load_ai_settings_reads_codex_agent_prompt_template(tmp_path, monkeypatc
     settings = load_ai_settings()
 
     assert settings.codex_agent_prompt_template == "Custom agent prompt for {question}"
+
+
+def test_load_ai_settings_builds_codex_agent_command_from_legacy_profile(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "codex_agent_bin": "codex",
+                "codex_agent_profile": "fireworks-kimi-k2p6",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
+
+    settings = load_ai_settings()
+
+    assert settings.codex_agent_command == "codex --profile fireconnect"
 
 
 def test_load_ai_settings_upgrades_legacy_default_agent_prompt(tmp_path, monkeypatch) -> None:

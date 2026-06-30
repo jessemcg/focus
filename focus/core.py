@@ -121,6 +121,7 @@ CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
 CONFIG_KEY_CODEX_AGENT_PROFILE = "codex_agent_profile"
 CONFIG_KEY_CODEX_AGENT_BIN = "codex_agent_bin"
+CONFIG_KEY_CODEX_AGENT_COMMAND = "codex_agent_command"
 CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY = "codex_agent_fireworks_key"
 CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE = "codex_agent_prompt_template"
 CONFIG_KEY_MODEL_PROFILES = "model_profiles"
@@ -172,8 +173,9 @@ RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX = "## Record Excerpt"
 RAG_PROVIDER_VOYAGE = "voyage"
 RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
-DEFAULT_CODEX_AGENT_PROFILE = "fireworks"
 DEFAULT_CODEX_AGENT_BIN = "codex"
+DEFAULT_CODEX_AGENT_PROFILE = "fireconnect"
+DEFAULT_CODEX_AGENT_COMMAND = "codex --profile fireconnect"
 CODEX_CONFIG_DIR = Path.home() / ".codex"
 FOCUS_RECORD_AGENT_HELPER = PROJECT_DIR / "focus" / "agent_helper.py"
 CODEX_CITATION_COMBINATION_RULE = (
@@ -2177,8 +2179,7 @@ class AiSettings:
     search_chip_color: str
     model_profiles: list[ModelProfile] = field(default_factory=list)
     task_profile_defaults: dict[str, str | None] = field(default_factory=dict)
-    codex_agent_profile: str = DEFAULT_CODEX_AGENT_PROFILE
-    codex_agent_bin: str = DEFAULT_CODEX_AGENT_BIN
+    codex_agent_command: str = DEFAULT_CODEX_AGENT_COMMAND
     codex_agent_fireworks_key: str = ""
     codex_agent_prompt_template: str = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
 
@@ -2485,6 +2486,29 @@ def _sanitize_task_profile_defaults(raw: Any) -> dict[str, str | None]:
     return defaults
 
 
+def _normalize_codex_agent_profile(profile: str | None) -> str:
+    candidate = (profile or "").strip()
+    if not candidate:
+        return DEFAULT_CODEX_AGENT_PROFILE
+    if candidate == "fireworks" or candidate.startswith("fireworks-"):
+        return DEFAULT_CODEX_AGENT_PROFILE
+    return candidate
+
+
+def _codex_agent_command_from_config(config: dict[str, Any]) -> str:
+    command = str(config.get(CONFIG_KEY_CODEX_AGENT_COMMAND, "") or "").strip()
+    if command:
+        return command
+    profile = _normalize_codex_agent_profile(
+        str(config.get(CONFIG_KEY_CODEX_AGENT_PROFILE, DEFAULT_CODEX_AGENT_PROFILE) or "")
+    )
+    codex_bin = str(config.get(CONFIG_KEY_CODEX_AGENT_BIN, DEFAULT_CODEX_AGENT_BIN) or "").strip()
+    codex_bin = codex_bin or DEFAULT_CODEX_AGENT_BIN
+    if profile:
+        return f"{shlex.quote(codex_bin)} --profile {shlex.quote(profile)}"
+    return codex_bin
+
+
 @dataclass(frozen=True)
 class CodexProfileOption:
     profile: str
@@ -2691,14 +2715,7 @@ def load_ai_settings() -> AiSettings:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     speech_rag_source_file = str(config.get(CONFIG_KEY_SPEECH_RAG_SOURCE_FILE, "") or "")
-    codex_agent_profile = str(
-        config.get(CONFIG_KEY_CODEX_AGENT_PROFILE, DEFAULT_CODEX_AGENT_PROFILE)
-        or DEFAULT_CODEX_AGENT_PROFILE
-    ).strip()
-    codex_agent_bin = str(
-        config.get(CONFIG_KEY_CODEX_AGENT_BIN, DEFAULT_CODEX_AGENT_BIN)
-        or DEFAULT_CODEX_AGENT_BIN
-    ).strip()
+    codex_agent_command = _codex_agent_command_from_config(config)
     codex_agent_fireworks_key = str(
         config.get(CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY, "")
         or ""
@@ -2768,8 +2785,7 @@ def load_ai_settings() -> AiSettings:
         search_chip_color=search_chip_color,
         model_profiles=model_profiles,
         task_profile_defaults=task_profile_defaults,
-        codex_agent_profile=codex_agent_profile or DEFAULT_CODEX_AGENT_PROFILE,
-        codex_agent_bin=codex_agent_bin or DEFAULT_CODEX_AGENT_BIN,
+        codex_agent_command=codex_agent_command or DEFAULT_CODEX_AGENT_COMMAND,
         codex_agent_fireworks_key=codex_agent_fireworks_key,
         codex_agent_prompt_template=codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE,
     )
@@ -2840,12 +2856,11 @@ def save_ai_settings(settings: AiSettings) -> None:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     config[CONFIG_KEY_SPEECH_RAG_SOURCE_FILE] = settings.speech_rag_source_file
-    config[CONFIG_KEY_CODEX_AGENT_PROFILE] = (
-        settings.codex_agent_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
+    config[CONFIG_KEY_CODEX_AGENT_COMMAND] = (
+        settings.codex_agent_command.strip() or DEFAULT_CODEX_AGENT_COMMAND
     )
-    config[CONFIG_KEY_CODEX_AGENT_BIN] = (
-        settings.codex_agent_bin.strip() or DEFAULT_CODEX_AGENT_BIN
-    )
+    config.pop(CONFIG_KEY_CODEX_AGENT_PROFILE, None)
+    config.pop(CONFIG_KEY_CODEX_AGENT_BIN, None)
     config[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] = settings.codex_agent_fireworks_key.strip()
     config[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] = (
         settings.codex_agent_prompt_template.strip() or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE

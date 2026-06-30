@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
 import sys
 
 from .core import *  # noqa: F401,F403
@@ -6352,8 +6353,15 @@ class Focus(Adw.Application):
             return
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
-        codex_bin = settings.codex_agent_bin.strip() or DEFAULT_CODEX_AGENT_BIN
-        profile = settings.codex_agent_profile.strip() or DEFAULT_CODEX_AGENT_PROFILE
+        codex_command = settings.codex_agent_command.strip() or DEFAULT_CODEX_AGENT_COMMAND
+        try:
+            codex_argv = shlex.split(codex_command)
+        except ValueError as exc:
+            self._ai_transient_toast(f"Invalid Codex command: {exc}")
+            return
+        if not codex_argv:
+            self._ai_transient_toast("Codex command is empty.")
+            return
         wrapper = PROJECT_DIR / "scripts" / "focus-codex-agent-vte.sh"
         if not wrapper.is_file():
             self._ai_transient_toast(f"Codex Agent wrapper not found: {wrapper}")
@@ -6380,10 +6388,11 @@ class Focus(Adw.Application):
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
                 "FOCUS_CONFIG_FILE": str(CONFIG_FILE),
-                "CODEX_BIN": codex_bin,
-                "CODEX_PROFILE": profile,
+                "CODEX_COMMAND_ARGC": str(len(codex_argv)),
             }
         )
+        for index, arg in enumerate(codex_argv):
+            env[f"CODEX_COMMAND_ARG_{index}"] = arg
         fireworks_key = settings.codex_agent_fireworks_key.strip()
         if fireworks_key:
             env["FIREWORKS_KEY"] = fireworks_key
@@ -6416,7 +6425,7 @@ class Focus(Adw.Application):
         self._set_ai_view(AI_VIEW_AGENT_QA)
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._start_agent_answer_polling()
-        self._update_ai_status(f"Started embedded Agent with profile {profile}.", spinning=False)
+        self._update_ai_status(f"Started embedded Agent with command: {codex_command}", spinning=False)
         terminal.grab_focus()
 
     def _on_agent_terminal_spawned(
