@@ -3040,10 +3040,14 @@ listbox.focus-sidebar-listview row {
 }
 
 .focus-sidebar-row.focus-sidebar-category-active .focus-sidebar-title,
-.focus-sidebar-row.focus-sidebar-category-active:hover .focus-sidebar-title,
+.focus-sidebar-row.focus-sidebar-category-active:hover .focus-sidebar-title {
+  color: alpha(@window_fg_color, 0.74);
+}
+
 .focus-sidebar-row.focus-sidebar-bookmark-active .focus-sidebar-title,
 .focus-sidebar-row.focus-sidebar-bookmark-active:hover .focus-sidebar-title {
-  color: alpha(@window_fg_color, 0.82);
+  color: alpha(@window_fg_color, 0.86);
+  font-weight: 600;
 }
 
 .focus-sidebar-row.focus-sidebar-bookmark {
@@ -3054,11 +3058,6 @@ listbox.focus-sidebar-listview row {
   min-width: 2px;
   border-radius: 999px;
   background-color: transparent;
-}
-
-.focus-sidebar-row.focus-sidebar-category-active .focus-sidebar-active-marker,
-.focus-sidebar-row.focus-sidebar-bookmark-active .focus-sidebar-active-marker {
-  background-color: @accent_color;
 }
 
 .focus-sidebar-expand-button {
