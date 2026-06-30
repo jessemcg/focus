@@ -915,6 +915,25 @@ class Focus(Adw.Application):
         menu_icon = self._choose_icon("view-more-symbolic", "open-menu-symbolic")
         summary_row.insert(self._summary_progress_label, -1)
 
+        self._summary_bookmark_action_button = Gtk.Button(label="Set Bookmark")
+        self._summary_bookmark_action_button.add_css_class("flat")
+        self._summary_bookmark_action_button.add_css_class("no-bold")
+        self._summary_bookmark_action_button.set_valign(Gtk.Align.CENTER)
+        self._summary_bookmark_action_button.set_tooltip_text("Bookmark the top visible summary line")
+        self._summary_bookmark_action_button.connect("clicked", self._on_summary_bookmark_clicked)
+        summary_row.insert(self._summary_bookmark_action_button, -1)
+
+        self._summary_return_bookmark_action_button = Gtk.Button(label="Return")
+        self._summary_return_bookmark_action_button.add_css_class("flat")
+        self._summary_return_bookmark_action_button.add_css_class("no-bold")
+        self._summary_return_bookmark_action_button.set_valign(Gtk.Align.CENTER)
+        self._summary_return_bookmark_action_button.set_tooltip_text("Jump to the saved summary bookmark")
+        self._summary_return_bookmark_action_button.connect(
+            "clicked",
+            self._on_summary_return_bookmark_clicked,
+        )
+        summary_row.insert(self._summary_return_bookmark_action_button, -1)
+
         self._summary_search_entry = Gtk.SearchEntry()
         self._summary_search_entry.set_placeholder_text("Search summary")
         self._summary_search_entry.set_width_chars(24)
@@ -988,23 +1007,6 @@ class Focus(Adw.Application):
 
         ai_overflow_box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
-        self._summary_bookmark_action_button = Gtk.Button(label="Bookmark selected line")
-        self._summary_bookmark_action_button.add_css_class("flat")
-        self._summary_bookmark_action_button.set_halign(Gtk.Align.FILL)
-        self._summary_bookmark_action_button.set_tooltip_text("Bookmark selected summary line")
-        self._summary_bookmark_action_button.connect("clicked", self._on_summary_bookmark_clicked)
-        ai_overflow_box.append(self._summary_bookmark_action_button)
-
-        self._summary_return_bookmark_action_button = Gtk.Button(label="Return to bookmark")
-        self._summary_return_bookmark_action_button.add_css_class("flat")
-        self._summary_return_bookmark_action_button.set_halign(Gtk.Align.FILL)
-        self._summary_return_bookmark_action_button.set_tooltip_text("Jump to the saved bookmark line")
-        self._summary_return_bookmark_action_button.connect(
-            "clicked",
-            self._on_summary_return_bookmark_clicked,
-        )
-        ai_overflow_box.append(self._summary_return_bookmark_action_button)
-
         self._summary_print_action_button = Gtk.Button(label="Print summary")
         self._summary_print_action_button.add_css_class("flat")
         self._summary_print_action_button.set_halign(Gtk.Align.FILL)
@@ -1038,8 +1040,6 @@ class Focus(Adw.Application):
         self._summary_view.set_cursor_visible(False)
         self._summary_view.connect("map", self._on_summary_view_mapped)
         self._summary_buffer = self._summary_view.get_buffer()
-        if self._summary_buffer:
-            self._summary_buffer.connect("mark-set", self._on_summary_selection_changed)
         self._install_summary_link_controllers()
 
         self._summary_scroller = Gtk.ScrolledWindow()
@@ -3654,21 +3654,25 @@ class Focus(Adw.Application):
             return
         self._scroll_summary_to_line(line_num)
 
-    def _selected_summary_line_number(self) -> int | None:
-        if not self._summary_buffer:
+    def _top_visible_summary_line_number(self) -> int | None:
+        if not self._summary_view or not self._summary_buffer:
             return None
-        selection = self._summary_buffer.get_selection_bounds()
-        if not selection:
+        if self._summary_buffer.get_char_count() <= 0:
             return None
-        if len(selection) == 3:
-            has_selection, start_iter, end_iter = selection
-            if not has_selection:
-                return None
+        try:
+            visible_rect = self._summary_view.get_visible_rect()
+            line_result = self._summary_view.get_line_at_y(visible_rect.y)
+        except (AttributeError, TypeError, ValueError):
+            return 1
+        if isinstance(line_result, tuple):
+            if not line_result:
+                return 1
+            iter_ = line_result[0]
         else:
-            start_iter, end_iter = selection
-        start_line = start_iter.get_line()
-        end_line = end_iter.get_line()
-        return min(start_line, end_line) + 1
+            iter_ = line_result
+        if iter_ is None:
+            return 1
+        return iter_.get_line() + 1
 
     def _summary_has_saved_bookmark(self) -> bool:
         if not self._summary_loaded_path:
@@ -3677,11 +3681,10 @@ class Focus(Adw.Application):
 
     def _refresh_summary_actions_state(self) -> None:
         has_summary = bool(self._summary_loaded_path)
-        has_selection = self._selected_summary_line_number() is not None
         has_bookmark = self._summary_has_saved_bookmark()
         has_printable_text = bool(self._summary_raw.strip())
         if self._summary_bookmark_action_button:
-            self._summary_bookmark_action_button.set_sensitive(has_summary and has_selection)
+            self._summary_bookmark_action_button.set_sensitive(has_summary and has_printable_text)
         if self._summary_return_bookmark_action_button:
             self._summary_return_bookmark_action_button.set_sensitive(has_summary and has_bookmark)
         if self._summary_print_action_button:
@@ -3691,21 +3694,13 @@ class Focus(Adw.Application):
         if self._ai_overflow_popover:
             self._ai_overflow_popover.popdown()
 
-    def _on_summary_selection_changed(
-        self,
-        _buffer: Gtk.TextBuffer,
-        _location: Gtk.TextIter,
-        _mark: Gtk.TextMark,
-    ) -> None:
-        self._refresh_summary_actions_state()
-
     def _on_summary_bookmark_clicked(self, _button: Gtk.Button) -> None:
         if not self._summary_loaded_path:
             self._ai_transient_toast("No summary file is loaded.")
             return
-        line_num = self._selected_summary_line_number()
+        line_num = self._top_visible_summary_line_number()
         if line_num is None:
-            self._ai_transient_toast("No bookmark saved. Select summary text first.")
+            self._ai_transient_toast("No summary text is available to bookmark.")
             return
         bookmarks_path = self._summary_bookmarks_path_for(self._summary_loaded_path)
         data = self._read_summary_bookmarks(bookmarks_path)
