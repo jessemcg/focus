@@ -26,6 +26,8 @@ class RagPromptWidgets:
 class AgentSettingsWidgets:
     codex_agent_command_row: Adw.EntryRow
     codex_agent_fireworks_key_row: Adw.EntryRow
+    codex_agent_permission_mode_row: Adw.ComboRow
+    codex_agent_permission_mode_values: list[str]
     prompt_buffer: Gtk.TextBuffer
 
 
@@ -704,6 +706,23 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         codex_agent_fireworks_key_row = self._build_password_row("Codex Fireworks API Key")
         launch_group.add(codex_agent_fireworks_key_row)
 
+        codex_agent_permission_mode_values = [
+            mode for mode, _label in CODEX_AGENT_PERMISSION_MODE_OPTIONS
+        ]
+        codex_agent_permission_mode_labels = [
+            label for _mode, label in CODEX_AGENT_PERMISSION_MODE_OPTIONS
+        ]
+        codex_agent_permission_mode_row = Adw.ComboRow(
+            title="Embedded Codex Permissions",
+            subtitle=(
+                "Full access lets Codex use normal user paths without sandbox approval prompts."
+            ),
+        )
+        codex_agent_permission_mode_row.set_model(
+            Gtk.StringList.new(codex_agent_permission_mode_labels)
+        )
+        launch_group.add(codex_agent_permission_mode_row)
+
         prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         prompt_section.set_hexpand(True)
         prompt_section.set_vexpand(True)
@@ -723,6 +742,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._prompt_editors[key] = AgentSettingsWidgets(
             codex_agent_command_row=codex_agent_command_row,
             codex_agent_fireworks_key_row=codex_agent_fireworks_key_row,
+            codex_agent_permission_mode_row=codex_agent_permission_mode_row,
+            codex_agent_permission_mode_values=codex_agent_permission_mode_values,
             prompt_buffer=buffer,
         )
         return page
@@ -831,6 +852,15 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if isinstance(agent_widgets, AgentSettingsWidgets):
             agent_widgets.codex_agent_command_row.set_text(settings.codex_agent_command)
             agent_widgets.codex_agent_fireworks_key_row.set_text(settings.codex_agent_fireworks_key)
+            permission_mode = normalize_codex_agent_permission_mode(
+                settings.codex_agent_permission_mode
+            )
+            if permission_mode in agent_widgets.codex_agent_permission_mode_values:
+                agent_widgets.codex_agent_permission_mode_row.set_selected(
+                    agent_widgets.codex_agent_permission_mode_values.index(permission_mode)
+                )
+            else:
+                agent_widgets.codex_agent_permission_mode_row.set_selected(0)
             agent_widgets.prompt_buffer.set_text(
                 settings.codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
             )
@@ -945,6 +975,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         speech_rag_source_file = rag_widgets.speech_rag_source_row.get_text()
         codex_agent_command = agent_widgets.codex_agent_command_row.get_text().strip()
         codex_agent_fireworks_key = agent_widgets.codex_agent_fireworks_key_row.get_text().strip()
+        permission_mode_index = int(agent_widgets.codex_agent_permission_mode_row.get_selected())
+        if 0 <= permission_mode_index < len(agent_widgets.codex_agent_permission_mode_values):
+            codex_agent_permission_mode = agent_widgets.codex_agent_permission_mode_values[
+                permission_mode_index
+            ]
+        else:
+            codex_agent_permission_mode = DEFAULT_CODEX_AGENT_PERMISSION_MODE
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
@@ -1037,6 +1074,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             codex_agent_prompt_template=(
                 codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
             ),
+            codex_agent_permission_mode=normalize_codex_agent_permission_mode(
+                codex_agent_permission_mode
+            ),
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
@@ -1059,4 +1099,3 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._set_status("Saved. Add RAG API URL, embedding provider credentials, and RAG fields to enable questions.")
         else:
             self._set_status("Saved. Add required fields to enable summaries.")
-

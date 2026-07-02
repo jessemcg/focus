@@ -124,6 +124,7 @@ CONFIG_KEY_CODEX_AGENT_BIN = "codex_agent_bin"
 CONFIG_KEY_CODEX_AGENT_COMMAND = "codex_agent_command"
 CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY = "codex_agent_fireworks_key"
 CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE = "codex_agent_prompt_template"
+CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE = "codex_agent_permission_mode"
 CONFIG_KEY_MODEL_PROFILES = "model_profiles"
 CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
@@ -176,6 +177,13 @@ DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
 DEFAULT_CODEX_AGENT_BIN = "codex"
 DEFAULT_CODEX_AGENT_PROFILE = "fireconnect"
 DEFAULT_CODEX_AGENT_COMMAND = "codex --profile fireconnect"
+CODEX_AGENT_PERMISSION_MODE_SANDBOXED = "sandboxed"
+CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS = "full_access"
+DEFAULT_CODEX_AGENT_PERMISSION_MODE = CODEX_AGENT_PERMISSION_MODE_SANDBOXED
+CODEX_AGENT_PERMISSION_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
+    (CODEX_AGENT_PERMISSION_MODE_SANDBOXED, "Sandboxed"),
+    (CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS, "Full access"),
+)
 CODEX_CONFIG_DIR = Path.home() / ".codex"
 FOCUS_RECORD_AGENT_HELPER = PROJECT_DIR / "focus" / "agent_helper.py"
 CODEX_CITATION_COMBINATION_RULE = (
@@ -2182,6 +2190,7 @@ class AiSettings:
     codex_agent_command: str = DEFAULT_CODEX_AGENT_COMMAND
     codex_agent_fireworks_key: str = ""
     codex_agent_prompt_template: str = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+    codex_agent_permission_mode: str = DEFAULT_CODEX_AGENT_PERMISSION_MODE
 
     def profile_by_key(self, profile_key: str | None) -> ModelProfile | None:
         normalized = (profile_key or "").strip()
@@ -2495,6 +2504,14 @@ def _normalize_codex_agent_profile(profile: str | None) -> str:
     return candidate
 
 
+def normalize_codex_agent_permission_mode(value: Any) -> str:
+    normalized = str(value or "").strip()
+    for mode, _label in CODEX_AGENT_PERMISSION_MODE_OPTIONS:
+        if normalized == mode:
+            return mode
+    return DEFAULT_CODEX_AGENT_PERMISSION_MODE
+
+
 def _codex_agent_command_from_config(config: dict[str, Any]) -> str:
     command = str(config.get(CONFIG_KEY_CODEX_AGENT_COMMAND, "") or "").strip()
     if command:
@@ -2726,6 +2743,9 @@ def load_ai_settings() -> AiSettings:
     ).strip()
     if codex_agent_prompt_template in LEGACY_CODEX_AGENT_PROMPT_TEMPLATES:
         codex_agent_prompt_template = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+    codex_agent_permission_mode = normalize_codex_agent_permission_mode(
+        config.get(CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE)
+    )
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
     grep_highlight_color = _coerce_color_value(
         config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
@@ -2788,6 +2808,7 @@ def load_ai_settings() -> AiSettings:
         codex_agent_command=codex_agent_command or DEFAULT_CODEX_AGENT_COMMAND,
         codex_agent_fireworks_key=codex_agent_fireworks_key,
         codex_agent_prompt_template=codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE,
+        codex_agent_permission_mode=codex_agent_permission_mode,
     )
 
 
@@ -2864,6 +2885,9 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] = settings.codex_agent_fireworks_key.strip()
     config[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] = (
         settings.codex_agent_prompt_template.strip() or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+    )
+    config[CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE] = normalize_codex_agent_permission_mode(
+        settings.codex_agent_permission_mode
     )
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(

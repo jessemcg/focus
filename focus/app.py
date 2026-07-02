@@ -6357,6 +6357,14 @@ class Focus(Adw.Application):
         if not codex_argv:
             self._ai_transient_toast("Codex command is empty.")
             return
+        permission_mode = normalize_codex_agent_permission_mode(
+            settings.codex_agent_permission_mode
+        )
+        codex_sandbox = "workspace-write"
+        codex_approval = ""
+        if permission_mode == CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS:
+            codex_sandbox = "danger-full-access"
+            codex_approval = "never"
         wrapper = PROJECT_DIR / "scripts" / "focus-codex-agent-vte.sh"
         if not wrapper.is_file():
             self._ai_transient_toast(f"Codex Agent wrapper not found: {wrapper}")
@@ -6383,6 +6391,8 @@ class Focus(Adw.Application):
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
                 "FOCUS_CONFIG_FILE": str(CONFIG_FILE),
+                "FOCUS_CODEX_AGENT_SANDBOX": codex_sandbox,
+                "FOCUS_CODEX_AGENT_APPROVAL": codex_approval,
                 "CODEX_COMMAND_ARGC": str(len(codex_argv)),
             }
         )

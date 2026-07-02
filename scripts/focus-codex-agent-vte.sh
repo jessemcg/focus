@@ -5,6 +5,8 @@ prompt_file="${FOCUS_AGENT_PROMPT_FILE:-}"
 case_root="${FOCUS_AGENT_CASE_ROOT:-$PWD}"
 codex_argc="${CODEX_COMMAND_ARGC:-0}"
 cache_root="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
+codex_sandbox="${FOCUS_CODEX_AGENT_SANDBOX:-workspace-write}"
+codex_approval="${FOCUS_CODEX_AGENT_APPROVAL:-}"
 codex_command=()
 
 if [[ "$codex_argc" =~ ^[0-9]+$ ]] && (( codex_argc > 0 )); then
@@ -50,11 +52,27 @@ if [[ -z "${codex_command[0]:-}" ]] || ! command -v "${codex_command[0]}" >/dev/
   exit 127
 fi
 
+case "$codex_sandbox" in
+  read-only|workspace-write|danger-full-access) ;;
+  *) codex_sandbox="workspace-write" ;;
+esac
+
+case "$codex_approval" in
+  ""|untrusted|on-request|on-failure|never) ;;
+  *) codex_approval="" ;;
+esac
+
+approval_args=()
+if [[ -n "$codex_approval" ]]; then
+  approval_args=(--ask-for-approval "$codex_approval")
+fi
+
 cd "$workspace"
 mkdir -p "$workspace/tmp"
 export TMPDIR="$workspace/tmp"
 prompt="$(cat "$prompt_file")"
 "${codex_command[@]}" \
   -C "$workspace" \
-  --sandbox workspace-write \
+  --sandbox "$codex_sandbox" \
+  "${approval_args[@]}" \
   "$prompt"

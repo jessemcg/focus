@@ -6,6 +6,7 @@ from focus.core import (
     CONFIG_KEY_API_URL,
     CONFIG_KEY_CODEX_AGENT_COMMAND,
     CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY,
+    CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE,
     CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE,
     CONFIG_KEY_MODEL_ID,
     CONFIG_KEY_MODEL_PROFILES,
@@ -168,6 +169,7 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     settings.codex_agent_fireworks_key = "fw-test-key"
     settings.codex_agent_command = "codex --profile fireconnect"
     settings.codex_agent_prompt_template = "Agent prompt: {question}"
+    settings.codex_agent_permission_mode = focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS
 
     save_ai_settings(settings)
     saved = focus._read_config()
@@ -180,6 +182,7 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     assert saved[CONFIG_KEY_CODEX_AGENT_COMMAND] == "codex --profile fireconnect"
     assert saved[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] == "fw-test-key"
     assert saved[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] == "Agent prompt: {question}"
+    assert saved[CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE] == focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS
     assert saved[CONFIG_KEY_PAGE_API_URL] == "https://profile.example"
     assert saved[CONFIG_KEY_PAGE_MODEL_ID] == "profile-model"
     assert saved[CONFIG_KEY_PAGE_API_KEY] == "profile-key"
@@ -200,6 +203,52 @@ def test_load_ai_settings_reads_codex_agent_prompt_template(tmp_path, monkeypatc
     settings = load_ai_settings()
 
     assert settings.codex_agent_prompt_template == "Custom agent prompt for {question}"
+
+
+def test_load_ai_settings_defaults_codex_agent_permission_mode(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
+
+    settings = load_ai_settings()
+
+    assert settings.codex_agent_permission_mode == focus.DEFAULT_CODEX_AGENT_PERMISSION_MODE
+
+
+def test_load_ai_settings_rejects_unknown_codex_agent_permission_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"codex_agent_permission_mode": "unsupported"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
+
+    settings = load_ai_settings()
+
+    assert settings.codex_agent_permission_mode == focus.DEFAULT_CODEX_AGENT_PERMISSION_MODE
+
+
+def test_load_ai_settings_reads_full_access_codex_agent_permission_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "codex_agent_permission_mode": focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
+
+    settings = load_ai_settings()
+
+    assert settings.codex_agent_permission_mode == focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS
 
 
 def test_load_ai_settings_builds_codex_agent_command_from_legacy_profile(tmp_path, monkeypatch) -> None:
