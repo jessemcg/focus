@@ -47,7 +47,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         super().__init__(application=app)
         self.app = app
 
-        self._status_label: Gtk.Label | None = None
+        self._toast_overlay: Adw.ToastOverlay | None = None
         self._record_font_size_row: Adw.SpinRow | None = None
         self._table_font_size_row: Adw.SpinRow | None = None
         self._ai_font_size_row: Adw.SpinRow | None = None
@@ -80,6 +80,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         header = Adw.HeaderBar()
         header.add_css_class("flat")
         header.set_title_widget(Adw.WindowTitle(title="Settings"))
+        save_btn = Gtk.Button(label="Save")
+        save_btn.add_css_class("suggested-action")
+        save_btn.add_css_class("flat")
+        save_btn.connect("clicked", self._on_save_clicked)
+        header.pack_end(save_btn)
         view.add_top_bar(header)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -88,10 +93,17 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         box.set_margin_start(18)
         box.set_margin_end(18)
 
-        display_group = Adw.PreferencesGroup(title="Display")
-        display_group.add_css_class("list-stack")
-        display_group.set_hexpand(True)
-        box.append(display_group)
+        appearance_group = Adw.PreferencesGroup()
+        appearance_group.add_css_class("list-stack")
+        appearance_group.set_hexpand(True)
+        box.append(appearance_group)
+
+        display_row = Adw.ExpanderRow(
+            title="Display",
+            subtitle="Fonts and text sizes",
+        )
+        display_row.set_expanded(False)
+        appearance_group.add(display_row)
 
         ai_font_adjustment = Gtk.Adjustment(
             value=self.app.get_font_preferences()[1],
@@ -105,7 +117,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             adjustment=ai_font_adjustment,
         )
         self._ai_font_size_row.set_digits(0)
-        display_group.add(self._ai_font_size_row)
+        display_row.add_row(self._ai_font_size_row)
 
         base_font_adjustment = Gtk.Adjustment(
             value=self.app.get_font_preferences()[0],
@@ -119,14 +131,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             adjustment=base_font_adjustment,
         )
         self._record_font_size_row.set_digits(0)
-        display_group.add(self._record_font_size_row)
+        display_row.add_row(self._record_font_size_row)
 
         self._record_font_family_values = [name for name, _css in RECORD_FONT_FAMILY_OPTIONS]
         self._record_font_family_row = Adw.ComboRow(title="Record Font (Non-Table)")
         self._record_font_family_row.set_model(
             Gtk.StringList.new(self._record_font_family_values)
         )
-        display_group.add(self._record_font_family_row)
+        display_row.add_row(self._record_font_family_row)
 
         table_font_adjustment = Gtk.Adjustment(
             value=self.app.get_font_preferences()[2],
@@ -140,36 +152,38 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             adjustment=table_font_adjustment,
         )
         self._table_font_size_row.set_digits(0)
-        display_group.add(self._table_font_size_row)
+        display_row.add_row(self._table_font_size_row)
 
-        highlight_group = Adw.PreferencesGroup(title="Highlights")
-        highlight_group.add_css_class("list-stack")
-        highlight_group.set_hexpand(True)
-        box.append(highlight_group)
+        highlight_row = Adw.ExpanderRow(
+            title="Highlights",
+            subtitle="Colors and phrases",
+        )
+        highlight_row.set_expanded(False)
+        appearance_group.add(highlight_row)
 
         grep_color_row, self._grep_highlight_color_control = self._build_color_row(
             "Grep Highlight Color",
             DEFAULT_MATCH_COLOR,
         )
-        highlight_group.add(grep_color_row)
+        highlight_row.add_row(grep_color_row)
 
         phrase_color_row, self._phrase_highlight_color_control = self._build_color_row(
             "Phrase Highlight Color",
             DEFAULT_HIGHLIGHT_COLOR,
         )
-        highlight_group.add(phrase_color_row)
+        highlight_row.add_row(phrase_color_row)
 
         summary_emphasis_row, self._summary_emphasis_color_control = self._build_color_row(
             "Summary Emphasis Color",
             DEFAULT_SUMMARY_EMPHASIS_COLOR,
         )
-        highlight_group.add(summary_emphasis_row)
+        highlight_row.add_row(summary_emphasis_row)
 
         search_chip_row, self._search_chip_color_control = self._build_color_row(
             "Search Chip Color",
             DEFAULT_SEARCH_CHIP_COLOR,
         )
-        highlight_group.add(search_chip_row)
+        highlight_row.add_row(search_chip_row)
 
         highlight_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         highlight_box.set_margin_top(6)
@@ -197,7 +211,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_view.set_right_margin(8)
         highlight_scroller.set_child(highlight_view)
         highlight_box.append(highlight_scroller)
-        highlight_group.add(highlight_box)
+        highlight_row.add_row(highlight_box)
         self._highlight_phrases_buffer = highlight_buffer
 
         split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
@@ -272,28 +286,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         scrolled.set_vexpand(True)
         scrolled.set_child(box)
 
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        content.append(scrolled)
-
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        buttons.set_margin_top(6)
-        buttons.set_margin_bottom(12)
-        buttons.set_margin_start(12)
-        buttons.set_margin_end(12)
-        buttons.set_halign(Gtk.Align.END)
-        save_btn = Gtk.Button(label="Save Settings")
-        save_btn.add_css_class("suggested-action")
-        save_btn.add_css_class("flat")
-        save_btn.connect("clicked", self._on_save_clicked)
-        buttons.append(save_btn)
-        content.append(buttons)
-
-        self._status_label = Gtk.Label(label="", xalign=0)
-        self._status_label.set_wrap(True)
-        self._status_label.add_css_class("dim-label")
-        content.append(self._status_label)
-
-        view.set_content(content)
+        self._toast_overlay = Adw.ToastOverlay()
+        self._toast_overlay.set_child(scrolled)
+        view.set_content(self._toast_overlay)
         self.set_content(view)
 
     def _build_password_row(self, title: str) -> Adw.EntryRow:
@@ -787,7 +782,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             file = dialog.open_finish(result)
         except GLib.Error as exc:
             if not exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
-                self._set_status(f"File selection failed: {exc.message}")
+                self._show_status_toast(f"File selection failed: {exc.message}")
         else:
             path_str = file.get_path() if file else None
             if path_str:
@@ -906,11 +901,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             settings.search_chip_color,
             DEFAULT_SEARCH_CHIP_COLOR,
         )
-        self._set_status("Loaded saved values.")
-
-    def _set_status(self, text: str) -> None:
-        if self._status_label:
-            self._status_label.set_text(text)
+    def _show_status_toast(self, text: str) -> None:
+        if not self._toast_overlay or not text:
+            return
+        toast = Adw.Toast.new(text)
+        toast.set_timeout(5)
+        self._toast_overlay.add_toast(toast)
 
     def _on_save_clicked(self, _btn: Gtk.Button) -> None:
         page_widgets = self._prompt_editors.get("page")
@@ -1094,8 +1090,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         self.app.on_ai_settings_saved(settings)
         if settings.is_configured() and settings.is_rag_ready():
-            self._set_status("Saved. Summaries and RAG questions are enabled.")
+            self._show_status_toast("Saved. Summaries and RAG questions are enabled.")
         elif settings.is_configured():
-            self._set_status("Saved. Add RAG API URL, embedding provider credentials, and RAG fields to enable questions.")
+            self._show_status_toast(
+                "Saved. Add RAG API URL, embedding provider credentials, and RAG fields "
+                "to enable questions."
+            )
         else:
-            self._set_status("Saved. Add required fields to enable summaries.")
+            self._show_status_toast("Saved. Add required fields to enable summaries.")
