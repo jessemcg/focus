@@ -604,7 +604,7 @@ class Focus(Adw.Application):
         ai_panel_root.set_hexpand(True)
         ai_panel_root.set_vexpand(False)
         ai_panel_root.set_margin_top(12)
-        ai_panel_root.set_margin_bottom(0)
+        ai_panel_root.set_margin_bottom(8)
         ai_panel_root.set_margin_start(12)
         ai_panel_root.set_margin_end(12)
         ai_panel_root.add_css_class("ai-output-frame")
@@ -615,9 +615,13 @@ class Focus(Adw.Application):
         ai_header.set_valign(Gtk.Align.CENTER)
         self._ai_panel_header = ai_header
 
+        ai_mode_cluster = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        ai_mode_cluster.set_valign(Gtk.Align.START)
+
         self._ai_spinner = Gtk.Spinner(spinning=False)
+        self._ai_spinner.set_valign(Gtk.Align.CENTER)
         self._ai_spinner.set_visible(False)
-        ai_header.append(self._ai_spinner)
+        ai_mode_cluster.append(self._ai_spinner)
 
         self._ai_view_stack = Adw.ViewStack()
         try:
@@ -639,7 +643,7 @@ class Focus(Adw.Application):
         ai_mode_strip.set_hexpand(False)
 
         qa_mode_button = self._build_ai_mode_button(
-            "Q & A",
+            "Q&A",
             AI_VIEW_QA,
             "Ask questions about the record",
         )
@@ -679,14 +683,14 @@ class Focus(Adw.Application):
             "Reports summary",
         )
         ai_mode_strip.append(self._reports_summary_button)
-        ai_header.append(ai_mode_strip)
+        ai_mode_cluster.append(ai_mode_strip)
+        ai_header.append(ai_mode_cluster)
 
         self._ai_controls_stack = Gtk.Stack()
         self._ai_controls_stack.set_hexpand(True)
         self._ai_controls_stack.set_hhomogeneous(False)
-        self._ai_controls_stack.set_vhomogeneous(True)
+        self._ai_controls_stack.set_vhomogeneous(False)
         self._ai_controls_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        self._ai_controls_stack.set_hexpand(True)
         ai_header.append(self._ai_controls_stack)
 
         ai_panel_root.append(ai_header)
@@ -796,6 +800,7 @@ class Focus(Adw.Application):
 
         self._rag_question_entry = Gtk.Entry()
         self._rag_question_entry.set_hexpand(True)
+        self._rag_question_entry.set_placeholder_text("Ask about the record")
         self._rag_question_entry.connect("activate", self._on_rag_question_activate)
         qa_controls.append(self._rag_question_entry)
 
@@ -946,7 +951,7 @@ class Focus(Adw.Application):
 
         ai_overflow_button = Gtk.MenuButton()
         ai_overflow_button.add_css_class("flat")
-        ai_overflow_button.set_valign(Gtk.Align.CENTER)
+        ai_overflow_button.set_valign(Gtk.Align.START)
         ai_overflow_button.set_tooltip_text("More case tools")
         ai_overflow_button.set_child(Gtk.Image.new_from_icon_name(menu_icon))
 
@@ -1071,7 +1076,7 @@ class Focus(Adw.Application):
 
         self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
         self._ai_view_stack.add_titled(extract_view, AI_VIEW_EXTRACT, "Extract")
-        self._ai_view_stack.add_titled(qa_view, AI_VIEW_QA, "Q & A")
+        self._ai_view_stack.add_titled(qa_view, AI_VIEW_QA, "Q&A")
         self._ai_view_stack.add_titled(agent_view, AI_VIEW_AGENT_QA, "Agent")
         self._ai_view_stack.add_titled(rag_audit_view, AI_VIEW_RAG_AUDIT, "RAG Audit")
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
@@ -1082,7 +1087,7 @@ class Focus(Adw.Application):
 
         ai_panel_root.append(self._ai_view_stack)
         self._attach_ai_panel_to_embedded_host()
-        main_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        main_root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         main_root.set_hexpand(True)
         main_root.set_vexpand(True)
         self._main_root = main_root
@@ -1093,7 +1098,7 @@ class Focus(Adw.Application):
         document_shell.set_vexpand(True)
         document_shell.set_margin_start(12)
         document_shell.set_margin_end(12)
-        document_shell.set_margin_top(5)
+        document_shell.set_margin_top(0)
 
         text_controls = Gtk.CenterBox()
         text_controls.set_hexpand(True)
