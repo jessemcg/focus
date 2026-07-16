@@ -3253,6 +3253,11 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
   font-weight: normal;
 }
 
+menubutton.no-bold > button,
+menubutton.no-bold > button label {
+  font-weight: normal;
+}
+
 .focus-toggle-icon {
   color: alpha(@window_fg_color, 0.62);
 }
@@ -3269,7 +3274,8 @@ button.focus-right-scroll-zone:active label.focus-right-scroll-label {
   color: alpha(@window_fg_color, 0.62);
 }
 
-box.focus-pill-group > button.focus-pill-segment {
+box.focus-pill-group > button.focus-pill-segment,
+box.focus-pill-group > menubutton.focus-pill-segment > button {
   min-width: 28px;
   min-height: 28px;
   padding: 4px 8px;
@@ -3290,6 +3296,15 @@ button.focus-ai-view-active:active {
 
 button.focus-ai-view-active image {
   color: @window_fg_color;
+}
+
+menubutton.focus-ai-view-active > button,
+menubutton.focus-ai-view-active > button:hover,
+menubutton.focus-ai-view-active > button:active {
+  background-color: alpha(@window_fg_color, 0.08);
+  color: @window_fg_color;
+  background-image: none;
+  box-shadow: none;
 }
 
 button.focus-citation-range-active,
