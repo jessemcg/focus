@@ -8,7 +8,7 @@ Focus
 Features
 - Displays one text file at a time from a configurable directory.
 - Mouse wheel scrolls within the current record; hold Ctrl and wheel to load the previous/next page.
-- Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the header.
+- Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the document toolbar.
 - Grep matches render in red and navigate hit-by-hit while one transcript page stays visible.
 - Ctrl+Shift+A opens case tools and focuses the RAG question box.
 - Ctrl+P prints the current page image.
@@ -2941,11 +2941,8 @@ IMAGE_ICON_OFF_CHOICES = (
     "image-x-generic-symbolic",
     "image-missing",
 )
-PAGE_CITATION_RANGE_IDLE_ICON_CHOICES = (
-    "insert-link-symbolic",
-    "format-justify-fill-symbolic",
-    "insert-text-symbolic",
-)
+
+
 @dataclass
 class TocBookmark:
     title: str
@@ -3304,7 +3301,8 @@ button.focus-citation-range-active:active {
   box-shadow: none;
 }
 
-button.focus-citation-range-active image {
+button.focus-citation-range-active image,
+button.focus-citation-range-active label {
   color: #1f2937;
 }
 
@@ -3343,7 +3341,7 @@ button.focus-filter-chip:active {
 
 label.focus-search-chip {
   border-radius: 10px;
-  padding: 4px 10px;
+  padding: 4px 8px;
   background-color: __SEARCH_CHIP_COLOR__;
   color: #1f2937;
 }
@@ -3725,7 +3723,7 @@ def format_grep_status_text(
     if total_hits <= 0:
         return ""
     current_index = min(max(current_match_index, 0), total_hits - 1)
-    return f"Search: hit {current_index + 1}/{total_hits}"
+    return f"{current_index + 1} / {total_hits}"
 
 
 def next_grep_match_index(

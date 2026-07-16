@@ -100,7 +100,18 @@ def test_grep_match_order_flattens_hits_across_matching_pages() -> None:
 def test_grep_status_text_reports_global_hit_position() -> None:
     match_order = [(41, 0), (41, 1), (55, 0)]
 
-    assert format_grep_status_text(match_order, 2) == "Search: hit 3/3"
+    assert format_grep_status_text(match_order, 2) == "3 / 3"
+
+
+def test_grep_status_text_clamps_out_of_range_positions() -> None:
+    match_order = [(41, 0), (55, 0), (60, 0)]
+
+    assert format_grep_status_text(match_order, -1) == "1 / 3"
+    assert format_grep_status_text(match_order, 99) == "3 / 3"
+
+
+def test_grep_status_text_is_empty_without_hits() -> None:
+    assert format_grep_status_text([], 0) == ""
 
 
 def test_next_grep_match_index_keeps_bounded_navigation_at_edges() -> None:

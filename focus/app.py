@@ -58,7 +58,8 @@ class Focus(Adw.Application):
         self._image_preview_rail: Gtk.Box | None = None
         self._image_preview_button: Gtk.Button | None = None
         self._image_preview_picture: Gtk.Picture | None = None
-        self._grep_entry: Gtk.Entry | None = None
+        self._grep_entry: Gtk.SearchEntry | None = None
+        self._grep_entry_sync_guard = False
         self._title_widget: Adw.WindowTitle | None = None
         self._split_view: Adw.NavigationSplitView | None = None
         self._toc_sidebar_revealer: Gtk.Revealer | None = None
@@ -87,15 +88,15 @@ class Focus(Adw.Application):
         self._page_number_entry: Gtk.Entry | None = None
         self._page_jump_popover: Gtk.Popover | None = None
         self._page_total_label: Gtk.Label | None = None
-        self._transcript_breakdown_button: Gtk.Button | None = None
+        self._show_transcript_breakdown_action: Gio.SimpleAction | None = None
         self._minute_order_button: Gtk.Button | None = None
         self._current_page_citation_button: Gtk.Button | None = None
         self._page_citation_range_button: Gtk.Button | None = None
-        self._page_citation_range_icon: Gtk.Image | None = None
         self._page_citation_range_start: TranscriptPageLabel | None = None
         self._grep_prev_hit_button: Gtk.Button | None = None
         self._grep_next_hit_button: Gtk.Button | None = None
         self._grep_hit_label: Gtk.Label | None = None
+        self._grep_highlighted_button: Gtk.Button | None = None
 
         self._grep_phrase_raw: str | None = None
         self._grep_regex: re.Pattern[str] | None = None
@@ -429,11 +430,20 @@ class Focus(Adw.Application):
 
         # Hamburger menu on the right
         menu_model = Gio.Menu()
-        menu_model.append("Print Images", "app.print_images")
-        menu_model.append("Input Directory", "app.choose_input")
-        menu_model.append("D-Bus Commands", "app.show_dbus_commands")
-        menu_model.append("Settings", "app.open_ai_settings")
-        menu_model.append("Keyboard Shortcuts", "app.show_shortcuts")
+        document_menu = Gio.Menu()
+        document_menu.append(
+            "Transcript Page Breakdown",
+            "app.show_transcript_breakdown",
+        )
+        document_menu.append("Print Images", "app.print_images")
+        document_menu.append("Input Directory", "app.choose_input")
+        menu_model.append_section(None, document_menu)
+
+        application_menu = Gio.Menu()
+        application_menu.append("D-Bus Commands", "app.show_dbus_commands")
+        application_menu.append("Settings", "app.open_ai_settings")
+        application_menu.append("Keyboard Shortcuts", "app.show_shortcuts")
+        menu_model.append_section(None, application_menu)
 
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu_button.add_css_class("flat")
@@ -457,6 +467,10 @@ class Focus(Adw.Application):
         self.textview.set_left_margin(16)
         self.textview.set_right_margin(16)
         self.textview.set_cursor_visible(False)
+        self.textview.get_buffer().connect(
+            "notify::has-selection",
+            self._on_search_selection_changed,
+        )
         self._apply_text_color(DEFAULT_TEXT_COLOR)
         self._install_textview_link_controllers()
 
@@ -873,6 +887,10 @@ class Focus(Adw.Application):
             terminal_key_controller.connect("key-pressed", self._on_agent_terminal_key_pressed)
             agent_terminal.add_controller(terminal_key_controller)
             agent_terminal.connect("child-exited", self._on_agent_terminal_child_exited)
+            agent_terminal.connect(
+                "selection-changed",
+                self._on_search_selection_changed,
+            )
             agent_terminal_frame.append(agent_terminal)
             self._agent_session_widget = agent_terminal_frame
             self._agent_subview_host.append(agent_terminal_frame)
@@ -1045,6 +1063,10 @@ class Focus(Adw.Application):
         self._summary_view.set_cursor_visible(False)
         self._summary_view.connect("map", self._on_summary_view_mapped)
         self._summary_buffer = self._summary_view.get_buffer()
+        self._summary_buffer.connect(
+            "notify::has-selection",
+            self._on_search_selection_changed,
+        )
         self._install_summary_link_controllers()
 
         self._summary_scroller = Gtk.ScrolledWindow()
@@ -1105,15 +1127,9 @@ class Focus(Adw.Application):
         text_controls.set_valign(Gtk.Align.CENTER)
         text_controls.set_halign(Gtk.Align.FILL)
 
-        paginator = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-
-        self._record_boundary_date_label = Gtk.Label(label="")
-        self._record_boundary_date_label.add_css_class("dim-label")
-        self._record_boundary_date_label.set_xalign(1.0)
-        self._record_boundary_date_label.set_valign(Gtk.Align.CENTER)
-        self._record_boundary_date_label.set_tooltip_text("Boundary date")
-        self._record_boundary_date_label.set_visible(False)
-        paginator.append(self._record_boundary_date_label)
+        page_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        page_controls.set_halign(Gtk.Align.START)
+        page_controls.set_valign(Gtk.Align.CENTER)
 
         self._page_number_entry = Gtk.Entry()
         self._page_number_entry.add_css_class("focus-page-number-entry")
@@ -1126,30 +1142,22 @@ class Focus(Adw.Application):
             "Type a record page, citation page, or file page and press Enter (Ctrl+E)"
         )
         self._page_number_entry.connect("activate", self._on_page_number_activate)
-        paginator.append(self._page_number_entry)
+        page_controls.append(self._page_number_entry)
 
         self._page_total_label = Gtk.Label(label="/ --")
         self._page_total_label.add_css_class("dim-label")
         self._page_total_label.set_xalign(0.0)
         self._page_total_label.set_valign(Gtk.Align.CENTER)
-        paginator.append(self._page_total_label)
+        page_controls.append(self._page_total_label)
 
-        self._transcript_breakdown_button = Gtk.Button()
-        self._transcript_breakdown_button.add_css_class("flat")
-        self._transcript_breakdown_button.set_valign(Gtk.Align.CENTER)
-        self._transcript_breakdown_button.set_child(
-            self._build_header_icon(
-                "dialog-information-symbolic",
-                "help-about-symbolic",
-                "help-browser-symbolic",
-            )
-        )
-        self._transcript_breakdown_button.set_tooltip_text("Show transcript page breakdown")
-        self._transcript_breakdown_button.connect(
-            "clicked", self._on_transcript_breakdown_clicked
-        )
-        paginator.append(self._transcript_breakdown_button)
-        self._refresh_transcript_breakdown_button()
+        self._record_boundary_date_label = Gtk.Label(label="")
+        self._record_boundary_date_label.add_css_class("dim-label")
+        self._record_boundary_date_label.set_xalign(0.0)
+        self._record_boundary_date_label.set_valign(Gtk.Align.CENTER)
+        self._record_boundary_date_label.set_margin_start(4)
+        self._record_boundary_date_label.set_tooltip_text("Boundary date")
+        self._record_boundary_date_label.set_visible(False)
+        page_controls.append(self._record_boundary_date_label)
 
         self._minute_order_button = Gtk.Button()
         self._minute_order_button.add_css_class("flat")
@@ -1159,34 +1167,41 @@ class Focus(Adw.Application):
         )
         self._minute_order_button.set_tooltip_text("Open the minute order for this RT page")
         self._minute_order_button.set_sensitive(False)
+        self._minute_order_button.set_visible(False)
         self._minute_order_button.connect("clicked", self._on_minute_order_clicked)
-        paginator.append(self._minute_order_button)
-
-        trailing_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        trailing_controls.set_valign(Gtk.Align.CENTER)
-        trailing_controls.set_halign(Gtk.Align.END)
-        trailing_controls.set_margin_start(4)
-        trailing_controls.append(paginator)
-
-        self._show_image_icon = Gtk.Image.new_from_icon_name(self._image_icon_name_off)
-        self._show_image_icon.add_css_class("focus-toggle-icon")
-        self._show_image_button = Gtk.ToggleButton()
-        self._show_image_button.set_child(self._show_image_icon)
-        self._show_image_button.add_css_class("flat")
-        self._show_image_button.set_valign(Gtk.Align.CENTER)
-        self._show_image_button.set_tooltip_text("Enable image view (Ctrl+I)")
-        self._show_image_button.connect("toggled", self._on_show_image_button_toggled)
+        page_controls.append(self._minute_order_button)
+        text_controls.set_start_widget(page_controls)
 
         grep_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        grep_controls.set_halign(Gtk.Align.CENTER)
         grep_controls.set_valign(Gtk.Align.CENTER)
 
-        self._grep_entry = Gtk.Entry()
+        self._grep_entry = Gtk.SearchEntry()
         self._grep_entry.set_width_chars(20)
         self._grep_entry.set_max_width_chars(30)
         self._grep_entry.set_hexpand(True)
         self._grep_entry.set_placeholder_text("Search record")
         self._grep_entry.connect("activate", self._on_grep_entry_activate)
+        self._grep_entry.connect("search-changed", self._on_grep_search_changed)
+        self._grep_entry.connect("stop-search", self._on_grep_stop_search)
         grep_controls.append(self._grep_entry)
+
+        self._grep_highlighted_button = Gtk.Button()
+        self._grep_highlighted_button.add_css_class("flat")
+        self._grep_highlighted_button.add_css_class("focus-subdued")
+        self._grep_highlighted_button.set_valign(Gtk.Align.CENTER)
+        self._grep_highlighted_button.set_tooltip_text("Search highlighted text")
+        self._grep_highlighted_button.set_child(
+            Gtk.Image.new_from_icon_name(
+                self._choose_icon("edit-find-symbolic", "system-search-symbolic", "edit-find")
+            )
+        )
+        self._grep_highlighted_button.set_visible(False)
+        self._grep_highlighted_button.connect(
+            "clicked",
+            self._on_grep_search_highlighted_clicked,
+        )
+        grep_controls.append(self._grep_highlighted_button)
 
         self._grep_hit_label = Gtk.Label(label="")
         self._grep_hit_label.add_css_class("focus-search-chip")
@@ -1202,6 +1217,7 @@ class Focus(Adw.Application):
         self._grep_prev_hit_button.set_child(
             Gtk.Image.new_from_icon_name(self._choose_icon("go-up-symbolic", "go-up"))
         )
+        self._grep_prev_hit_button.set_visible(False)
         self._grep_prev_hit_button.connect("clicked", self._on_grep_prev_hit_clicked)
         grep_controls.append(self._grep_prev_hit_button)
 
@@ -1212,62 +1228,56 @@ class Focus(Adw.Application):
         self._grep_next_hit_button.set_child(
             Gtk.Image.new_from_icon_name(self._choose_icon("go-down-symbolic", "go-down"))
         )
+        self._grep_next_hit_button.set_visible(False)
         self._grep_next_hit_button.connect("clicked", self._on_grep_next_hit_clicked)
         grep_controls.append(self._grep_next_hit_button)
+        text_controls.set_center_widget(grep_controls)
 
-        self._current_page_citation_button = Gtk.Button()
+        end_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        end_controls.set_halign(Gtk.Align.END)
+        end_controls.set_valign(Gtk.Align.CENTER)
+
+        self._current_page_citation_button = Gtk.Button(label="Cite")
         self._current_page_citation_button.add_css_class("flat")
+        self._current_page_citation_button.add_css_class("no-bold")
+        self._current_page_citation_button.add_css_class("focus-subdued")
         self._current_page_citation_button.set_valign(Gtk.Align.CENTER)
         self._current_page_citation_button.set_tooltip_text(
             "Insert current page citation in Prose (Ctrl+Alt+Shift+C)"
         )
         self._current_page_citation_button.set_sensitive(False)
-        self._current_page_citation_button.set_child(
-            Gtk.Image.new_from_icon_name(
-                self._choose_icon(
-                    "document-send-symbolic",
-                    "insert-text-symbolic",
-                    "edit-copy-symbolic",
-                    "mail-attachment-symbolic",
-                )
-            )
-        )
         self._current_page_citation_button.connect(
-            "clicked", self._on_current_page_citation_clicked
+            "clicked",
+            self._on_current_page_citation_clicked,
         )
-        grep_controls.append(self._current_page_citation_button)
+        end_controls.append(self._current_page_citation_button)
 
-        self._page_citation_range_button = Gtk.Button()
+        self._page_citation_range_button = Gtk.Button(label="Range")
         self._page_citation_range_button.add_css_class("flat")
+        self._page_citation_range_button.add_css_class("no-bold")
+        self._page_citation_range_button.add_css_class("focus-subdued")
         self._page_citation_range_button.set_valign(Gtk.Align.CENTER)
         self._page_citation_range_button.set_tooltip_text(
             "Set citation range start (Ctrl+Alt+C)"
         )
         self._page_citation_range_button.set_sensitive(False)
-        self._page_citation_range_icon = self._build_header_icon(
-            *PAGE_CITATION_RANGE_IDLE_ICON_CHOICES
-        )
-        self._page_citation_range_button.set_child(self._page_citation_range_icon)
         self._page_citation_range_button.connect(
-            "clicked", self._on_page_citation_range_clicked
+            "clicked",
+            self._on_page_citation_range_clicked,
         )
-        grep_controls.append(self._page_citation_range_button)
+        end_controls.append(self._page_citation_range_button)
 
-        grep_highlighted_button = Gtk.Button()
-        grep_highlighted_button.add_css_class("flat")
-        grep_highlighted_button.add_css_class("focus-subdued")
-        grep_highlighted_button.set_valign(Gtk.Align.CENTER)
-        grep_highlighted_button.set_tooltip_text("Search highlighted text")
-        grep_highlighted_button.set_child(
-            Gtk.Image.new_from_icon_name(
-                self._choose_icon("edit-find-symbolic", "system-search-symbolic", "edit-find")
-            )
-        )
-        grep_highlighted_button.connect("clicked", self._on_grep_search_highlighted_clicked)
-        grep_controls.append(grep_highlighted_button)
-        trailing_controls.append(grep_controls)
-        trailing_controls.append(self._show_image_button)
-        text_controls.set_end_widget(trailing_controls)
+        self._show_image_icon = Gtk.Image.new_from_icon_name(self._image_icon_name_off)
+        self._show_image_icon.add_css_class("focus-toggle-icon")
+        self._show_image_button = Gtk.ToggleButton()
+        self._show_image_button.set_child(self._show_image_icon)
+        self._show_image_button.add_css_class("flat")
+        self._show_image_button.set_valign(Gtk.Align.CENTER)
+        self._show_image_button.set_tooltip_text("Enable image view (Ctrl+I)")
+        self._show_image_button.connect("toggled", self._on_show_image_button_toggled)
+        end_controls.append(self._show_image_button)
+        text_controls.set_end_widget(end_controls)
+        self._refresh_search_highlighted_button()
 
         document_shell.append(text_controls)
         self._update_show_image_toggle_button()
@@ -1605,6 +1615,9 @@ class Focus(Adw.Application):
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
         self._stop_agent_answer_polling()
+        self._page_citation_range_start = None
+        self._sync_citation_buttons()
+        self._set_grep_entry_text("")
         self._view_state = FocusViewState()
         self._current_view_state().sidebar_visible = self._toc_sidebar_visible
         self._current_view_state().ai_panel_visible = bool(
@@ -2353,6 +2366,10 @@ class Focus(Adw.Application):
             "button.focus-minute-order-return-active:hover, "
             "button.focus-minute-order-return-active:active { "
             f"background-color: {search_chip_color}; "
+            "color: #1f2937; "
+            "}"
+            "button.focus-citation-range-active label { "
+            "color: #1f2937; "
             "}"
         ).encode()
         try:
@@ -2584,6 +2601,7 @@ class Focus(Adw.Application):
             self._agent_subview_toggle_guard = False
         if self._ai_panel_revealer and self._ai_panel_revealer.get_reveal_child():
             self._update_embedded_ai_panel_height(force=True)
+        self._refresh_search_highlighted_button()
 
     def _on_agent_subview_button_toggled(
         self,
@@ -2756,6 +2774,7 @@ class Focus(Adw.Application):
             return
         self._sync_minute_order_return_state()
         if self._viewing_return_minute_order():
+            self._minute_order_button.set_visible(True)
             self._minute_order_button.set_child(
                 self._build_header_icon("go-previous-symbolic", "edit-undo-symbolic")
             )
@@ -2768,6 +2787,7 @@ class Focus(Adw.Application):
             return
 
         target = self._current_minute_order_boundary()
+        self._minute_order_button.set_visible(target is not None)
         self._minute_order_button.remove_css_class("focus-minute-order-return-active")
         self._minute_order_button.set_child(
             self._build_header_icon("text-x-generic-symbolic", "document-open-symbolic")
@@ -2866,6 +2886,10 @@ class Focus(Adw.Application):
         text_view.connect("map", self._on_ai_output_view_mapped, view_name)
         state.view = text_view
         state.buffer = text_view.get_buffer()
+        state.buffer.connect(
+            "notify::has-selection",
+            self._on_search_selection_changed,
+        )
         self._install_ai_output_link_controllers(state)
 
         scroller = Gtk.ScrolledWindow()
@@ -3840,8 +3864,7 @@ class Focus(Adw.Application):
         cleaned, _trailing = split_link_phrase(value)
         if not cleaned:
             return
-        if self._grep_entry:
-            self._grep_entry.set_text(cleaned)
+        self._set_grep_entry_text(cleaned)
         self._apply_grep(cleaned)
 
     def _show_page_from_link(self, page_str: str) -> None:
@@ -4177,6 +4200,7 @@ class Focus(Adw.Application):
                 if not silent:
                     self._transient_toast("No page available to display an image.")
                 self._sync_show_image_action()
+                self._refresh_search_highlighted_button()
                 return False
             page = self.pages[self.current_index]
             if not self._load_image_for_page(page, silent=silent):
@@ -4184,10 +4208,12 @@ class Focus(Adw.Application):
                 self._show_image = False
                 self._show_image_update_visible()
                 self._sync_show_image_action()
+                self._refresh_search_highlighted_button()
                 return False
             self._show_image = True
             self._show_image_update_visible()
             self._sync_show_image_action()
+            self._refresh_search_highlighted_button()
             return True
 
         # Always force the stack back to the text view when disabling image mode,
@@ -4196,6 +4222,7 @@ class Focus(Adw.Application):
         self._show_image_update_visible()
         self._clear_image_view()
         self._sync_show_image_action()
+        self._refresh_search_highlighted_button()
         return True
 
     def _link_at_coords(self, textview: Gtk.TextView, x: float, y: float) -> tuple[str, str] | None:
@@ -4223,7 +4250,6 @@ class Focus(Adw.Application):
             self._page_forward_one_button.set_sensitive(enabled)
         if self._page_number_entry:
             self._page_number_entry.set_sensitive(bool(self.pages))
-        self._refresh_transcript_breakdown_button()
         self._refresh_minute_order_button()
         self._refresh_record_boundary_date_label()
         if self._page_total_label and self._page_number_entry:
@@ -4252,15 +4278,16 @@ class Focus(Adw.Application):
             )
             self._grep_hit_label.set_text(status_text)
             self._grep_hit_label.set_visible(bool(status_text))
+        show_hit_navigation = total_hits > 0
         prev_enabled = total_hits > 0 and current_index > 0
         next_enabled = total_hits > 0 and current_index < total_hits - 1
         if self._grep_prev_hit_button:
+            self._grep_prev_hit_button.set_visible(show_hit_navigation)
             self._grep_prev_hit_button.set_sensitive(prev_enabled)
         if self._grep_next_hit_button:
+            self._grep_next_hit_button.set_visible(show_hit_navigation)
             self._grep_next_hit_button.set_sensitive(next_enabled)
-        if self._current_page_citation_button:
-            self._current_page_citation_button.set_sensitive(bool(self.pages))
-        self._sync_page_citation_range_button()
+        self._sync_citation_buttons()
 
     def _update_header(self) -> None:
         self._update_page_nav_buttons()
@@ -4304,10 +4331,12 @@ class Focus(Adw.Application):
     def _transcript_breakdown_available(self) -> bool:
         return self.transcript_page_number_series_path.is_file()
 
-    def _refresh_transcript_breakdown_button(self) -> None:
-        if not self._transcript_breakdown_button:
+    def _refresh_transcript_breakdown_action(self) -> None:
+        if not self._show_transcript_breakdown_action:
             return
-        self._transcript_breakdown_button.set_visible(self._transcript_breakdown_available())
+        self._show_transcript_breakdown_action.set_enabled(
+            self._transcript_breakdown_available()
+        )
 
     def _ensure_transcript_breakdown_window(self) -> Adw.ApplicationWindow:
         if self._transcript_breakdown_window:
@@ -4362,7 +4391,7 @@ class Focus(Adw.Application):
     def _show_transcript_breakdown(self) -> None:
         path = self.transcript_page_number_series_path
         if not path.is_file():
-            self._refresh_transcript_breakdown_button()
+            self._refresh_transcript_breakdown_action()
             self._transient_toast("Transcript page breakdown not available.")
             return
         content = self._read_text_file(path)
@@ -4373,7 +4402,11 @@ class Focus(Adw.Application):
             self._apply_markdown_spans(self._transcript_breakdown_buffer, markdown_spans)
         window.present()
 
-    def _on_transcript_breakdown_clicked(self, _button: Gtk.Button) -> None:
+    def _on_show_transcript_breakdown_action(
+        self,
+        _action: Gio.SimpleAction,
+        _param: GLib.Variant | None,
+    ) -> None:
         self._show_transcript_breakdown()
 
     def _render_page_display(
@@ -4708,10 +4741,13 @@ class Focus(Adw.Application):
         display.get_clipboard().set(text)
         return True
 
-    def _sync_page_citation_range_button(self) -> None:
+    def _sync_citation_buttons(self) -> None:
+        enabled = bool(self.pages)
+        if self._current_page_citation_button:
+            self._current_page_citation_button.set_sensitive(enabled)
         if not self._page_citation_range_button:
             return
-        self._page_citation_range_button.set_sensitive(bool(self.pages))
+        self._page_citation_range_button.set_sensitive(enabled)
         start = self._page_citation_range_start
         if start:
             self._page_citation_range_button.add_css_class(
@@ -4719,7 +4755,7 @@ class Focus(Adw.Application):
             )
             self._page_citation_range_button.set_tooltip_text(
                 f"Range starts at {start.citation_label}. "
-                "Press again to insert. (Ctrl+Alt+C)"
+                "Click again to insert. (Ctrl+Alt+C)"
             )
         else:
             self._page_citation_range_button.remove_css_class(
@@ -4806,7 +4842,7 @@ class Focus(Adw.Application):
         start_label = self._page_citation_range_start
         if start_label is None:
             self._page_citation_range_start = current_label
-            self._sync_page_citation_range_button()
+            self._sync_citation_buttons()
             return True
 
         result = format_page_citation_range_for_clipboard(start_label, current_label)
@@ -4814,7 +4850,7 @@ class Focus(Adw.Application):
             self._transient_toast(result.message)
             return False
         self._page_citation_range_start = None
-        self._sync_page_citation_range_button()
+        self._sync_citation_buttons()
         if self._send_text_to_prose_record_citations_action(result.citation):
             return True
         if not self._copy_text_to_clipboard(result.citation):
@@ -4930,6 +4966,18 @@ class Focus(Adw.Application):
         show_dbus_commands = Gio.SimpleAction.new("show_dbus_commands", None)
         show_dbus_commands.connect("activate", self._on_show_dbus_commands)
         self.add_action(show_dbus_commands)
+
+        show_transcript_breakdown = Gio.SimpleAction.new(
+            "show_transcript_breakdown",
+            None,
+        )
+        show_transcript_breakdown.connect(
+            "activate",
+            self._on_show_transcript_breakdown_action,
+        )
+        self.add_action(show_transcript_breakdown)
+        self._show_transcript_breakdown_action = show_transcript_breakdown
+        self._refresh_transcript_breakdown_action()
 
         print_images = Gio.SimpleAction.new("print_images", None)
         print_images.connect("activate", self._on_print_images_action)
@@ -5522,7 +5570,7 @@ class Focus(Adw.Application):
         self._grep_match_order = []
         self._grep_current_match_index = -1
         self._scan_pages()
-        self._refresh_transcript_breakdown_button()
+        self._refresh_transcript_breakdown_action()
         self._load_toc_from_disk_async()
         self._kickoff_rag_background_load()
         if self.pages:
@@ -5530,6 +5578,7 @@ class Focus(Adw.Application):
             self._load_current()
             self._persist_active_view_state()
         else:
+            self._update_header()
             self._set_window_title("No pages found")
             self._set_text("No .txt pages found in:\n" + str(self.text_dir))
 
@@ -5766,24 +5815,68 @@ class Focus(Adw.Application):
 
         GLib.idle_add(_focus)
 
-    def _on_grep_entry_activate(self, entry: Gtk.Entry) -> None:
+    def _set_grep_entry_text(self, text: str) -> None:
+        if not self._grep_entry:
+            return
+        self._grep_entry_sync_guard = True
+        try:
+            self._grep_entry.set_text(text)
+        finally:
+            self._grep_entry_sync_guard = False
+
+    def _clear_grep_for_search_entry(self) -> None:
+        self._grep_phrase_raw = None
+        self._clear_grep_state()
+        self._load_current()
+
+    def _on_grep_entry_activate(self, entry: Gtk.SearchEntry) -> None:
         phrase = entry.get_text()
         self._apply_grep(phrase)
 
-    def _on_grep_search_clicked(self, _button: Gtk.Button) -> None:
-        if not self._grep_entry:
+    def _on_grep_search_changed(self, entry: Gtk.SearchEntry) -> None:
+        if self._grep_entry_sync_guard:
             return
-        self._apply_grep(self._grep_entry.get_text())
+        applied_phrase = (self._grep_phrase_raw or "").strip()
+        if entry.get_text().strip() == applied_phrase:
+            return
+        if not applied_phrase and not self._grep_active and not self._grep_search_thread:
+            return
+        self._clear_grep_for_search_entry()
+
+    def _on_grep_stop_search(self, _entry: Gtk.SearchEntry) -> None:
+        self._set_grep_entry_text("")
+        self._clear_grep_for_search_entry()
+        if self.textview:
+            self.textview.grab_focus()
+
+    def _on_search_selection_changed(self, *_args: object) -> None:
+        self._refresh_search_highlighted_button()
+
+    def _visible_search_selection(self) -> str:
+        if not self._show_image:
+            selection = self._get_main_text_selection()
+            if selection:
+                return selection
+        if (
+            self._ai_panel_revealer
+            and self._ai_panel_revealer.get_reveal_child()
+        ):
+            return self._get_ai_panel_selection()
+        return ""
+
+    def _refresh_search_highlighted_button(self) -> None:
+        if not self._grep_highlighted_button:
+            return
+        self._grep_highlighted_button.set_visible(
+            bool(self._visible_search_selection())
+        )
 
     def _on_grep_search_highlighted_clicked(self, _button: Gtk.Button) -> None:
-        phrase = self._get_main_text_selection()
-        if not phrase:
-            phrase = self._get_ai_panel_selection()
+        phrase = self._visible_search_selection()
         if not phrase:
             self._transient_toast("Highlight text in the transcript or case tools to search.")
             return
-        if self._grep_entry:
-            self._grep_entry.set_text(phrase)
+        self._set_grep_entry_text(phrase)
         self._apply_grep(phrase)
 
     def _get_main_text_selection(self) -> str:
@@ -5899,6 +5992,7 @@ class Focus(Adw.Application):
                 self._reset_embedded_ai_panel_sizing()
         self._current_view_state().ai_panel_visible = visible
         self._update_ai_panel_toggle(visible)
+        self._refresh_search_highlighted_button()
 
     def _ensure_ai_panel_visible(self) -> None:
         self._set_ai_panel_visible(True)
@@ -5928,6 +6022,7 @@ class Focus(Adw.Application):
             self._update_summary_progress_label()
         elif target == AI_VIEW_SUMMARIZE:
             self._maybe_prefill_sum_range_for_current_page()
+        self._refresh_search_highlighted_button()
 
     def _ensure_summary_for_active_view(self) -> None:
         state = self._current_view_state()
