@@ -501,13 +501,29 @@ class Focus(Adw.Application):
         self._right_scroll_zone.set_margin_end(0)
         self._right_scroll_zone.set_can_target(True)
         self._right_scroll_zone.set_focus_on_click(False)
+
+        right_scroll_hint = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        right_scroll_hint.add_css_class("focus-right-scroll-hint")
+        right_scroll_hint.set_halign(Gtk.Align.CENTER)
+        right_scroll_hint.set_valign(Gtk.Align.END)
+        right_scroll_hint.set_margin_bottom(12)
+
+        right_scroll_icon = Gtk.Image.new_from_icon_name(
+            self._choose_icon(
+                "input-mouse-symbolic",
+                "input-touchpad-symbolic",
+                "view-more-symbolic",
+            )
+        )
+        right_scroll_icon.add_css_class("focus-right-scroll-icon")
+        right_scroll_icon.set_valign(Gtk.Align.CENTER)
+        right_scroll_hint.append(right_scroll_icon)
+
         right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
         right_scroll_label.add_css_class("focus-right-scroll-label")
-        right_scroll_label.set_halign(Gtk.Align.CENTER)
-        right_scroll_label.set_valign(Gtk.Align.END)
-        right_scroll_label.set_vexpand(True)
-        right_scroll_label.set_margin_bottom(12)
-        self._right_scroll_zone.set_child(right_scroll_label)
+        right_scroll_label.set_valign(Gtk.Align.CENTER)
+        right_scroll_hint.append(right_scroll_label)
+        self._right_scroll_zone.set_child(right_scroll_hint)
         self._right_scroll_zone.connect("clicked", self._on_right_scroll_zone_clicked)
 
         self._right_scroll_zone_scroll_controller = Gtk.EventControllerScroll.new(

@@ -3196,31 +3196,50 @@ picture.focus-image-preview {
 button.focus-right-scroll-zone {
   border-radius: 14px;
   padding: 0;
-  background-color: rgba(128, 128, 128, 0.00);
+  background-color: transparent;
   background-image: none;
   box-shadow: none;
-  transition: background-color 120ms ease;
 }
 
 button.focus-right-scroll-zone:hover,
 button.focus-right-scroll-zone.hover,
 button.focus-right-scroll-zone:active {
-  background-color: rgba(128, 128, 128, 0.12);
+  background-color: transparent;
   background-image: none;
   box-shadow: none;
 }
 
-button.focus-right-scroll-zone label.focus-right-scroll-label {
+button.focus-right-scroll-zone box.focus-right-scroll-hint {
+  border-radius: 999px;
+  padding: 5px 10px;
+  background-color: alpha(@window_fg_color, 0.00);
+  transition: background-color 120ms ease;
+}
+
+button.focus-right-scroll-zone label.focus-right-scroll-label,
+button.focus-right-scroll-zone image.focus-right-scroll-icon {
   color: alpha(@window_fg_color, 0.00);
-  font-size: 11px;
-  font-weight: 600;
   transition: color 120ms ease;
+}
+
+button.focus-right-scroll-zone label.focus-right-scroll-label {
+  font-size: 11px;
+  font-weight: normal;
+}
+
+button.focus-right-scroll-zone:hover box.focus-right-scroll-hint,
+button.focus-right-scroll-zone.hover box.focus-right-scroll-hint,
+button.focus-right-scroll-zone:active box.focus-right-scroll-hint {
+  background-color: alpha(@window_fg_color, 0.08);
 }
 
 button.focus-right-scroll-zone:hover label.focus-right-scroll-label,
 button.focus-right-scroll-zone.hover label.focus-right-scroll-label,
-button.focus-right-scroll-zone:active label.focus-right-scroll-label {
-  color: alpha(@window_fg_color, 0.62);
+button.focus-right-scroll-zone:active label.focus-right-scroll-label,
+button.focus-right-scroll-zone:hover image.focus-right-scroll-icon,
+button.focus-right-scroll-zone.hover image.focus-right-scroll-icon,
+button.focus-right-scroll-zone:active image.focus-right-scroll-icon {
+  color: alpha(@window_fg_color, 0.70);
 }
 
 .ai-output-frame {
