@@ -3340,15 +3340,6 @@ button.focus-citation-range-active label {
   color: #1f2937;
 }
 
-button.focus-minute-order-active,
-button.focus-minute-order-active:hover,
-button.focus-minute-order-active:active {
-  background-color: alpha(@window_fg_color, 0.08);
-  color: @window_fg_color;
-  background-image: none;
-  box-shadow: none;
-}
-
 button.focus-minute-order-return-active,
 button.focus-minute-order-return-active:hover,
 button.focus-minute-order-return-active:active {

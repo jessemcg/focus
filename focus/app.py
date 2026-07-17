@@ -2736,7 +2736,6 @@ class Focus(Adw.Application):
                 "Return to the RT page you came from (Ctrl+Shift+M)"
             )
             self._minute_order_button.set_sensitive(True)
-            self._minute_order_button.add_css_class("focus-minute-order-active")
             self._minute_order_button.add_css_class("focus-minute-order-return-active")
             return
 
@@ -2750,10 +2749,6 @@ class Focus(Adw.Application):
             "Open the minute order for this RT page (Ctrl+Shift+M)"
         )
         self._minute_order_button.set_sensitive(target is not None)
-        if target is not None:
-            self._minute_order_button.add_css_class("focus-minute-order-active")
-        else:
-            self._minute_order_button.remove_css_class("focus-minute-order-active")
 
     def _refresh_record_boundary_date_label(self) -> None:
         if not self._record_boundary_date_label:
