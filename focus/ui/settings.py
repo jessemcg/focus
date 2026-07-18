@@ -24,10 +24,15 @@ class RagPromptWidgets:
 
 @dataclass
 class AgentSettingsWidgets:
+    runtime_row: Adw.ComboRow
+    runtime_values: list[str]
     codex_agent_command_row: Adw.EntryRow
     codex_agent_fireworks_key_row: Adw.EntryRow
     codex_agent_permission_mode_row: Adw.ComboRow
     codex_agent_permission_mode_values: list[str]
+    pi_agent_command_row: Adw.EntryRow
+    codex_rows: list[Gtk.Widget]
+    pi_rows: list[Gtk.Widget]
     prompt_buffer: Gtk.TextBuffer
 
 
@@ -689,10 +694,20 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page_box.append(title_label)
 
         settings = load_ai_settings()
-        launch_group = Adw.PreferencesGroup(title="Codex Agent")
+        launch_group = Adw.PreferencesGroup(title="Agent Runtime")
         launch_group.add_css_class("list-stack")
         launch_group.set_hexpand(True)
         page_box.append(launch_group)
+
+        runtime_values = [runtime for runtime, _label in AGENT_RUNTIME_OPTIONS]
+        runtime_labels = [label for _runtime, label in AGENT_RUNTIME_OPTIONS]
+        runtime_row = Adw.ComboRow(
+            title="Agent",
+            subtitle="Choose which coding agent answers record questions.",
+        )
+        runtime_row.set_model(Gtk.StringList.new(runtime_labels))
+        runtime_row.connect("notify::selected", self._on_agent_runtime_changed)
+        launch_group.add(runtime_row)
 
         codex_agent_command_row = Adw.EntryRow(title="Codex command")
         codex_agent_command_row.set_hexpand(True)
@@ -718,13 +733,38 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         launch_group.add(codex_agent_permission_mode_row)
 
+        pi_agent_command_row = Adw.EntryRow(title="PI command")
+        pi_agent_command_row.set_hexpand(True)
+        launch_group.add(pi_agent_command_row)
+
+        pi_configuration_row = Adw.ActionRow(
+            title="PI configuration",
+            subtitle=(
+                "Provider, model, and authentication come from ~/.pi/agent. "
+                "Focus does not override them."
+            ),
+        )
+        launch_group.add(pi_configuration_row)
+
+        pi_access_row = Adw.ActionRow(
+            title="PI access",
+            subtitle=(
+                "PI runs with your user account permissions. "
+                "The Codex sandbox setting does not apply."
+            ),
+        )
+        warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
+        warning_icon.add_css_class("warning")
+        pi_access_row.add_prefix(warning_icon)
+        launch_group.add(pi_access_row)
+
         prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         prompt_section.set_hexpand(True)
         prompt_section.set_vexpand(True)
         prompt_label = Gtk.Label(label="Prompt template", xalign=0)
         prompt_label.add_css_class("dim-label")
         prompt_section.append(prompt_label)
-        prompt_scroller, buffer = self._build_prompt_editor(DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE)
+        prompt_scroller, buffer = self._build_prompt_editor(DEFAULT_AGENT_PROMPT_TEMPLATE)
         prompt_section.append(prompt_scroller)
         page_box.append(prompt_section)
 
@@ -735,13 +775,48 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page.set_child(page_box)
 
         self._prompt_editors[key] = AgentSettingsWidgets(
+            runtime_row=runtime_row,
+            runtime_values=runtime_values,
             codex_agent_command_row=codex_agent_command_row,
             codex_agent_fireworks_key_row=codex_agent_fireworks_key_row,
             codex_agent_permission_mode_row=codex_agent_permission_mode_row,
             codex_agent_permission_mode_values=codex_agent_permission_mode_values,
+            pi_agent_command_row=pi_agent_command_row,
+            codex_rows=[
+                codex_agent_command_row,
+                codex_agent_fireworks_key_row,
+                codex_agent_permission_mode_row,
+            ],
+            pi_rows=[
+                pi_agent_command_row,
+                pi_configuration_row,
+                pi_access_row,
+            ],
             prompt_buffer=buffer,
         )
         return page
+
+    def _on_agent_runtime_changed(
+        self,
+        _row: Adw.ComboRow,
+        _param: GObject.ParamSpec,
+    ) -> None:
+        self._sync_agent_runtime_visibility()
+
+    def _sync_agent_runtime_visibility(self) -> None:
+        widgets = self._prompt_editors.get("agent")
+        if not isinstance(widgets, AgentSettingsWidgets):
+            return
+        selected = int(widgets.runtime_row.get_selected())
+        runtime = (
+            widgets.runtime_values[selected]
+            if 0 <= selected < len(widgets.runtime_values)
+            else DEFAULT_AGENT_RUNTIME
+        )
+        for row in widgets.codex_rows:
+            row.set_visible(runtime == AGENT_RUNTIME_CODEX)
+        for row in widgets.pi_rows:
+            row.set_visible(runtime == AGENT_RUNTIME_PI)
 
     def _on_prompt_row_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
         if not row or not self._prompt_stack:
@@ -845,6 +920,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
 
         if isinstance(agent_widgets, AgentSettingsWidgets):
+            runtime = normalize_agent_runtime(settings.agent_runtime)
+            if runtime in agent_widgets.runtime_values:
+                agent_widgets.runtime_row.set_selected(
+                    agent_widgets.runtime_values.index(runtime)
+                )
+            else:
+                agent_widgets.runtime_row.set_selected(0)
             agent_widgets.codex_agent_command_row.set_text(settings.codex_agent_command)
             agent_widgets.codex_agent_fireworks_key_row.set_text(settings.codex_agent_fireworks_key)
             permission_mode = normalize_codex_agent_permission_mode(
@@ -856,9 +938,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 )
             else:
                 agent_widgets.codex_agent_permission_mode_row.set_selected(0)
+            agent_widgets.pi_agent_command_row.set_text(settings.pi_agent_command)
             agent_widgets.prompt_buffer.set_text(
-                settings.codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+                settings.agent_prompt_template or DEFAULT_AGENT_PROMPT_TEMPLATE
             )
+            self._sync_agent_runtime_visibility()
 
         if self._ai_font_size_row:
             _, ai_font, _ = self.app.get_font_preferences()
@@ -969,8 +1053,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_RAG_CHUNK_COUNT,
         )
         speech_rag_source_file = rag_widgets.speech_rag_source_row.get_text()
+        runtime_index = int(agent_widgets.runtime_row.get_selected())
+        if 0 <= runtime_index < len(agent_widgets.runtime_values):
+            agent_runtime = agent_widgets.runtime_values[runtime_index]
+        else:
+            agent_runtime = DEFAULT_AGENT_RUNTIME
         codex_agent_command = agent_widgets.codex_agent_command_row.get_text().strip()
         codex_agent_fireworks_key = agent_widgets.codex_agent_fireworks_key_row.get_text().strip()
+        pi_agent_command = agent_widgets.pi_agent_command_row.get_text().strip()
         permission_mode_index = int(agent_widgets.codex_agent_permission_mode_row.get_selected())
         if 0 <= permission_mode_index < len(agent_widgets.codex_agent_permission_mode_values):
             codex_agent_permission_mode = agent_widgets.codex_agent_permission_mode_values[
@@ -983,7 +1073,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
         extract_prompt = self._prompt_text(extract_widgets.prompt_buffer).strip()
         rag_prompt = self._prompt_text(rag_widgets.prompt_buffer).strip()
-        codex_agent_prompt_template = self._prompt_text(agent_widgets.prompt_buffer).strip()
+        agent_prompt_template = self._prompt_text(agent_widgets.prompt_buffer).strip()
         highlight_phrases = (
             _normalize_highlight_phrases(self._prompt_text(self._highlight_phrases_buffer))
             if self._highlight_phrases_buffer is not None
@@ -1065,14 +1155,16 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             rag_deep_disable_reasoning=current_settings.rag_deep_disable_reasoning,
             rag_chunk_count=rag_chunk_count,
             speech_rag_source_file=speech_rag_source_file,
+            agent_runtime=normalize_agent_runtime(agent_runtime),
+            agent_prompt_template=(
+                agent_prompt_template or DEFAULT_AGENT_PROMPT_TEMPLATE
+            ),
             codex_agent_command=codex_agent_command or DEFAULT_CODEX_AGENT_COMMAND,
             codex_agent_fireworks_key=codex_agent_fireworks_key,
-            codex_agent_prompt_template=(
-                codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
-            ),
             codex_agent_permission_mode=normalize_codex_agent_permission_mode(
                 codex_agent_permission_mode
             ),
+            pi_agent_command=pi_agent_command or DEFAULT_PI_AGENT_COMMAND,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,

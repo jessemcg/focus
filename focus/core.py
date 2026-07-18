@@ -119,12 +119,15 @@ CONFIG_KEY_RAG_DISABLE_REASONING = "rag_disable_reasoning"
 CONFIG_KEY_RAG_DEEP_DISABLE_REASONING = "rag_deep_disable_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
+CONFIG_KEY_AGENT_RUNTIME = "agent_runtime"
+CONFIG_KEY_AGENT_PROMPT_TEMPLATE = "agent_prompt_template"
 CONFIG_KEY_CODEX_AGENT_PROFILE = "codex_agent_profile"
 CONFIG_KEY_CODEX_AGENT_BIN = "codex_agent_bin"
 CONFIG_KEY_CODEX_AGENT_COMMAND = "codex_agent_command"
 CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY = "codex_agent_fireworks_key"
 CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE = "codex_agent_prompt_template"
 CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE = "codex_agent_permission_mode"
+CONFIG_KEY_PI_AGENT_COMMAND = "pi_agent_command"
 CONFIG_KEY_MODEL_PROFILES = "model_profiles"
 CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
@@ -174,9 +177,17 @@ RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX = "## Record Excerpt"
 RAG_PROVIDER_VOYAGE = "voyage"
 RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
+AGENT_RUNTIME_CODEX = "codex"
+AGENT_RUNTIME_PI = "pi"
+DEFAULT_AGENT_RUNTIME = AGENT_RUNTIME_CODEX
+AGENT_RUNTIME_OPTIONS: tuple[tuple[str, str], ...] = (
+    (AGENT_RUNTIME_CODEX, "Codex"),
+    (AGENT_RUNTIME_PI, "PI"),
+)
 DEFAULT_CODEX_AGENT_BIN = "codex"
 DEFAULT_CODEX_AGENT_PROFILE = "fireconnect"
 DEFAULT_CODEX_AGENT_COMMAND = "codex --profile fireconnect"
+DEFAULT_PI_AGENT_COMMAND = "pi"
 CODEX_AGENT_PERMISSION_MODE_SANDBOXED = "sandboxed"
 CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS = "full_access"
 DEFAULT_CODEX_AGENT_PERMISSION_MODE = CODEX_AGENT_PERMISSION_MODE_SANDBOXED
@@ -354,6 +365,7 @@ Before giving a substantial answer, conduct targeted record searches. Use the so
 
 Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer.""",
 )
+DEFAULT_AGENT_PROMPT_TEMPLATE = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
 UNSET_PROFILE_LABEL = "Legacy credentials"
 MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3", "profile4")
 DEFAULT_MODEL_PROFILE_NICKNAMES = {
@@ -820,6 +832,7 @@ AI_VIEW_RAG_AUDIT = "rag-audit"
 AGENT_SUBVIEW_ANSWER = "answer"
 AGENT_SUBVIEW_SESSION = "session"
 CODEX_SESSION_LOG_GLOB = "*/*/*/rollout-*.jsonl"
+PI_SESSION_LOG_GLOB = "*.jsonl"
 
 
 def _model_looks_kimi(model_id: str) -> bool:
@@ -2187,10 +2200,12 @@ class AiSettings:
     search_chip_color: str
     model_profiles: list[ModelProfile] = field(default_factory=list)
     task_profile_defaults: dict[str, str | None] = field(default_factory=dict)
+    agent_runtime: str = DEFAULT_AGENT_RUNTIME
+    agent_prompt_template: str = DEFAULT_AGENT_PROMPT_TEMPLATE
     codex_agent_command: str = DEFAULT_CODEX_AGENT_COMMAND
     codex_agent_fireworks_key: str = ""
-    codex_agent_prompt_template: str = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
     codex_agent_permission_mode: str = DEFAULT_CODEX_AGENT_PERMISSION_MODE
+    pi_agent_command: str = DEFAULT_PI_AGENT_COMMAND
 
     def profile_by_key(self, profile_key: str | None) -> ModelProfile | None:
         normalized = (profile_key or "").strip()
@@ -2504,12 +2519,83 @@ def _normalize_codex_agent_profile(profile: str | None) -> str:
     return candidate
 
 
+def normalize_agent_runtime(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    for runtime, _label in AGENT_RUNTIME_OPTIONS:
+        if normalized == runtime:
+            return runtime
+    return DEFAULT_AGENT_RUNTIME
+
+
 def normalize_codex_agent_permission_mode(value: Any) -> str:
     normalized = str(value or "").strip()
     for mode, _label in CODEX_AGENT_PERMISSION_MODE_OPTIONS:
         if normalized == mode:
             return mode
     return DEFAULT_CODEX_AGENT_PERMISSION_MODE
+
+
+def discover_pi_agent_command(
+    home: Path | None = None,
+    *,
+    path_env: str | None = None,
+) -> str:
+    executable = shutil.which("pi", path=path_env)
+    if executable:
+        return executable
+    home_dir = (home or Path.home()).expanduser()
+    candidates = [home_dir / ".local" / "bin" / "pi"]
+    installer_candidates = list(
+        (home_dir / ".local" / "share" / "pi-node").glob("node-*/bin/pi")
+    )
+    installer_candidates.sort(
+        key=lambda candidate: candidate.stat().st_mtime if candidate.exists() else 0,
+        reverse=True,
+    )
+    candidates.extend(installer_candidates)
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return DEFAULT_PI_AGENT_COMMAND
+
+
+def resolve_pi_agent_argv(command: str, *, path_env: str | None = None) -> list[str]:
+    argv = shlex.split(command)
+    if not argv:
+        return []
+    if argv[0] == "pi":
+        argv[0] = discover_pi_agent_command(path_env=path_env)
+    return argv
+
+
+PI_INCOMPATIBLE_AGENT_FLAGS = frozenset(
+    {
+        "-p",
+        "--print",
+        "--no-session",
+        "--continue",
+        "-c",
+        "--resume",
+        "-r",
+        "--session",
+        "--session-id",
+        "--fork",
+        "--export",
+    }
+)
+
+
+def incompatible_pi_agent_flag(argv: Sequence[str]) -> str | None:
+    for index, arg in enumerate(argv[1:], start=1):
+        if arg in PI_INCOMPATIBLE_AGENT_FLAGS:
+            return arg
+        if arg == "--mode":
+            mode = argv[index + 1].strip().lower() if index + 1 < len(argv) else ""
+            if mode and mode != "text":
+                return f"--mode {mode}"
+        elif arg.startswith("--mode=") and arg.split("=", 1)[1].strip().lower() != "text":
+            return arg
+    return None
 
 
 def _codex_agent_command_from_config(config: dict[str, Any]) -> str:
@@ -2732,20 +2818,30 @@ def load_ai_settings() -> AiSettings:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     speech_rag_source_file = str(config.get(CONFIG_KEY_SPEECH_RAG_SOURCE_FILE, "") or "")
+    agent_runtime = normalize_agent_runtime(config.get(CONFIG_KEY_AGENT_RUNTIME))
     codex_agent_command = _codex_agent_command_from_config(config)
     codex_agent_fireworks_key = str(
         config.get(CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY, "")
         or ""
     ).strip()
-    codex_agent_prompt_template = str(
-        config.get(CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE, DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE)
-        or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+    agent_prompt_template = str(
+        config.get(
+            CONFIG_KEY_AGENT_PROMPT_TEMPLATE,
+            config.get(
+                CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE,
+                DEFAULT_AGENT_PROMPT_TEMPLATE,
+            ),
+        )
+        or DEFAULT_AGENT_PROMPT_TEMPLATE
     ).strip()
-    if codex_agent_prompt_template in LEGACY_CODEX_AGENT_PROMPT_TEMPLATES:
-        codex_agent_prompt_template = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+    if agent_prompt_template in LEGACY_CODEX_AGENT_PROMPT_TEMPLATES:
+        agent_prompt_template = DEFAULT_AGENT_PROMPT_TEMPLATE
     codex_agent_permission_mode = normalize_codex_agent_permission_mode(
         config.get(CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE)
     )
+    pi_agent_command = str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, "") or "").strip()
+    if not pi_agent_command:
+        pi_agent_command = discover_pi_agent_command()
     highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
     grep_highlight_color = _coerce_color_value(
         config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
@@ -2805,10 +2901,12 @@ def load_ai_settings() -> AiSettings:
         search_chip_color=search_chip_color,
         model_profiles=model_profiles,
         task_profile_defaults=task_profile_defaults,
+        agent_runtime=agent_runtime,
+        agent_prompt_template=agent_prompt_template or DEFAULT_AGENT_PROMPT_TEMPLATE,
         codex_agent_command=codex_agent_command or DEFAULT_CODEX_AGENT_COMMAND,
         codex_agent_fireworks_key=codex_agent_fireworks_key,
-        codex_agent_prompt_template=codex_agent_prompt_template or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE,
         codex_agent_permission_mode=codex_agent_permission_mode,
+        pi_agent_command=pi_agent_command or DEFAULT_PI_AGENT_COMMAND,
     )
 
 
@@ -2877,17 +2975,23 @@ def save_ai_settings(settings: AiSettings) -> None:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     config[CONFIG_KEY_SPEECH_RAG_SOURCE_FILE] = settings.speech_rag_source_file
+    config[CONFIG_KEY_AGENT_RUNTIME] = normalize_agent_runtime(settings.agent_runtime)
     config[CONFIG_KEY_CODEX_AGENT_COMMAND] = (
         settings.codex_agent_command.strip() or DEFAULT_CODEX_AGENT_COMMAND
     )
     config.pop(CONFIG_KEY_CODEX_AGENT_PROFILE, None)
     config.pop(CONFIG_KEY_CODEX_AGENT_BIN, None)
     config[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] = settings.codex_agent_fireworks_key.strip()
+    agent_prompt_template = settings.agent_prompt_template.strip() or DEFAULT_AGENT_PROMPT_TEMPLATE
+    config[CONFIG_KEY_AGENT_PROMPT_TEMPLATE] = agent_prompt_template
     config[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] = (
-        settings.codex_agent_prompt_template.strip() or DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
+        agent_prompt_template
     )
     config[CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE] = normalize_codex_agent_permission_mode(
         settings.codex_agent_permission_mode
+    )
+    config[CONFIG_KEY_PI_AGENT_COMMAND] = (
+        settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
     )
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
@@ -3927,6 +4031,92 @@ def find_latest_codex_session_log_for_cwd(sessions_root: Path, cwd: Path) -> Pat
         if candidate.is_file() and codex_session_log_matches_cwd(candidate, cwd):
             return candidate
     return None
+
+
+def extract_latest_pi_final_answer_from_jsonl(path: Path) -> str:
+    latest = ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or payload.get("type") != "message":
+            continue
+        message = payload.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        if message.get("stopReason") == "toolUse":
+            continue
+        text = _codex_text_from_content(message.get("content"))
+        if text:
+            latest = text
+    return latest
+
+
+def pi_session_log_matches_cwd(path: Path, cwd: Path) -> bool:
+    wanted = str(cwd)
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(payload, dict) or payload.get("type") != "session":
+                    continue
+                return payload.get("cwd") == wanted
+    except OSError:
+        return False
+    return False
+
+
+def find_latest_pi_session_log_for_cwd(session_dir: Path, cwd: Path) -> Path | None:
+    if not session_dir.is_dir():
+        return None
+    try:
+        candidates = sorted(
+            session_dir.glob(PI_SESSION_LOG_GLOB),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    for candidate in candidates:
+        if candidate.is_file() and pi_session_log_matches_cwd(candidate, cwd):
+            return candidate
+    return None
+
+
+def pi_agent_config_dir() -> Path:
+    return Path(
+        os.environ.get("PI_CODING_AGENT_DIR", Path.home() / ".pi" / "agent")
+    ).expanduser()
+
+
+def pi_session_dir_for_cwd(cwd: Path, agent_dir: Path | None = None) -> Path:
+    configured_session_dir = str(os.environ.get("PI_CODING_AGENT_SESSION_DIR", "") or "").strip()
+    resolved_agent_dir = (agent_dir or pi_agent_config_dir()).expanduser()
+    if not configured_session_dir:
+        settings_path = resolved_agent_dir / "settings.json"
+        try:
+            settings_payload = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            settings_payload = {}
+        if isinstance(settings_payload, dict):
+            configured_session_dir = str(settings_payload.get("sessionDir", "") or "").strip()
+    if configured_session_dir:
+        return Path(configured_session_dir).expanduser().resolve(strict=False)
+    resolved_cwd = str(cwd.expanduser().resolve(strict=False))
+    safe_path = "--" + re.sub(r"[/\\\\:]", "-", resolved_cwd.lstrip("/\\")) + "--"
+    return resolved_agent_dir / "sessions" / safe_path
 
 
 def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:

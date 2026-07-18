@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only record helper for Focus embedded Codex Agent sessions."""
+"""Read-only record helper for Focus embedded Agent sessions."""
 
 from __future__ import annotations
 

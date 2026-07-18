@@ -11,6 +11,7 @@ Focus is a Libadwaita GTK4 app for browsing court transcript text files with fas
 - Grep matches render in red and navigate hit-by-hit while keeping one transcript page visible
 - Toggle image view for page scans (Ctrl+I) when images are available
 - AI panel with page/range summaries, RAG Q&A, and a summary-file viewer
+- Agent questioning through either Codex or PI in the same embedded terminal and answer view
 - Markdown-style formatting for `*italic*`, `**bold**`, and `#`/`##`/`###` headings in transcript and summary text
 
 ## Requirements
@@ -88,9 +89,22 @@ Settings are stored in the project-root `config.json`. Key fields include:
   `range_api_url`, `range_api_key`, `range_model_id`, `range_summarization_prompt`
 - RAG: `rag_api_url`, `rag_api_key`, `rag_model_id`, `rag_prompt`, `rag_chunk_count`
 - RAG embeddings: `voyage_api_key`, `voyage_model`
+- Embedded Agent: `agent_runtime` (`codex` or `pi`), the runtime-specific command,
+  and one shared `agent_prompt_template`
 - Summary file viewer: `summary_file`, `summary_read_positions`
 
 Defaults are defined in the package modules if a key is missing.
+
+### Choosing an Agent
+
+In Focus Settings, open the Agent page and choose either **Codex** or **PI**.
+Both runtimes receive the same Focus record-question prompt and run in the same
+embedded VTE terminal, with final responses mirrored into the same Answer view.
+Codex remains the default for existing configurations.
+
+The PI runtime uses the provider, model, and authentication configured in
+`~/.pi/agent`. PI runs with the permissions of the user account that launched
+Focus; the Codex sandbox setting applies only to Codex.
 
 ## Project structure
 - `focus/`: Python package for the app and helper CLIs
@@ -98,7 +112,7 @@ Defaults are defined in the package modules if a key is missing.
 - `focus/core.py`: shared constants, dataclasses, config helpers, record parsing, search, citation, rendering, RAG, and agent utilities
 - `focus/cli.py`: `focus` console command, including app launch and current-case refresh
 - `focus/current_case.py`: currently selected case to Focus `config.json` integration
-- `focus/agent_helper.py`: read-only record helper used by the embedded Codex Agent
+- `focus/agent_helper.py`: read-only record helper used by embedded Codex and PI Agent sessions
 - `focus/ui/`: secondary windows, including settings and D-Bus commands
 - `config.json`: local settings (do not commit secrets)
 - `legacy_versions/`: historical backups (do not edit)
