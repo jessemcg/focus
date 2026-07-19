@@ -10,6 +10,7 @@ dependencies = [
     "langchain>=1.2.6",
     "langchain-chroma>=1.1.0",
     "langchain-voyageai>=0.3.2",
+    "markdown-it-py>=4.0.0",
     "pygobject==3.54.5",
 ]
 

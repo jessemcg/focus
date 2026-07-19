@@ -49,6 +49,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 import gi
+from markdown_it import MarkdownIt
+from markdown_it.tree import SyntaxTreeNode
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
@@ -3378,7 +3380,338 @@ MARKDOWN_HEADING_SCALES = {
     1: 1.55,
     2: 1.3,
     3: 1.15,
+    4: 1.08,
+    5: 1.0,
+    6: 0.95,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _MarkdownTextFragment:
+    text: str
+    spans: tuple[tuple[int, int, str], ...] = ()
+
+
+def _join_markdown_fragments(
+    fragments: Sequence[_MarkdownTextFragment],
+    separator: str = "",
+) -> _MarkdownTextFragment:
+    parts: list[str] = []
+    spans: list[tuple[int, int, str]] = []
+    offset = 0
+    for index, fragment in enumerate(fragments):
+        if index:
+            parts.append(separator)
+            offset += len(separator)
+        parts.append(fragment.text)
+        spans.extend(
+            (start + offset, end + offset, kind)
+            for start, end, kind in fragment.spans
+        )
+        offset += len(fragment.text)
+    return _MarkdownTextFragment("".join(parts), tuple(spans))
+
+
+def _style_markdown_fragment(
+    fragment: _MarkdownTextFragment,
+    kind: str,
+) -> _MarkdownTextFragment:
+    if not fragment.text:
+        return fragment
+    return _MarkdownTextFragment(
+        fragment.text,
+        (*fragment.spans, (0, len(fragment.text), kind)),
+    )
+
+
+def _strip_markdown_fragment(
+    fragment: _MarkdownTextFragment,
+) -> _MarkdownTextFragment:
+    start = len(fragment.text) - len(fragment.text.lstrip())
+    end = len(fragment.text.rstrip())
+    if end <= start:
+        return _MarkdownTextFragment("")
+    spans = tuple(
+        (max(span_start, start) - start, min(span_end, end) - start, kind)
+        for span_start, span_end, kind in fragment.spans
+        if min(span_end, end) > max(span_start, start)
+    )
+    return _MarkdownTextFragment(fragment.text[start:end], spans)
+
+
+def _prefix_markdown_fragment_lines(
+    fragment: _MarkdownTextFragment,
+    first_prefix: str,
+    continuation_prefix: str,
+) -> _MarkdownTextFragment:
+    if not fragment.text:
+        return _MarkdownTextFragment(first_prefix.rstrip())
+
+    parts: list[str] = []
+    offset_map = [0] * (len(fragment.text) + 1)
+    source_offset = 0
+    output_offset = 0
+    for line_index, line in enumerate(fragment.text.splitlines(keepends=True)):
+        prefix = first_prefix if line_index == 0 else continuation_prefix
+        parts.append(prefix)
+        output_offset += len(prefix)
+        for index, character in enumerate(line):
+            offset_map[source_offset + index] = output_offset
+            parts.append(character)
+            output_offset += 1
+        source_offset += len(line)
+        offset_map[source_offset] = output_offset
+
+    spans = tuple(
+        (offset_map[start], offset_map[end], kind)
+        for start, end, kind in fragment.spans
+        if end > start
+    )
+    return _MarkdownTextFragment("".join(parts), spans)
+
+
+def _markdown_display_width(text: str) -> int:
+    width = 0
+    for character in text:
+        if unicodedata.combining(character):
+            continue
+        width += 2 if unicodedata.east_asian_width(character) in {"F", "W"} else 1
+    return width
+
+
+class _TranscriptBreakdownMarkdownRenderer:
+    def __init__(self) -> None:
+        self._parser = MarkdownIt("commonmark", {"html": False}).enable("table")
+
+    def render(self, source: str) -> _MarkdownTextFragment:
+        if not source:
+            return _MarkdownTextFragment("")
+        root = SyntaxTreeNode(self._parser.parse(source))
+        blocks = [
+            fragment
+            for child in root.children
+            if (fragment := self._render_block(child, list_depth=0)).text
+        ]
+        rendered = _join_markdown_fragments(blocks, "\n\n")
+        return _strip_markdown_fragment(rendered)
+
+    def _render_block(
+        self,
+        node: SyntaxTreeNode,
+        *,
+        list_depth: int,
+    ) -> _MarkdownTextFragment:
+        if node.type == "heading":
+            fragment = self._render_inline_children(node)
+            try:
+                level = int(node.tag.removeprefix("h"))
+            except (AttributeError, ValueError):
+                level = 3
+            return _style_markdown_fragment(fragment, f"heading{max(1, min(level, 6))}")
+        if node.type in {"paragraph", "inline"}:
+            return self._render_inline_children(node)
+        if node.type == "blockquote":
+            children = [
+                self._render_block(child, list_depth=list_depth)
+                for child in node.children
+            ]
+            fragment = _join_markdown_fragments(
+                [child for child in children if child.text],
+                "\n\n",
+            )
+            return _style_markdown_fragment(fragment, "blockquote")
+        if node.type in {"bullet_list", "ordered_list"}:
+            return self._render_list(node, list_depth=list_depth)
+        if node.type == "table":
+            return self._render_table(node)
+        if node.type in {"fence", "code_block"}:
+            return _style_markdown_fragment(
+                _MarkdownTextFragment(node.content.rstrip("\n")),
+                "code_block",
+            )
+        if node.type == "hr":
+            return _MarkdownTextFragment("────────────────────────")
+        if node.type == "html_block":
+            return _MarkdownTextFragment(node.content.rstrip("\n"))
+        if node.children:
+            children = [
+                self._render_block(child, list_depth=list_depth)
+                for child in node.children
+            ]
+            return _join_markdown_fragments(
+                [child for child in children if child.text],
+                "\n\n",
+            )
+        return _MarkdownTextFragment(node.content)
+
+    def _render_inline_children(
+        self,
+        node: SyntaxTreeNode,
+    ) -> _MarkdownTextFragment:
+        if node.type == "inline":
+            children = node.children
+        elif len(node.children) == 1 and node.children[0].type == "inline":
+            children = node.children[0].children
+        else:
+            children = node.children
+        return _join_markdown_fragments(
+            [self._render_inline(child) for child in children],
+        )
+
+    def _render_inline(self, node: SyntaxTreeNode) -> _MarkdownTextFragment:
+        if node.type == "text":
+            return _MarkdownTextFragment(node.content)
+        if node.type in {"softbreak", "hardbreak"}:
+            return _MarkdownTextFragment("\n")
+        if node.type == "code_inline":
+            return _style_markdown_fragment(
+                _MarkdownTextFragment(node.content),
+                "inline_code",
+            )
+        if node.type == "strong":
+            return _style_markdown_fragment(
+                self._render_inline_children(node),
+                "bold",
+            )
+        if node.type == "em":
+            return _style_markdown_fragment(
+                self._render_inline_children(node),
+                "italic",
+            )
+        if node.type == "s":
+            return _style_markdown_fragment(
+                self._render_inline_children(node),
+                "strikethrough",
+            )
+        if node.type == "image":
+            return _MarkdownTextFragment(node.content)
+        if node.children:
+            return self._render_inline_children(node)
+        return _MarkdownTextFragment(node.content)
+
+    def _render_list(
+        self,
+        node: SyntaxTreeNode,
+        *,
+        list_depth: int,
+    ) -> _MarkdownTextFragment:
+        ordered = node.type == "ordered_list"
+        try:
+            start_number = int(node.attrs.get("start", 1))
+        except (AttributeError, TypeError, ValueError):
+            start_number = 1
+        items: list[_MarkdownTextFragment] = []
+        for index, item in enumerate(node.children):
+            marker = f"{start_number + index}. " if ordered else "• "
+            items.append(
+                self._render_list_item(
+                    item,
+                    marker=marker,
+                    list_depth=list_depth,
+                )
+            )
+        return _join_markdown_fragments(items, "\n")
+
+    def _render_list_item(
+        self,
+        node: SyntaxTreeNode,
+        *,
+        marker: str,
+        list_depth: int,
+    ) -> _MarkdownTextFragment:
+        parts: list[_MarkdownTextFragment] = []
+        first_content = True
+        for child in node.children:
+            if child.type in {"bullet_list", "ordered_list"}:
+                nested = self._render_list(child, list_depth=list_depth + 1)
+                if nested.text:
+                    parts.append(nested)
+                continue
+
+            fragment = self._render_block(child, list_depth=list_depth)
+            if not fragment.text:
+                continue
+            indent = "  " * list_depth
+            if first_content:
+                fragment = _prefix_markdown_fragment_lines(
+                    fragment,
+                    f"{indent}{marker}",
+                    f"{indent}{' ' * len(marker)}",
+                )
+                first_content = False
+            else:
+                fragment = _prefix_markdown_fragment_lines(
+                    fragment,
+                    f"{indent}  ",
+                    f"{indent}  ",
+                )
+            parts.append(fragment)
+        return _join_markdown_fragments(parts, "\n")
+
+    def _render_table(self, node: SyntaxTreeNode) -> _MarkdownTextFragment:
+        rows: list[list[_MarkdownTextFragment]] = []
+        header_row_count = 0
+        for section in node.children:
+            section_rows = [child for child in section.children if child.type == "tr"]
+            for row in section_rows:
+                cells = [
+                    _strip_markdown_fragment(self._render_inline_children(cell))
+                    for cell in row.children
+                    if cell.type in {"th", "td"}
+                ]
+                if cells:
+                    rows.append(cells)
+            if section.type == "thead":
+                header_row_count = len(rows)
+
+        if not rows:
+            return _MarkdownTextFragment("")
+        column_count = max(len(row) for row in rows)
+        for row in rows:
+            row.extend(_MarkdownTextFragment("") for _ in range(column_count - len(row)))
+        widths = [
+            max(1, max(_markdown_display_width(row[column].text) for row in rows))
+            for column in range(column_count)
+        ]
+
+        top = "╭" + "┬".join("─" * (width + 2) for width in widths) + "╮"
+        middle = "├" + "┼".join("─" * (width + 2) for width in widths) + "┤"
+        bottom = "╰" + "┴".join("─" * (width + 2) for width in widths) + "╯"
+        rendered_rows: list[_MarkdownTextFragment] = []
+        for row_index, row in enumerate(rows):
+            pieces = [_MarkdownTextFragment("│ ")]
+            for column, cell in enumerate(row):
+                if row_index < header_row_count:
+                    cell = _style_markdown_fragment(cell, "bold")
+                pieces.append(cell)
+                pieces.append(
+                    _MarkdownTextFragment(
+                        " " * (widths[column] - _markdown_display_width(cell.text))
+                    )
+                )
+                pieces.append(
+                    _MarkdownTextFragment(" │" if column == column_count - 1 else " │ ")
+                )
+            rendered_rows.append(_join_markdown_fragments(pieces))
+
+        parts: list[_MarkdownTextFragment] = [_MarkdownTextFragment(top)]
+        for row_index, row in enumerate(rendered_rows):
+            parts.append(row)
+            if row_index < len(rendered_rows) - 1:
+                parts.append(_MarkdownTextFragment(middle))
+        parts.append(_MarkdownTextFragment(bottom))
+        return _join_markdown_fragments(parts, "\n")
+
+
+def render_transcript_breakdown_markdown(
+    text: str,
+) -> tuple[str, list[tuple[int, int, str]]]:
+    try:
+        fragment = _TranscriptBreakdownMarkdownRenderer().render(text)
+    except Exception:  # noqa: BLE001
+        rendered_text, spans, _mapping = _render_markdown_text(text)
+        return rendered_text, spans
+    return fragment.text, list(fragment.spans)
 
 
 def parse_image_page_selection(raw: str) -> list[int] | None:

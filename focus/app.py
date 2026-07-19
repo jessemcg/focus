@@ -1781,16 +1781,19 @@ class Focus(Adw.Application):
         self._append_rounded_grid_table_style(buf, text, 0)
 
     def _apply_table_font_size_to_current_buffer(self) -> None:
-        if not self.textview:
-            return
-        buf = self.textview.get_buffer()
-        table = buf.get_tag_table()
-        if table is None:
-            return
-        tag = table.lookup("rounded-grid-nowrap")
-        if tag is None:
-            return
-        tag.set_property("size-points", float(self._table_font_size_pt))
+        buffers: list[Gtk.TextBuffer] = []
+        if self.textview:
+            buffers.append(self.textview.get_buffer())
+        if self._transcript_breakdown_buffer:
+            buffers.append(self._transcript_breakdown_buffer)
+        for buf in buffers:
+            table = buf.get_tag_table()
+            if table is None:
+                continue
+            tag = table.lookup("rounded-grid-nowrap")
+            if tag is None:
+                continue
+            tag.set_property("size-points", float(self._table_font_size_pt))
 
     def _append_rounded_grid_table_style(
         self,
@@ -1863,6 +1866,20 @@ class Focus(Adw.Application):
 
         bold_tag = ensure_tag("md-bold", weight=Pango.Weight.BOLD)
         italic_tag = ensure_tag("md-italic", style=Pango.Style.ITALIC)
+        inline_code_tag = ensure_tag(
+            "md-inline-code",
+            family="monospace",
+            scale=0.95,
+        )
+        code_block_tag = ensure_tag(
+            "md-code-block",
+            family="monospace",
+            left_margin=AI_BLOCKQUOTE_LEFT_MARGIN,
+            right_margin=AI_BLOCKQUOTE_RIGHT_MARGIN,
+            pixels_above_lines=AI_BLOCKQUOTE_SPACING_PX,
+            pixels_below_lines=AI_BLOCKQUOTE_SPACING_PX,
+        )
+        strikethrough_tag = ensure_tag("md-strikethrough", strikethrough=True)
         blockquote_tag = ensure_tag(
             "md-blockquote",
             style=Pango.Style.ITALIC,
@@ -1889,6 +1906,12 @@ class Focus(Adw.Application):
                 buf.apply_tag(bold_tag, start_iter, end_iter)
             elif kind == "italic":
                 buf.apply_tag(italic_tag, start_iter, end_iter)
+            elif kind == "inline_code":
+                buf.apply_tag(inline_code_tag, start_iter, end_iter)
+            elif kind == "code_block":
+                buf.apply_tag(code_block_tag, start_iter, end_iter)
+            elif kind == "strikethrough":
+                buf.apply_tag(strikethrough_tag, start_iter, end_iter)
             elif kind == "blockquote":
                 buf.apply_tag(blockquote_tag, start_iter, end_iter)
             elif kind.startswith("heading"):
@@ -4303,11 +4326,16 @@ class Focus(Adw.Application):
             self._transient_toast("Transcript page breakdown not available.")
             return
         content = self._read_text_file(path)
-        rendered_text, markdown_spans, _orig_to_clean = _render_markdown_text(content)
+        rendered_text, markdown_spans = render_transcript_breakdown_markdown(content)
         window = self._ensure_transcript_breakdown_window()
         if self._transcript_breakdown_buffer:
             self._transcript_breakdown_buffer.set_text(rendered_text)
             self._apply_markdown_spans(self._transcript_breakdown_buffer, markdown_spans)
+            self._append_rounded_grid_table_style(
+                self._transcript_breakdown_buffer,
+                rendered_text,
+                0,
+            )
         window.present()
 
     def _on_show_transcript_breakdown_action(
