@@ -4,6 +4,7 @@
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
 - `focus/app.py`: main `Focus` application class; owns transcript browsing, TOC sidebar, dual-view state, image view, grep, AI panel, RAG, and embedded Agent orchestration.
 - `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, search normalization, citation formatting, markdown/link rendering, RAG helpers, and PI session-log helpers.
+- `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
 - `focus/agent_helper.py`: read-only source-map lookup helper CLI used by embedded PI Agent sessions.

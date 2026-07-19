@@ -18,6 +18,9 @@ set -euo pipefail
   printf 'arg=%s\\n' "$@"
   if [[ -f .pi/settings.json ]]; then
     printf 'settings=staged\\n'
+    if grep -q '"defaultModel":"test-model"' .pi/settings.json; then
+      printf 'model=staged\\n'
+    fi
   fi
   if [[ -f .pi/skills/focus-answer-record-questions/SKILL.md ]]; then
     printf 'skill=staged\\n'
@@ -45,7 +48,7 @@ def _run_wrapper(tmp_path: Path) -> tuple[list[str], Path, Path]:
     )
     skill_dir.mkdir(parents=True)
     (pi_project_dir / "settings.json").write_text(
-        '{"defaultProvider":"fireworks"}',
+        '{"defaultProvider":"fireworks","defaultModel":"test-model"}',
         encoding="utf-8",
     )
     (skill_dir / "SKILL.md").write_text(
@@ -81,6 +84,7 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "arg=Exact Focus prompt",
         "with a second line.",
         "settings=staged",
+        "model=staged",
         "skill=staged",
     ]
     assert not workspace.exists()

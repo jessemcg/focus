@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 from focus.core import *  # noqa: F401,F403
+from focus.pi_runtime import (
+    PiModel,
+    PiRuntimeError,
+    PiSettingsError,
+    available_pi_models,
+    current_project_pi_model,
+    save_project_pi_model,
+)
 
 @dataclass
 class SummarizationPromptWidgets:
@@ -64,12 +72,25 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._prompt_list: Gtk.ListBox | None = None
         self._prompt_stack: Gtk.Stack | None = None
         self._speech_rag_source_dialog: Gtk.FileDialog | None = None
+        self._pi_model_options: list[PiModel | None] = []
+        self._pi_model_generation = 0
+        self._pi_model_applying = False
+        self._pi_model_selection_changed = False
+        self._pi_model_closed = False
+        try:
+            self._original_pi_model_key = current_project_pi_model()
+            self._pi_model_settings_error = ""
+        except PiSettingsError as exc:
+            self._original_pi_model_key = None
+            self._pi_model_settings_error = str(exc)
 
         self.set_title("Settings")
         self.set_default_size(900, 720)
         self.set_resizable(True)
+        self.connect("close-request", self._on_settings_close_request)
         self._build_ui()
         self._load_settings()
+        self._load_pi_models()
 
     def _build_ui(self) -> None:
         view = Adw.ToolbarView()
@@ -696,11 +717,40 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         pi_agent_command_row.set_hexpand(True)
         launch_group.add(pi_agent_command_row)
 
+        self.pi_model_row = Adw.ComboRow(
+            title="PI Model",
+            subtitle=(
+                self._pi_model_settings_error
+                or "Loading models authorized in PI..."
+            ),
+        )
+        self.pi_model_row.set_model(Gtk.StringList.new(["Loading PI models..."]))
+        self.pi_model_row.set_sensitive(False)
+        self.pi_model_row.connect(
+            "notify::selected",
+            self._on_pi_model_selected,
+        )
+        self.pi_model_refresh_button = Gtk.Button(
+            icon_name="view-refresh-symbolic",
+        )
+        self.pi_model_refresh_button.add_css_class("flat")
+        self.pi_model_refresh_button.set_tooltip_text(
+            "Refresh available PI models"
+        )
+        self.pi_model_refresh_button.connect(
+            "clicked",
+            self._on_refresh_pi_models,
+        )
+        add_model_suffix = getattr(self.pi_model_row, "add_suffix", None)
+        if callable(add_model_suffix):
+            add_model_suffix(self.pi_model_refresh_button)
+        launch_group.add(self.pi_model_row)
+
         pi_configuration_row = Adw.ActionRow(
             title="PI configuration",
             subtitle=(
-                "The project .pi/settings.json pins the provider and model; "
-                "authentication remains in your global PI configuration."
+                "The selected provider and model are saved in project "
+                ".pi/settings.json; credentials remain in your global PI configuration."
             ),
         )
         launch_group.add(pi_configuration_row)
@@ -727,6 +777,206 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             pi_agent_command_row=pi_agent_command_row,
         )
         return page
+
+    def _on_settings_close_request(self, *_args: object) -> bool:
+        self._pi_model_closed = True
+        self._pi_model_generation += 1
+        return False
+
+    def _selected_pi_model(self) -> PiModel | None:
+        selected = int(self.pi_model_row.get_selected())
+        if 0 <= selected < len(self._pi_model_options):
+            return self._pi_model_options[selected]
+        return None
+
+    def _update_pi_model_subtitle(self) -> None:
+        model = self._selected_pi_model()
+        if model is None:
+            return
+        self.pi_model_row.set_subtitle(
+            f"Project-wide setting: {model.provider} / {model.model_id}"
+        )
+
+    def _on_pi_model_selected(
+        self,
+        _row: Adw.ComboRow,
+        _parameter: object,
+    ) -> None:
+        if self._pi_model_applying:
+            return
+        model = self._selected_pi_model()
+        if model is None:
+            return
+        self._pi_model_selection_changed = (
+            model.settings_key != self._original_pi_model_key
+        )
+        self._update_pi_model_subtitle()
+
+    def _on_refresh_pi_models(self, _button: Gtk.Button) -> None:
+        self._load_pi_models()
+
+    def _load_pi_models(self) -> None:
+        if self._pi_model_closed:
+            return
+        if self._pi_model_settings_error:
+            try:
+                self._original_pi_model_key = current_project_pi_model()
+                self._pi_model_settings_error = ""
+            except PiSettingsError as exc:
+                self.pi_model_row.set_subtitle(str(exc))
+                self.pi_model_row.set_sensitive(False)
+                self.pi_model_refresh_button.set_sensitive(True)
+                return
+
+        selected = self._selected_pi_model()
+        desired_key = (
+            selected.settings_key
+            if self._pi_model_selection_changed and selected is not None
+            else self._original_pi_model_key
+        )
+        self._pi_model_generation += 1
+        generation = self._pi_model_generation
+        agent_widgets = self._prompt_editors.get("agent")
+        command = (
+            agent_widgets.pi_agent_command_row.get_text().strip()
+            if isinstance(agent_widgets, AgentSettingsWidgets)
+            else DEFAULT_PI_AGENT_COMMAND
+        )
+        try:
+            command_argv = resolve_pi_agent_argv(
+                command or DEFAULT_PI_AGENT_COMMAND,
+                path_env=os.environ.get("PATH"),
+            )
+        except ValueError as exc:
+            self._finish_pi_model_load(
+                generation,
+                [],
+                f"Invalid PI command: {exc}",
+                desired_key,
+            )
+            return
+        if not command_argv:
+            self._finish_pi_model_load(
+                generation,
+                [],
+                "PI command is empty.",
+                desired_key,
+            )
+            return
+        incompatible_flag = incompatible_pi_agent_flag(command_argv)
+        if incompatible_flag:
+            self._finish_pi_model_load(
+                generation,
+                [],
+                (
+                    f"PI option {incompatible_flag} is incompatible with "
+                    "the embedded session."
+                ),
+                desired_key,
+            )
+            return
+
+        self.pi_model_row.set_sensitive(False)
+        self.pi_model_row.set_subtitle("Loading models authorized in PI...")
+        self.pi_model_refresh_button.set_sensitive(False)
+
+        def worker() -> None:
+            try:
+                models = available_pi_models(command_argv)
+                error = ""
+            except PiRuntimeError as exc:
+                models = []
+                error = str(exc)
+            GLib.idle_add(
+                self._finish_pi_model_load,
+                generation,
+                models,
+                error,
+                desired_key,
+            )
+
+        threading.Thread(
+            target=worker,
+            name="focus-pi-models",
+            daemon=True,
+        ).start()
+
+    def _finish_pi_model_load(
+        self,
+        generation: int,
+        models: list[PiModel],
+        error: str,
+        desired_key: tuple[str, str] | None,
+    ) -> bool:
+        if self._pi_model_closed or generation != self._pi_model_generation:
+            return False
+        self.pi_model_refresh_button.set_sensitive(True)
+        if error:
+            current = self._original_pi_model_key
+            if current is None:
+                self._pi_model_options = [None]
+                labels = ["PI models unavailable"]
+            else:
+                current_model = PiModel(
+                    provider=current[0],
+                    model_id=current[1],
+                    name=current[1],
+                )
+                self._pi_model_options = [current_model]
+                labels = [f"{current_model.label} (currently configured)"]
+            self._pi_model_applying = True
+            self.pi_model_row.set_model(Gtk.StringList.new(labels))
+            self.pi_model_row.set_selected(0)
+            self._pi_model_applying = False
+            self._pi_model_selection_changed = False
+            self.pi_model_row.set_sensitive(False)
+            self.pi_model_row.set_subtitle(error)
+            return False
+
+        available_keys = {model.settings_key for model in models}
+        options: list[PiModel | None] = []
+        labels: list[str] = []
+        current = self._original_pi_model_key
+        if current is not None and current not in available_keys:
+            unavailable = PiModel(
+                provider=current[0],
+                model_id=current[1],
+                name=current[1],
+            )
+            options.append(unavailable)
+            labels.append(
+                f"{unavailable.label} (currently configured; unavailable)"
+            )
+        options.extend(models)
+        labels.extend(model.label for model in models)
+        if not options:
+            options = [None]
+            labels = ["No authenticated PI models found"]
+
+        selected_index = 0
+        if desired_key is not None:
+            for index, model in enumerate(options):
+                if model is not None and model.settings_key == desired_key:
+                    selected_index = index
+                    break
+        self._pi_model_options = options
+        self._pi_model_applying = True
+        self.pi_model_row.set_model(Gtk.StringList.new(labels))
+        self.pi_model_row.set_selected(selected_index)
+        self._pi_model_applying = False
+        selected_model = self._selected_pi_model()
+        self._pi_model_selection_changed = bool(
+            selected_model is not None
+            and selected_model.settings_key != self._original_pi_model_key
+        )
+        self.pi_model_row.set_sensitive(bool(models))
+        if selected_model is None:
+            self.pi_model_row.set_subtitle(
+                "Authorize a provider in PI, then refresh this list."
+            )
+        else:
+            self._update_pi_model_subtitle()
+        return False
 
     def _on_prompt_row_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
         if not row or not self._prompt_stack:
@@ -1037,7 +1287,19 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             model_profiles=model_profiles,
             task_profile_defaults=task_profile_defaults,
         )
+        selected_pi_model = self._selected_pi_model()
+        pi_model_saved = False
+        if self._pi_model_selection_changed and selected_pi_model is not None:
+            try:
+                save_project_pi_model(selected_pi_model)
+                pi_model_saved = True
+            except PiSettingsError as exc:
+                self._show_status_toast(f"Unable to save PI model: {exc}")
+                return
         save_ai_settings(settings)
+        if pi_model_saved and selected_pi_model is not None:
+            self._original_pi_model_key = selected_pi_model.settings_key
+            self._pi_model_selection_changed = False
         self.app.update_font_sizes(
             font_size_pt=record_font_size,
             ai_font_size_pt=ai_font_size,
@@ -1045,7 +1307,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             record_font_family_name=record_font_family_name,
         )
         self.app.on_ai_settings_saved(settings)
-        if settings.is_configured() and settings.is_rag_ready():
+        if pi_model_saved:
+            self._show_status_toast(
+                "Saved. The PI model applies to new Agent sessions."
+            )
+        elif settings.is_configured() and settings.is_rag_ready():
             self._show_status_toast("Saved. Summaries and RAG questions are enabled.")
         elif settings.is_configured():
             self._show_status_toast(
