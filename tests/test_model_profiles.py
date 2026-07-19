@@ -2,14 +2,8 @@ import json
 
 import focus.core as focus
 from focus.core import (
-    CONFIG_KEY_AGENT_PROMPT_TEMPLATE,
-    CONFIG_KEY_AGENT_RUNTIME,
     CONFIG_KEY_API_KEY,
     CONFIG_KEY_API_URL,
-    CONFIG_KEY_CODEX_AGENT_COMMAND,
-    CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY,
-    CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE,
-    CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE,
     CONFIG_KEY_MODEL_ID,
     CONFIG_KEY_MODEL_PROFILES,
     CONFIG_KEY_PAGE_API_KEY,
@@ -23,7 +17,6 @@ from focus.core import (
     TASK_PROFILE_RANGE,
     AiSettings,
     ModelProfile,
-    discover_fireworks_codex_profiles,
     discover_pi_agent_command,
     incompatible_pi_agent_flag,
     load_ai_settings,
@@ -158,7 +151,10 @@ def test_model_profile_short_name_falls_back_to_display_name() -> None:
 
 def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
-    config_path.write_text("{}", encoding="utf-8")
+    config_path.write_text(
+        json.dumps({"agent_prompt_template": "Stale prompt: {question}"}),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
     profile = ModelProfile(
         key="profile1",
@@ -172,11 +168,6 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     settings = load_ai_settings()
     settings.model_profiles[0] = profile
     settings.task_profile_defaults[TASK_PROFILE_PAGE] = "profile1"
-    settings.codex_agent_fireworks_key = "fw-test-key"
-    settings.codex_agent_command = "codex --profile fireconnect"
-    settings.agent_runtime = focus.AGENT_RUNTIME_PI
-    settings.agent_prompt_template = "Agent prompt: {question}"
-    settings.codex_agent_permission_mode = focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS
     settings.pi_agent_command = "/opt/pi/bin/pi --thinking high"
 
     save_ai_settings(settings)
@@ -187,12 +178,7 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     assert saved[CONFIG_KEY_API_URL] == "https://profile.example"
     assert saved[CONFIG_KEY_MODEL_ID] == "profile-model"
     assert saved[CONFIG_KEY_API_KEY] == "profile-key"
-    assert saved[CONFIG_KEY_CODEX_AGENT_COMMAND] == "codex --profile fireconnect"
-    assert saved[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] == "fw-test-key"
-    assert saved[CONFIG_KEY_AGENT_RUNTIME] == focus.AGENT_RUNTIME_PI
-    assert saved[CONFIG_KEY_AGENT_PROMPT_TEMPLATE] == "Agent prompt: {question}"
-    assert saved[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] == "Agent prompt: {question}"
-    assert saved[CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE] == focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS
+    assert "agent_prompt_template" not in saved
     assert saved[CONFIG_KEY_PI_AGENT_COMMAND] == "/opt/pi/bin/pi --thinking high"
     assert saved[CONFIG_KEY_PAGE_API_URL] == "https://profile.example"
     assert saved[CONFIG_KEY_PAGE_MODEL_ID] == "profile-model"
@@ -200,172 +186,17 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     assert saved[CONFIG_KEY_SEARCH_CHIP_COLOR] == focus.DEFAULT_SEARCH_CHIP_COLOR
 
 
-def test_load_ai_settings_reads_codex_agent_prompt_template(tmp_path, monkeypatch) -> None:
+def test_load_ai_settings_ignores_retired_agent_prompt_template(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        """{
-  "codex_agent_prompt_template": "Custom agent prompt for {question}"
-}
-""",
+        json.dumps({"agent_prompt_template": "Shared prompt: {question}"}),
         encoding="utf-8",
     )
     monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
 
     settings = load_ai_settings()
 
-    assert settings.agent_prompt_template == "Custom agent prompt for {question}"
-
-
-def test_load_ai_settings_prefers_shared_agent_prompt_template(tmp_path, monkeypatch) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "agent_prompt_template": "Shared prompt: {question}",
-                "codex_agent_prompt_template": "Legacy prompt: {question}",
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.agent_prompt_template == "Shared prompt: {question}"
-
-
-def test_load_ai_settings_defaults_agent_runtime_to_codex(tmp_path, monkeypatch) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.agent_runtime == focus.AGENT_RUNTIME_CODEX
-
-
-def test_load_ai_settings_rejects_unknown_agent_runtime(tmp_path, monkeypatch) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps({"agent_runtime": "unsupported"}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.agent_runtime == focus.AGENT_RUNTIME_CODEX
-
-
-def test_load_ai_settings_defaults_codex_agent_permission_mode(tmp_path, monkeypatch) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.codex_agent_permission_mode == focus.DEFAULT_CODEX_AGENT_PERMISSION_MODE
-
-
-def test_load_ai_settings_rejects_unknown_codex_agent_permission_mode(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps({"codex_agent_permission_mode": "unsupported"}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.codex_agent_permission_mode == focus.DEFAULT_CODEX_AGENT_PERMISSION_MODE
-
-
-def test_load_ai_settings_reads_full_access_codex_agent_permission_mode(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "codex_agent_permission_mode": focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS,
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.codex_agent_permission_mode == focus.CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS
-
-
-def test_load_ai_settings_builds_codex_agent_command_from_legacy_profile(tmp_path, monkeypatch) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "codex_agent_bin": "codex",
-                "codex_agent_profile": "fireworks-kimi-k2p6",
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.codex_agent_command == "codex --profile fireconnect"
-
-
-def test_load_ai_settings_upgrades_legacy_default_agent_prompt(tmp_path, monkeypatch) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "codex_agent_prompt_template": focus.LEGACY_CODEX_AGENT_PROMPT_TEMPLATES[0],
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
-
-    settings = load_ai_settings()
-
-    assert settings.agent_prompt_template == focus.DEFAULT_AGENT_PROMPT_TEMPLATE
-    assert "{helper_image_command}" not in settings.agent_prompt_template
-    assert "{helper_map_command}" not in settings.agent_prompt_template
-    assert "$FOCUS_RECORD_AGENT_PYTHON" in settings.agent_prompt_template
-    assert "Available helper commands" in settings.agent_prompt_template
-    assert "Do not cite local paths" in settings.agent_prompt_template
-    assert "(RT 6, 34; CT 140, 190.)" in settings.agent_prompt_template
-    assert "Reporter transcript groups" in settings.agent_prompt_template
-    assert "(RT 3; CT 243, 250, 252.)" in settings.agent_prompt_template
-    assert "(CT 243, 250, 252; RT 3.)" not in settings.agent_prompt_template
-
-
-def test_discover_fireworks_codex_profiles_filters_config_files(tmp_path) -> None:
-    (tmp_path / "fireworks-glm.config.toml").write_text(
-        """model = "accounts/fireworks/models/glm-5p2"
-model_provider = "fireworks-ai"
-""",
-        encoding="utf-8",
-    )
-    (tmp_path / "openai.config.toml").write_text(
-        """model = "gpt-5.5"
-model_provider = "openai"
-""",
-        encoding="utf-8",
-    )
-    (tmp_path / "broken.config.toml").write_text("model = [", encoding="utf-8")
-
-    profiles = discover_fireworks_codex_profiles(tmp_path)
-
-    assert [profile.profile for profile in profiles] == ["fireworks-glm"]
-    assert profiles[0].model == "accounts/fireworks/models/glm-5p2"
+    assert not hasattr(settings, "agent_prompt_template")
 
 
 def test_discover_pi_agent_command_finds_installer_layout(tmp_path) -> None:
@@ -394,3 +225,11 @@ def test_incompatible_pi_agent_flag_rejects_noninteractive_modes() -> None:
     assert incompatible_pi_agent_flag(["pi", "--print"]) == "--print"
     assert incompatible_pi_agent_flag(["pi", "--mode", "json"]) == "--mode json"
     assert incompatible_pi_agent_flag(["pi", "--mode=text"]) is None
+
+
+def test_incompatible_pi_agent_flag_rejects_project_policy_overrides() -> None:
+    assert incompatible_pi_agent_flag(["pi", "--model", "other"]) == "--model"
+    assert incompatible_pi_agent_flag(["pi", "--provider=other"]) == "--provider=other"
+    assert incompatible_pi_agent_flag(["pi", "--tools", "read"]) == "--tools"
+    assert incompatible_pi_agent_flag(["pi", "--no-skills"]) == "--no-skills"
+    assert incompatible_pi_agent_flag(["pi", "--no-approve"]) == "--no-approve"

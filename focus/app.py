@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import shlex
 import sys
 
 from .core import *  # noqa: F401,F403
@@ -229,7 +228,6 @@ class Focus(Adw.Application):
         self._agent_workspace_path: Path | None = None
         self._agent_session_log_path: Path | None = None
         self._agent_pi_session_dir: Path | None = None
-        self._agent_runtime_active = DEFAULT_AGENT_RUNTIME
         self._agent_last_answer_text = ""
         self._agent_terminal: Any | None = None
         self._agent_terminal_pid: int | None = None
@@ -682,7 +680,7 @@ class Focus(Adw.Application):
         agent_mode_button = self._build_ai_mode_button(
             "Agent",
             AI_VIEW_AGENT_QA,
-            "Open an embedded Codex agent for deeper record questions",
+            "Open an embedded PI agent for deeper record questions",
         )
         ai_mode_strip.append(agent_mode_button)
 
@@ -6241,12 +6239,6 @@ class Focus(Adw.Application):
             return str(venv_python)
         return sys.executable or "python3"
 
-    def _codex_home(self) -> Path:
-        return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
-
-    def _codex_sessions_root(self) -> Path:
-        return self._codex_home() / "sessions"
-
     def _create_agent_workspace(self) -> Path:
         cache_root = Path(
             os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")
@@ -6283,26 +6275,15 @@ class Focus(Adw.Application):
             self._agent_answer_poll_id = None
             return False
         if self._agent_session_log_path is None:
-            if self._agent_runtime_active == AGENT_RUNTIME_PI:
-                session_dir = self._agent_pi_session_dir or pi_session_dir_for_cwd(workspace)
-                self._agent_session_log_path = find_latest_pi_session_log_for_cwd(
-                    session_dir,
-                    workspace,
-                )
-            else:
-                self._agent_session_log_path = find_latest_codex_session_log_for_cwd(
-                    self._codex_sessions_root(),
-                    workspace,
-                )
+            session_dir = self._agent_pi_session_dir or pi_session_dir_for_cwd(workspace)
+            self._agent_session_log_path = find_latest_pi_session_log_for_cwd(
+                session_dir,
+                workspace,
+            )
         if self._agent_session_log_path is not None:
-            if self._agent_runtime_active == AGENT_RUNTIME_PI:
-                answer = extract_latest_pi_final_answer_from_jsonl(
-                    self._agent_session_log_path
-                )
-            else:
-                answer = extract_latest_codex_final_answer_from_jsonl(
-                    self._agent_session_log_path
-                )
+            answer = extract_latest_pi_final_answer_from_jsonl(
+                self._agent_session_log_path
+            )
             if answer and answer != self._agent_last_answer_text:
                 self._agent_last_answer_text = answer
                 state = self._get_ai_output_state(AI_VIEW_AGENT_QA)
@@ -6318,54 +6299,19 @@ class Focus(Adw.Application):
         return keep_polling
 
     def _compose_agent_prompt(self, question: str) -> str:
-        layout = self._record_layout
-        current_page = self._current_page_number()
         current_label = self._current_transcript_page_label()
-        page_context = ""
-        if current_page is not None:
-            label = current_label.citation_label if current_label else f"file page {current_page:04d}"
-            page_context = f"\nCurrent Focus page: {label} (text page {current_page:04d})."
-        source_map = layout.source_map_path
-        report_boundaries = layout.report_boundaries_path
-        hearing_boundaries = layout.hearing_boundaries_path
-        minutes_boundaries = layout.minutes_boundaries_path
-        vector_dir = layout.rag_vector_dir or (layout.root / "rag" / "vector_database")
-        case_overview = layout.rag_case_overview_path or (layout.root / "rag" / "case_overview.txt")
-        helper = FOCUS_RECORD_AGENT_HELPER
-        python_path = self._agent_python_path()
-        template = self._ai_settings.agent_prompt_template or DEFAULT_AGENT_PROMPT_TEMPLATE
-        helper_prefix = (
-            f"{shlex.quote(python_path)} {shlex.quote(str(helper))} "
-            f"--case-root {shlex.quote(str(layout.root))}"
+        prompt = (
+            f"/skill:{FOCUS_PI_SKILL_NAME} <question>\n"
+            f"{question.strip()}\n"
+            "</question>"
         )
-        values = {
-            "question": question.strip(),
-            "case_root": str(layout.root),
-            "source_map": str(source_map),
-            "report_boundaries": str(report_boundaries),
-            "hearing_boundaries": str(hearing_boundaries),
-            "minutes_boundaries": str(minutes_boundaries),
-            "text_pages": str(layout.text_dir),
-            "image_pages": str(layout.images_dir),
-            "optimized_chunks": str(layout.root / "artifacts" / "optimized"),
-            "case_overview": str(case_overview),
-            "vector_database": str(vector_dir),
-            "helper": str(helper),
-            "python_path": python_path,
-            "current_page_context": page_context,
-            "helper_command_prefix": (
-                '"$FOCUS_RECORD_AGENT_PYTHON" "$FOCUS_RECORD_AGENT_HELPER" '
-                '--case-root "$FOCUS_AGENT_CASE_ROOT"'
-            ),
-            "helper_map_command": f"{helper_prefix} map --json",
-            "helper_grep_command": f'{helper_prefix} grep "search phrase" --json',
-            "helper_lookup_command": f'{helper_prefix} lookup --citation "CT 6" --json',
-            "helper_rag_command": f'{helper_prefix} rag "question" --json',
-        }
-        try:
-            return template.format_map(values)
-        except (KeyError, ValueError):
-            return DEFAULT_AGENT_PROMPT_TEMPLATE.format_map(values)
+        if current_label and current_label.citation_label:
+            prompt += (
+                "\n\n<current-focus-citation>\n"
+                f"{current_label.citation_label}\n"
+                "</current-focus-citation>"
+            )
+        return prompt
 
     def _write_agent_prompt_file(self, prompt: str) -> Path:
         handle = tempfile.NamedTemporaryFile(
@@ -6405,55 +6351,38 @@ class Focus(Adw.Application):
             return
         self._ai_settings = load_ai_settings()
         settings = self._ai_settings
-        runtime = normalize_agent_runtime(settings.agent_runtime)
-        runtime_label = "PI" if runtime == AGENT_RUNTIME_PI else "Codex"
-        if runtime == AGENT_RUNTIME_PI:
-            command = settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
-        else:
-            command = settings.codex_agent_command.strip() or DEFAULT_CODEX_AGENT_COMMAND
+        command = settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
         try:
-            command_argv = (
-                resolve_pi_agent_argv(command, path_env=os.environ.get("PATH"))
-                if runtime == AGENT_RUNTIME_PI
-                else shlex.split(command)
+            command_argv = resolve_pi_agent_argv(
+                command,
+                path_env=os.environ.get("PATH"),
             )
         except ValueError as exc:
-            self._ai_transient_toast(f"Invalid {runtime_label} command: {exc}")
+            self._ai_transient_toast(f"Invalid PI command: {exc}")
             return
         if not command_argv:
-            self._ai_transient_toast(f"{runtime_label} command is empty.")
+            self._ai_transient_toast("PI command is empty.")
             return
-        if runtime == AGENT_RUNTIME_PI:
-            incompatible_flag = incompatible_pi_agent_flag(command_argv)
-            if incompatible_flag:
-                self._ai_transient_toast(
-                    f"PI option {incompatible_flag} is incompatible with the embedded session."
-                )
-                return
-            executable = command_argv[0]
-            if os.path.sep in executable:
-                executable_path = Path(executable).expanduser()
-                if not executable_path.is_file() or not os.access(executable_path, os.X_OK):
-                    self._ai_transient_toast(
-                        "PI executable not found. Set the PI command in Settings."
-                    )
-                    return
-                command_argv[0] = str(executable_path)
-            elif shutil.which(executable) is None:
-                self._ai_transient_toast(
-                    "PI executable not found. Set the PI command in Settings."
-                )
-                return
-
-        codex_sandbox = "workspace-write"
-        codex_approval = ""
-        if runtime == AGENT_RUNTIME_CODEX:
-            permission_mode = normalize_codex_agent_permission_mode(
-                settings.codex_agent_permission_mode
+        incompatible_flag = incompatible_pi_agent_flag(command_argv)
+        if incompatible_flag:
+            self._ai_transient_toast(
+                f"PI option {incompatible_flag} is incompatible with the embedded session."
             )
-            if permission_mode == CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS:
-                codex_sandbox = "danger-full-access"
-                codex_approval = "never"
+            return
+        executable = command_argv[0]
+        if os.path.sep in executable:
+            executable_path = Path(executable).expanduser()
+            if not executable_path.is_file() or not os.access(executable_path, os.X_OK):
+                self._ai_transient_toast(
+                    "PI executable not found. Install PI or set the PI command in Settings."
+                )
+                return
+            command_argv[0] = str(executable_path)
+        elif shutil.which(executable) is None:
+            self._ai_transient_toast(
+                "PI executable not found. Install PI or set the PI command in Settings."
+            )
+            return
         wrapper = PROJECT_DIR / "scripts" / "focus-agent-vte.sh"
         if not wrapper.is_file():
             self._ai_transient_toast(f"Agent wrapper not found: {wrapper}")
@@ -6461,6 +6390,12 @@ class Focus(Adw.Application):
         helper = FOCUS_RECORD_AGENT_HELPER
         if not helper.is_file():
             self._ai_transient_toast(f"Record Agent helper not found: {helper}")
+            return
+        pi_settings = FOCUS_PI_PROJECT_DIR / "settings.json"
+        if not pi_settings.is_file() or not FOCUS_PI_SKILL_FILE.is_file():
+            self._ai_transient_toast(
+                "Focus PI project settings or record-question skill is missing."
+            )
             return
 
         try:
@@ -6470,38 +6405,25 @@ class Focus(Adw.Application):
             return
         self._agent_workspace_path = workspace
         self._agent_session_log_path = None
-        self._agent_runtime_active = runtime
-        self._agent_pi_session_dir = (
-            pi_session_dir_for_cwd(workspace)
-            if runtime == AGENT_RUNTIME_PI
-            else None
-        )
+        self._agent_pi_session_dir = pi_session_dir_for_cwd(workspace)
 
         env = os.environ.copy()
         env.update(
             {
-                "FOCUS_AGENT_RUNTIME": runtime,
                 "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
                 "FOCUS_AGENT_CASE_ROOT": str(self._record_layout.root),
                 "FOCUS_AGENT_WORKSPACE": str(workspace),
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
-                "FOCUS_CONFIG_FILE": str(CONFIG_FILE),
-                "FOCUS_CODEX_AGENT_SANDBOX": codex_sandbox,
-                "FOCUS_CODEX_AGENT_APPROVAL": codex_approval,
+                "FOCUS_PI_PROJECT_DIR": str(FOCUS_PI_PROJECT_DIR),
                 "FOCUS_AGENT_COMMAND_ARGC": str(len(command_argv)),
             }
         )
         for index, arg in enumerate(command_argv):
             env[f"FOCUS_AGENT_COMMAND_ARG_{index}"] = arg
-        if runtime == AGENT_RUNTIME_PI and os.path.sep in command_argv[0]:
+        if os.path.sep in command_argv[0]:
             executable_dir = str(Path(command_argv[0]).parent)
             env["PATH"] = executable_dir + os.pathsep + env.get("PATH", "")
-        if runtime == AGENT_RUNTIME_CODEX:
-            fireworks_key = settings.codex_agent_fireworks_key.strip()
-            if fireworks_key:
-                env["FIREWORKS_KEY"] = fireworks_key
-                env["FIREWORKS_API_KEY"] = fireworks_key
         argv = ["bash", str(wrapper)]
         cwd = str(self._record_layout.root)
         try:
@@ -6531,7 +6453,7 @@ class Focus(Adw.Application):
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._start_agent_answer_polling()
         self._update_ai_status(
-            f"Started embedded {runtime_label} Agent with command: {command}",
+            f"Started embedded PI Agent with command: {command}",
             spinning=False,
         )
         terminal.grab_focus()

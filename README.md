@@ -11,13 +11,14 @@ Focus is a Libadwaita GTK4 app for browsing court transcript text files with fas
 - Grep matches render in red and navigate hit-by-hit while keeping one transcript page visible
 - Toggle image view for page scans (Ctrl+I) when images are available
 - AI panel with page/range summaries, RAG Q&A, and a summary-file viewer
-- Agent questioning through either Codex or PI in the same embedded terminal and answer view
+- Agent questioning through PI in an embedded terminal with final responses mirrored into the Answer view
 - Markdown-style formatting for `*italic*`, `**bold**`, and `#`/`##`/`###` headings in transcript and summary text
 
 ## Requirements
 - Python 3.13 (see `pyproject.toml`)
 - PyGObject, GTK 4, Libadwaita 1
 - LangChain + Chroma + VoyageAI (for RAG; managed by `uv`)
+- [PI](https://pi.dev/docs/latest) (required for Agent queries)
 
 Ubuntu/Debian example:
 ```bash
@@ -89,22 +90,31 @@ Settings are stored in the project-root `config.json`. Key fields include:
   `range_api_url`, `range_api_key`, `range_model_id`, `range_summarization_prompt`
 - RAG: `rag_api_url`, `rag_api_key`, `rag_model_id`, `rag_prompt`, `rag_chunk_count`
 - RAG embeddings: `voyage_api_key`, `voyage_model`
-- Embedded Agent: `agent_runtime` (`codex` or `pi`), the runtime-specific command,
-  and one shared `agent_prompt_template`
+- Embedded Agent executable: `pi_agent_command`
 - Summary file viewer: `summary_file`, `summary_read_positions`
 
 Defaults are defined in the package modules if a key is missing.
 
-### Choosing an Agent
+### PI Agent requirement
 
-In Focus Settings, open the Agent page and choose either **Codex** or **PI**.
-Both runtimes receive the same Focus record-question prompt and run in the same
-embedded VTE terminal, with final responses mirrored into the same Answer view.
-Codex remains the default for existing configurations.
+Agent queries require PI to be installed. Follow the
+[PI installation and setup documentation](https://pi.dev/docs/latest) and
+configure Fireworks authentication in your global PI configuration before
+launching an Agent query in Focus.
 
-The PI runtime uses the provider, model, and authentication configured in
-`~/.pi/agent`. PI runs with the permissions of the user account that launched
-Focus; the Codex sandbox setting applies only to Codex.
+Focus keeps its Agent instructions in
+`.pi/skills/focus-answer-record-questions/SKILL.md`. The initial prompt only
+invokes that skill with the question and, when available, the current record
+citation. `.pi/settings.json` pins the embedded Agent to
+provider `fireworks` and model
+`accounts/fireworks/routers/glm-5p2-fast`; it does not contain credentials.
+
+Each Agent session receives a temporary copy of the project `.pi` directory and
+runs with PI's `read`, `bash`, `grep`, `find`, and `ls` tools. The skill requires
+read-only bundle research and uses PI's ripgrep-backed `grep` tool rather than
+the RAG database. Focus's separate RAG panel is unchanged. The PI executable can
+be changed on the Agent page in Focus Settings, but command-line options cannot
+override the project model, skill, trust, or tool policy.
 
 ## Project structure
 - `focus/`: Python package for the app and helper CLIs
@@ -112,8 +122,10 @@ Focus; the Codex sandbox setting applies only to Codex.
 - `focus/core.py`: shared constants, dataclasses, config helpers, record parsing, search, citation, rendering, RAG, and agent utilities
 - `focus/cli.py`: `focus` console command, including app launch and current-case refresh
 - `focus/current_case.py`: currently selected case to Focus `config.json` integration
-- `focus/agent_helper.py`: read-only record helper used by embedded Codex and PI Agent sessions
+- `focus/agent_helper.py`: read-only source-map lookup helper used by embedded PI Agent sessions
 - `focus/ui/`: secondary windows, including settings and D-Bus commands
+- `.pi/settings.json`: project-local PI model selection
+- `.pi/skills/focus-answer-record-questions/SKILL.md`: record-question workflow and citation rules
 - `config.json`: local settings (do not commit secrets)
 - `legacy_versions/`: historical backups (do not edit)
 - `prompts/`: prompt history and change notes

@@ -41,7 +41,6 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
 import urllib.error
 import urllib.request
 import unicodedata
@@ -119,14 +118,6 @@ CONFIG_KEY_RAG_DISABLE_REASONING = "rag_disable_reasoning"
 CONFIG_KEY_RAG_DEEP_DISABLE_REASONING = "rag_deep_disable_reasoning"
 CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
 CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
-CONFIG_KEY_AGENT_RUNTIME = "agent_runtime"
-CONFIG_KEY_AGENT_PROMPT_TEMPLATE = "agent_prompt_template"
-CONFIG_KEY_CODEX_AGENT_PROFILE = "codex_agent_profile"
-CONFIG_KEY_CODEX_AGENT_BIN = "codex_agent_bin"
-CONFIG_KEY_CODEX_AGENT_COMMAND = "codex_agent_command"
-CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY = "codex_agent_fireworks_key"
-CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE = "codex_agent_prompt_template"
-CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE = "codex_agent_permission_mode"
 CONFIG_KEY_PI_AGENT_COMMAND = "pi_agent_command"
 CONFIG_KEY_MODEL_PROFILES = "model_profiles"
 CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
@@ -177,195 +168,13 @@ RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX = "## Record Excerpt"
 RAG_PROVIDER_VOYAGE = "voyage"
 RAG_PROVIDER_ISAACUS = "isaacus"
 DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
-AGENT_RUNTIME_CODEX = "codex"
-AGENT_RUNTIME_PI = "pi"
-DEFAULT_AGENT_RUNTIME = AGENT_RUNTIME_CODEX
-AGENT_RUNTIME_OPTIONS: tuple[tuple[str, str], ...] = (
-    (AGENT_RUNTIME_CODEX, "Codex"),
-    (AGENT_RUNTIME_PI, "PI"),
-)
-DEFAULT_CODEX_AGENT_BIN = "codex"
-DEFAULT_CODEX_AGENT_PROFILE = "fireconnect"
-DEFAULT_CODEX_AGENT_COMMAND = "codex --profile fireconnect"
 DEFAULT_PI_AGENT_COMMAND = "pi"
-CODEX_AGENT_PERMISSION_MODE_SANDBOXED = "sandboxed"
-CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS = "full_access"
-DEFAULT_CODEX_AGENT_PERMISSION_MODE = CODEX_AGENT_PERMISSION_MODE_SANDBOXED
-CODEX_AGENT_PERMISSION_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
-    (CODEX_AGENT_PERMISSION_MODE_SANDBOXED, "Sandboxed"),
-    (CODEX_AGENT_PERMISSION_MODE_FULL_ACCESS, "Full access"),
-)
-CODEX_CONFIG_DIR = Path.home() / ".codex"
 FOCUS_RECORD_AGENT_HELPER = PROJECT_DIR / "focus" / "agent_helper.py"
-CODEX_CITATION_COMBINATION_RULE = (
-    "To combine citations: group by exact label (`RT`, `2RT`, `CT`, `CRT`, etc.), "
-    "de-duplicate pages, sort pages ascending within each label, compress only truly "
-    "consecutive page runs with a dash, keep different numeric prefixes or labels "
-    "separate, join label groups with semicolons, and put one final period before "
-    "the closing parenthesis. Reporter transcript groups (`RT`, `1RT`, `2RT`, `CRT`, "
-    "or any label used in the source map for reporter's transcript pages) always go "
-    "before CT-family groups, even if the CT cites were found first or appear earlier "
-    "in your notes. Before finalizing, specifically check every combined citation for "
-    "the forbidden pattern `(CT ...; RT ... .)` or `(CT ...; 2RT ... .)` and rewrite it "
-    "so the reporter transcript group comes first, e.g. `(RT 3; CT 243, 250, 252.)`."
+FOCUS_PI_PROJECT_DIR = PROJECT_DIR / ".pi"
+FOCUS_PI_SKILL_NAME = "focus-answer-record-questions"
+FOCUS_PI_SKILL_FILE = (
+    FOCUS_PI_PROJECT_DIR / "skills" / FOCUS_PI_SKILL_NAME / "SKILL.md"
 )
-LEGACY_CODEX_CITATION_COMBINATION_RULE = (
-    "To combine citations: group by exact label (`RT`, `2RT`, `CT`, `CRT`, etc.), "
-    "de-duplicate pages, sort pages ascending within each label, compress only truly "
-    "consecutive page runs with a dash, order RT-family labels before CT-family labels, "
-    "keep different numeric prefixes or labels separate, join label groups with "
-    "semicolons, and put one final period before the closing parenthesis."
-)
-DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE = """You are answering a legal record question inside the Focus transcript browser.
-
-Question:
-{question}
-
-Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers, local file paths, `text_pages` filenames, or grep line numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
-
-Important paths:
-- Case bundle root: {case_root}
-- Source map: {source_map}
-- Report boundaries: {report_boundaries}
-- Hearing boundaries: {hearing_boundaries}
-- Minute-order boundaries: {minutes_boundaries}
-- Text pages: {text_pages}
-- Optimized chunks: {optimized_chunks}
-- Case overview: {case_overview}
-- Vector database: {vector_database}
-- Helper CLI: {helper}
-- Preferred Python: {python_path}
-- Agent workspace: a temporary writable directory outside the case bundle
-{current_page_context}
-
-Tool-use compatibility: when you need to run helper or shell commands, do not write assistant-facing narration before the tool call. Run one helper or shell command at a time, wait for results, then summarize only after tool results return.
-
-Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Your shell starts in a temporary workspace, so use this helper command pattern:
-- `"$FOCUS_RECORD_AGENT_PYTHON" "$FOCUS_RECORD_AGENT_HELPER" --case-root "$FOCUS_AGENT_CASE_ROOT" <command> ...`
-
-Available helper commands:
-- `map --json`
-- `grep "search phrase" --json`
-- `lookup --citation "CT 6" --json`
-- `rag "question" --json`
-
-Citation format for final answers:
-- Cite record support the way an appellate lawyer would, using record citations only, such as `(CT 335-343.)`, `(RT 6, 34; CT 140, 190.)`, or `(RT 22-34; CRT 17-22; CT 295-301.)`.
-- Do not cite local paths like `/home/.../text_pages/0313.txt`, filenames like `0313.txt`, or line numbers like `:44:` in the final answer. Use those only as internal search leads.
-- Put citations in the same sentence or paragraph as the factual claim they support.
-- Combine multiple record citations into one parenthetical when they support the same point.
-""".rstrip() + f"""
-- {CODEX_CITATION_COMBINATION_RULE}
-- Never use a dash if the pages are not consecutive. For example, use `(RT 5, 45, 500-503; 2RT 10-11; CT 400, 556.)`, not `(RT 5-45.)`.
-
-Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer."""
-LEGACY_CODEX_AGENT_PROMPT_TEMPLATES = (
-    DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE.replace(
-        CODEX_CITATION_COMBINATION_RULE,
-        LEGACY_CODEX_CITATION_COMBINATION_RULE,
-    ),
-    """You are answering a legal record question inside the Focus transcript browser.
-
-Question:
-{question}
-
-Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers, local file paths, `text_pages` filenames, or grep line numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
-
-Important paths:
-- Case bundle root: {case_root}
-- Source map: {source_map}
-- Report boundaries: {report_boundaries}
-- Hearing boundaries: {hearing_boundaries}
-- Minute-order boundaries: {minutes_boundaries}
-- Text pages: {text_pages}
-- Optimized chunks: {optimized_chunks}
-- Case overview: {case_overview}
-- Vector database: {vector_database}
-- Helper CLI: {helper}
-- Preferred Python: {python_path}
-- Agent workspace: a temporary writable directory outside the case bundle
-{current_page_context}
-
-Tool-use compatibility: when you need to run helper or shell commands, do not write assistant-facing narration before the tool call. Run one helper or shell command at a time, wait for results, then summarize only after tool results return.
-
-Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Always pass the real case bundle path with `--case-root` because your shell starts in a temporary workspace:
-- `{helper_map_command}`
-- `{helper_grep_command}`
-- `{helper_lookup_command}`
-- `{helper_rag_command}`
-
-Citation format for final answers:
-- Cite record support the way an appellate lawyer would, using record citations only, such as `(CT 335-343.)`, `(RT 6, 34; CT 140, 190.)`, or `(RT 22-34; CRT 17-22; CT 295-301.)`.
-- Do not cite local paths like `/home/.../text_pages/0313.txt`, filenames like `0313.txt`, or line numbers like `:44:` in the final answer. Use those only as internal search leads.
-- Put citations in the same sentence or paragraph as the factual claim they support.
-- Combine multiple record citations into one parenthetical when they support the same point.
-- To combine citations: group by exact label (`RT`, `2RT`, `CT`, `CRT`, etc.), de-duplicate pages, sort pages ascending within each label, compress only truly consecutive page runs with a dash, order RT-family labels before CT-family labels, keep different numeric prefixes or labels separate, join label groups with semicolons, and put one final period before the closing parenthesis.
-- Never use a dash if the pages are not consecutive. For example, use `(RT 5, 45, 500-503; 2RT 10-11; CT 400, 556.)`, not `(RT 5-45.)`.
-
-Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer.""",
-    """You are answering a legal record question inside the Focus transcript browser.
-
-Question:
-{question}
-
-Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
-
-Important paths:
-- Case bundle root: {case_root}
-- Source map: {source_map}
-- Report boundaries: {report_boundaries}
-- Hearing boundaries: {hearing_boundaries}
-- Minute-order boundaries: {minutes_boundaries}
-- Text pages: {text_pages}
-- Optimized chunks: {optimized_chunks}
-- Case overview: {case_overview}
-- Vector database: {vector_database}
-- Helper CLI: {helper}
-- Preferred Python: {python_path}
-- Agent workspace: a temporary writable directory outside the case bundle
-{current_page_context}
-
-Tool-use compatibility: when you need to run helper or shell commands, do not write assistant-facing narration before the tool call. Run one helper or shell command at a time, wait for results, then summarize only after tool results return.
-
-Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Always pass the real case bundle path with `--case-root` because your shell starts in a temporary workspace:
-- `{helper_map_command}`
-- `{helper_grep_command}`
-- `{helper_lookup_command}`
-- `{helper_rag_command}`
-
-Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer.""",
-    """You are answering a legal record question inside the Focus transcript browser.
-
-Question:
-{question}
-
-Work from the active case bundle and do not modify case files. Use record citations from `citation_label`, `citation_range`, or citation keys in `source_map.json`; do not cite raw file-page numbers unless you are explicitly explaining file layout. Make uncertainty explicit.
-
-Important paths:
-- Case bundle root: {case_root}
-- Source map: {source_map}
-- Report boundaries: {report_boundaries}
-- Hearing boundaries: {hearing_boundaries}
-- Minute-order boundaries: {minutes_boundaries}
-- Text pages: {text_pages}
-- Image pages: {image_pages}
-- Optimized chunks: {optimized_chunks}
-- Case overview: {case_overview}
-- Vector database: {vector_database}
-- Helper CLI: {helper}
-- Preferred Python: {python_path}
-- Agent workspace: a temporary writable directory outside the case bundle
-{current_page_context}
-
-Before giving a substantial answer, conduct targeted record searches. Use the source map, grep, document metadata, and direct page reads as the primary path for citation-grounded answers. Always pass the real case bundle path with `--case-root` because your shell starts in a temporary workspace:
-- `{helper_map_command}`
-- `{helper_grep_command}`
-- `{helper_lookup_command}`
-- `{helper_rag_command}`
-
-Use `rag` only for broad semantic discovery when exact searches are not enough. If `rag` returns `retrieval_mode: lexical_fallback` or `vector_error`, do not keep retrying the embedding endpoint. Treat those chunks as discovery leads, then verify important citations with `grep`, `lookup`, `document`, or direct reads before giving the final answer.""",
-)
-DEFAULT_AGENT_PROMPT_TEMPLATE = DEFAULT_CODEX_AGENT_PROMPT_TEMPLATE
 UNSET_PROFILE_LABEL = "Legacy credentials"
 MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3", "profile4")
 DEFAULT_MODEL_PROFILE_NICKNAMES = {
@@ -831,7 +640,6 @@ AI_VIEW_AGENT_QA = "agent-qa"
 AI_VIEW_RAG_AUDIT = "rag-audit"
 AGENT_SUBVIEW_ANSWER = "answer"
 AGENT_SUBVIEW_SESSION = "session"
-CODEX_SESSION_LOG_GLOB = "*/*/*/rollout-*.jsonl"
 PI_SESSION_LOG_GLOB = "*.jsonl"
 
 
@@ -2200,11 +2008,6 @@ class AiSettings:
     search_chip_color: str
     model_profiles: list[ModelProfile] = field(default_factory=list)
     task_profile_defaults: dict[str, str | None] = field(default_factory=dict)
-    agent_runtime: str = DEFAULT_AGENT_RUNTIME
-    agent_prompt_template: str = DEFAULT_AGENT_PROMPT_TEMPLATE
-    codex_agent_command: str = DEFAULT_CODEX_AGENT_COMMAND
-    codex_agent_fireworks_key: str = ""
-    codex_agent_permission_mode: str = DEFAULT_CODEX_AGENT_PERMISSION_MODE
     pi_agent_command: str = DEFAULT_PI_AGENT_COMMAND
 
     def profile_by_key(self, profile_key: str | None) -> ModelProfile | None:
@@ -2510,31 +2313,6 @@ def _sanitize_task_profile_defaults(raw: Any) -> dict[str, str | None]:
     return defaults
 
 
-def _normalize_codex_agent_profile(profile: str | None) -> str:
-    candidate = (profile or "").strip()
-    if not candidate:
-        return DEFAULT_CODEX_AGENT_PROFILE
-    if candidate == "fireworks" or candidate.startswith("fireworks-"):
-        return DEFAULT_CODEX_AGENT_PROFILE
-    return candidate
-
-
-def normalize_agent_runtime(value: Any) -> str:
-    normalized = str(value or "").strip().lower()
-    for runtime, _label in AGENT_RUNTIME_OPTIONS:
-        if normalized == runtime:
-            return runtime
-    return DEFAULT_AGENT_RUNTIME
-
-
-def normalize_codex_agent_permission_mode(value: Any) -> str:
-    normalized = str(value or "").strip()
-    for mode, _label in CODEX_AGENT_PERMISSION_MODE_OPTIONS:
-        if normalized == mode:
-            return mode
-    return DEFAULT_CODEX_AGENT_PERMISSION_MODE
-
-
 def discover_pi_agent_command(
     home: Path | None = None,
     *,
@@ -2579,15 +2357,50 @@ PI_INCOMPATIBLE_AGENT_FLAGS = frozenset(
         "-r",
         "--session",
         "--session-id",
+        "--session-dir",
         "--fork",
         "--export",
+        "--no-tools",
+        "-nt",
+        "--no-builtin-tools",
+        "-nbt",
+        "--no-extensions",
+        "-ne",
+        "--no-skills",
+        "-ns",
+        "--no-prompt-templates",
+        "-np",
+        "--approve",
+        "-a",
+        "--no-approve",
+        "-na",
+    }
+)
+
+PI_INCOMPATIBLE_AGENT_VALUE_FLAGS = frozenset(
+    {
+        "--provider",
+        "--model",
+        "--models",
+        "--system-prompt",
+        "--append-system-prompt",
+        "--tools",
+        "-t",
+        "--exclude-tools",
+        "-xt",
+        "--extension",
+        "-e",
+        "--skill",
+        "--prompt-template",
     }
 )
 
 
 def incompatible_pi_agent_flag(argv: Sequence[str]) -> str | None:
     for index, arg in enumerate(argv[1:], start=1):
-        if arg in PI_INCOMPATIBLE_AGENT_FLAGS:
+        if arg in PI_INCOMPATIBLE_AGENT_FLAGS or arg in PI_INCOMPATIBLE_AGENT_VALUE_FLAGS:
+            return arg
+        if any(arg.startswith(f"{flag}=") for flag in PI_INCOMPATIBLE_AGENT_VALUE_FLAGS):
             return arg
         if arg == "--mode":
             mode = argv[index + 1].strip().lower() if index + 1 < len(argv) else ""
@@ -2596,61 +2409,6 @@ def incompatible_pi_agent_flag(argv: Sequence[str]) -> str | None:
         elif arg.startswith("--mode=") and arg.split("=", 1)[1].strip().lower() != "text":
             return arg
     return None
-
-
-def _codex_agent_command_from_config(config: dict[str, Any]) -> str:
-    command = str(config.get(CONFIG_KEY_CODEX_AGENT_COMMAND, "") or "").strip()
-    if command:
-        return command
-    profile = _normalize_codex_agent_profile(
-        str(config.get(CONFIG_KEY_CODEX_AGENT_PROFILE, DEFAULT_CODEX_AGENT_PROFILE) or "")
-    )
-    codex_bin = str(config.get(CONFIG_KEY_CODEX_AGENT_BIN, DEFAULT_CODEX_AGENT_BIN) or "").strip()
-    codex_bin = codex_bin or DEFAULT_CODEX_AGENT_BIN
-    if profile:
-        return f"{shlex.quote(codex_bin)} --profile {shlex.quote(profile)}"
-    return codex_bin
-
-
-@dataclass(frozen=True)
-class CodexProfileOption:
-    profile: str
-    model: str
-    path: Path
-
-    def display_name(self) -> str:
-        model = self.model.strip()
-        if model:
-            return f"{self.profile} ({model})"
-        return self.profile
-
-
-def discover_fireworks_codex_profiles(codex_config_dir: Path | None = None) -> list[CodexProfileOption]:
-    config_dir = codex_config_dir or CODEX_CONFIG_DIR
-    if not config_dir.is_dir():
-        return []
-    profiles: list[CodexProfileOption] = []
-    for path in sorted(config_dir.glob("*.config.toml")):
-        if not path.is_file():
-            continue
-        try:
-            with path.open("rb") as handle:
-                data = tomllib.load(handle)
-        except (OSError, tomllib.TOMLDecodeError):
-            continue
-        if str(data.get("model_provider") or "").strip() != "fireworks-ai":
-            continue
-        name = path.name
-        profile = name[: -len(".config.toml")] if name.endswith(".config.toml") else path.stem
-        if profile:
-            profiles.append(
-                CodexProfileOption(
-                    profile=profile,
-                    model=str(data.get("model") or "").strip(),
-                    path=path,
-                )
-            )
-    return profiles
 
 
 def _load_task_profile_defaults_from_config(
@@ -2818,27 +2576,6 @@ def load_ai_settings() -> AiSettings:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     speech_rag_source_file = str(config.get(CONFIG_KEY_SPEECH_RAG_SOURCE_FILE, "") or "")
-    agent_runtime = normalize_agent_runtime(config.get(CONFIG_KEY_AGENT_RUNTIME))
-    codex_agent_command = _codex_agent_command_from_config(config)
-    codex_agent_fireworks_key = str(
-        config.get(CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY, "")
-        or ""
-    ).strip()
-    agent_prompt_template = str(
-        config.get(
-            CONFIG_KEY_AGENT_PROMPT_TEMPLATE,
-            config.get(
-                CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE,
-                DEFAULT_AGENT_PROMPT_TEMPLATE,
-            ),
-        )
-        or DEFAULT_AGENT_PROMPT_TEMPLATE
-    ).strip()
-    if agent_prompt_template in LEGACY_CODEX_AGENT_PROMPT_TEMPLATES:
-        agent_prompt_template = DEFAULT_AGENT_PROMPT_TEMPLATE
-    codex_agent_permission_mode = normalize_codex_agent_permission_mode(
-        config.get(CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE)
-    )
     pi_agent_command = str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, "") or "").strip()
     if not pi_agent_command:
         pi_agent_command = discover_pi_agent_command()
@@ -2901,11 +2638,6 @@ def load_ai_settings() -> AiSettings:
         search_chip_color=search_chip_color,
         model_profiles=model_profiles,
         task_profile_defaults=task_profile_defaults,
-        agent_runtime=agent_runtime,
-        agent_prompt_template=agent_prompt_template or DEFAULT_AGENT_PROMPT_TEMPLATE,
-        codex_agent_command=codex_agent_command or DEFAULT_CODEX_AGENT_COMMAND,
-        codex_agent_fireworks_key=codex_agent_fireworks_key,
-        codex_agent_permission_mode=codex_agent_permission_mode,
         pi_agent_command=pi_agent_command or DEFAULT_PI_AGENT_COMMAND,
     )
 
@@ -2975,21 +2707,7 @@ def save_ai_settings(settings: AiSettings) -> None:
         DEFAULT_RAG_CHUNK_COUNT,
     )
     config[CONFIG_KEY_SPEECH_RAG_SOURCE_FILE] = settings.speech_rag_source_file
-    config[CONFIG_KEY_AGENT_RUNTIME] = normalize_agent_runtime(settings.agent_runtime)
-    config[CONFIG_KEY_CODEX_AGENT_COMMAND] = (
-        settings.codex_agent_command.strip() or DEFAULT_CODEX_AGENT_COMMAND
-    )
-    config.pop(CONFIG_KEY_CODEX_AGENT_PROFILE, None)
-    config.pop(CONFIG_KEY_CODEX_AGENT_BIN, None)
-    config[CONFIG_KEY_CODEX_AGENT_FIREWORKS_KEY] = settings.codex_agent_fireworks_key.strip()
-    agent_prompt_template = settings.agent_prompt_template.strip() or DEFAULT_AGENT_PROMPT_TEMPLATE
-    config[CONFIG_KEY_AGENT_PROMPT_TEMPLATE] = agent_prompt_template
-    config[CONFIG_KEY_CODEX_AGENT_PROMPT_TEMPLATE] = (
-        agent_prompt_template
-    )
-    config[CONFIG_KEY_CODEX_AGENT_PERMISSION_MODE] = normalize_codex_agent_permission_mode(
-        settings.codex_agent_permission_mode
-    )
+    config.pop("agent_prompt_template", None)
     config[CONFIG_KEY_PI_AGENT_COMMAND] = (
         settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
     )
@@ -3942,7 +3660,7 @@ def append_page_citation_to_selected_text(
     return f"{stripped_text} {citation}"
 
 
-def _codex_text_from_content(content: Any) -> str:
+def _agent_text_from_content(content: Any) -> str:
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -3957,80 +3675,6 @@ def _codex_text_from_content(content: Any) -> str:
         if isinstance(text, str):
             parts.append(text)
     return "".join(parts).strip()
-
-
-def extract_latest_codex_final_answer_from_jsonl(path: Path) -> str:
-    latest = ""
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return ""
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict) and payload.get("type") == "event_msg":
-            event = payload.get("payload")
-            if isinstance(event, dict) and event.get("type") == "task_complete":
-                text = event.get("last_agent_message")
-                if isinstance(text, str) and text.strip():
-                    latest = text.strip()
-            continue
-        if not isinstance(payload, dict) or payload.get("type") != "response_item":
-            continue
-        item = payload.get("payload")
-        if not isinstance(item, dict):
-            continue
-        if (
-            item.get("type") != "message"
-            or item.get("role") != "assistant"
-            or item.get("phase") != "final_answer"
-        ):
-            continue
-        text = _codex_text_from_content(item.get("content"))
-        if text:
-            latest = text
-    return latest
-
-
-def codex_session_log_matches_cwd(path: Path, cwd: Path) -> bool:
-    wanted = str(cwd)
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(payload, dict) or payload.get("type") != "session_meta":
-                    continue
-                meta = payload.get("payload")
-                return isinstance(meta, dict) and meta.get("cwd") == wanted
-    except OSError:
-        return False
-    return False
-
-
-def find_latest_codex_session_log_for_cwd(sessions_root: Path, cwd: Path) -> Path | None:
-    if not sessions_root.is_dir():
-        return None
-    try:
-        candidates = sorted(
-            sessions_root.glob(CODEX_SESSION_LOG_GLOB),
-            key=lambda item: item.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        return None
-    for candidate in candidates:
-        if candidate.is_file() and codex_session_log_matches_cwd(candidate, cwd):
-            return candidate
-    return None
 
 
 def extract_latest_pi_final_answer_from_jsonl(path: Path) -> str:
@@ -4053,7 +3697,7 @@ def extract_latest_pi_final_answer_from_jsonl(path: Path) -> str:
             continue
         if message.get("stopReason") == "toolUse":
             continue
-        text = _codex_text_from_content(message.get("content"))
+        text = _agent_text_from_content(message.get("content"))
         if text:
             latest = text
     return latest

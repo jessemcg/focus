@@ -3,11 +3,13 @@
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
 - `focus/app.py`: main `Focus` application class; owns transcript browsing, TOC sidebar, dual-view state, image view, grep, AI panel, RAG, and embedded Agent orchestration.
-- `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, search normalization, citation formatting, markdown/link rendering, RAG helpers, and Codex session-log helpers.
+- `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, search normalization, citation formatting, markdown/link rendering, RAG helpers, and PI session-log helpers.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
-- `focus/agent_helper.py`: read-only record helper CLI used by embedded Codex Agent sessions.
+- `focus/agent_helper.py`: read-only source-map lookup helper CLI used by embedded PI Agent sessions.
 - `focus/ui/`: secondary Libadwaita windows such as settings and D-Bus command reference.
+- `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
+- `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions.
 - `config.json`: user-specific settings (input_dir, font sizes, API credentials, prompts); do not commit secrets.
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.
 - `prompts/`: change notes and UI prompt history.
@@ -20,6 +22,7 @@
 - `uv run focus /path/to/case_bundle`: launch Focus with a one-time input directory override.
 - `uv run focus refresh-current-case --quiet`: update Focus `config.json` from the currently selected case.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle map --json`: run the read-only embedded-Agent helper directly.
+- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle lookup --file text_pages/0001.txt --json`: resolve a searched text page to its record citation.
 
 ## Coding Style & Naming Conventions
 - Follow PEP 8: 4-space indentation, snake_case for functions and variables, CapWords for classes.

@@ -3,11 +3,9 @@ set -euo pipefail
 
 prompt_file="${FOCUS_AGENT_PROMPT_FILE:-}"
 case_root="${FOCUS_AGENT_CASE_ROOT:-$PWD}"
-agent_runtime="${FOCUS_AGENT_RUNTIME:-codex}"
+pi_project_dir="${FOCUS_PI_PROJECT_DIR:-}"
 agent_argc="${FOCUS_AGENT_COMMAND_ARGC:-0}"
 cache_root="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
-codex_sandbox="${FOCUS_CODEX_AGENT_SANDBOX:-workspace-write}"
-codex_approval="${FOCUS_CODEX_AGENT_APPROVAL:-}"
 agent_command=()
 
 if [[ "$agent_argc" =~ ^[0-9]+$ ]] && (( agent_argc > 0 )); then
@@ -15,10 +13,8 @@ if [[ "$agent_argc" =~ ^[0-9]+$ ]] && (( agent_argc > 0 )); then
     var_name="FOCUS_AGENT_COMMAND_ARG_${i}"
     agent_command+=("${!var_name:-}")
   done
-elif [[ "$agent_runtime" == "pi" ]]; then
-  agent_command=(pi)
 else
-  agent_command=(codex --profile fireconnect)
+  agent_command=(pi)
 fi
 
 if [[ -z "$cache_root" ]]; then
@@ -51,38 +47,29 @@ if [[ ! -d "$case_root" ]]; then
   exit 2
 fi
 
+if [[ -z "$pi_project_dir" || ! -f "$pi_project_dir/settings.json" ]]; then
+  printf 'Focus PI project settings not found: %s\n' "$pi_project_dir/settings.json" >&2
+  exit 2
+fi
+
+if [[ ! -f "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" ]]; then
+  printf 'Focus PI record-question skill not found: %s\n' \
+    "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" >&2
+  exit 2
+fi
+
 if [[ -z "${agent_command[0]:-}" ]] || ! command -v "${agent_command[0]}" >/dev/null 2>&1; then
   printf 'Focus Agent executable not found: %s\n' "${agent_command[0]:-}" >&2
   exit 127
 fi
 
-cd "$workspace"
 mkdir -p "$workspace/tmp"
+mkdir -p "$workspace/.pi"
+cp -a "$pi_project_dir/." "$workspace/.pi/"
+cd "$workspace"
 export TMPDIR="$workspace/tmp"
 prompt="$(cat "$prompt_file")"
-
-if [[ "$agent_runtime" == "pi" ]]; then
-  "${agent_command[@]}" "$prompt"
-  exit $?
-fi
-
-case "$codex_sandbox" in
-  read-only|workspace-write|danger-full-access) ;;
-  *) codex_sandbox="workspace-write" ;;
-esac
-
-case "$codex_approval" in
-  ""|untrusted|on-request|on-failure|never) ;;
-  *) codex_approval="" ;;
-esac
-
-approval_args=()
-if [[ -n "$codex_approval" ]]; then
-  approval_args=(--ask-for-approval "$codex_approval")
-fi
-
 "${agent_command[@]}" \
-  -C "$workspace" \
-  --sandbox "$codex_sandbox" \
-  "${approval_args[@]}" \
+  --approve \
+  --tools read,bash,grep,find,ls \
   "$prompt"
