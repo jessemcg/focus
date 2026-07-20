@@ -126,6 +126,36 @@ def _lookup_pages_for_file(
     return matches
 
 
+def _page_match_payload(root: Path, page: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(page)
+    payload["resolved_image_path"] = ""
+    payload["image_exists"] = False
+
+    image_path = str(page.get("image_path") or "").strip()
+    if not image_path:
+        return payload
+
+    candidate = Path(image_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        resolved = candidate.resolve(strict=False)
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return payload
+
+    payload["resolved_image_path"] = str(resolved)
+    payload["image_exists"] = resolved.is_file()
+    return payload
+
+
+def _page_match_payloads(
+    root: Path,
+    pages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [_page_match_payload(root, page) for page in pages]
+
+
 def _document_by_id(
     source_map: dict[str, Any],
     document_id: str,
@@ -168,17 +198,19 @@ def command_lookup(args: argparse.Namespace) -> None:
     root = args.case_root.resolve(strict=False)
     source_map = _load_source_map(root)
     if args.citation:
+        matches = _lookup_pages_for_citation(source_map, args.citation)
         _emit_json(
             {
                 "citation": args.citation,
-                "matches": _lookup_pages_for_citation(source_map, args.citation),
+                "matches": _page_match_payloads(root, matches),
             }
         )
         return
+    matches = _lookup_pages_for_file(source_map, args.file)
     _emit_json(
         {
             "file": args.file,
-            "matches": _lookup_pages_for_file(source_map, args.file),
+            "matches": _page_match_payloads(root, matches),
         }
     )
 

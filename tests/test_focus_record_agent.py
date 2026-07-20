@@ -91,6 +91,16 @@ def _run_helper(root: Path, *args: str) -> dict:
     return json.loads(completed.stdout)
 
 
+def _set_page_image_path(root: Path, file_name: str, image_path: str) -> None:
+    source_map_path = root / "artifacts" / "source_map.json"
+    source_map = json.loads(source_map_path.read_text(encoding="utf-8"))
+    page = next(
+        item for item in source_map["pages"] if item["file_name"] == file_name
+    )
+    page["image_path"] = image_path
+    source_map_path.write_text(json.dumps(source_map), encoding="utf-8")
+
+
 def test_map_outputs_case_summary(tmp_path) -> None:
     root = _write_case_bundle(tmp_path)
 
@@ -108,6 +118,11 @@ def test_lookup_resolves_citation_label(tmp_path) -> None:
 
     assert payload["matches"][0]["file_name"] == "0001.txt"
     assert payload["matches"][0]["citation_label"] == "CT 1"
+    assert payload["matches"][0]["image_path"] == "image_pages/0001.png"
+    assert payload["matches"][0]["resolved_image_path"] == str(
+        root / "image_pages" / "0001.png"
+    )
+    assert payload["matches"][0]["image_exists"] is True
 
 
 def test_lookup_resolves_file_reference_forms(tmp_path) -> None:
@@ -122,6 +137,55 @@ def test_lookup_resolves_file_reference_forms(tmp_path) -> None:
         payload = _run_helper(root, "lookup", "--file", reference, "--json")
         assert payload["matches"][0]["citation_label"] == "CT 1"
         assert payload["matches"][0]["citation_key"] == "CT:1"
+        assert payload["matches"][0]["resolved_image_path"] == str(
+            root / "image_pages" / "0001.png"
+        )
+        assert payload["matches"][0]["image_exists"] is True
+
+
+def test_lookup_reports_page_without_image_mapping(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(root, "lookup", "--citation", "CT 2", "--json")
+
+    assert payload["matches"][0]["resolved_image_path"] == ""
+    assert payload["matches"][0]["image_exists"] is False
+
+
+def test_lookup_reports_safe_missing_image(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    _set_page_image_path(root, "0002.txt", "image_pages/0002.png")
+
+    payload = _run_helper(root, "lookup", "--citation", "CT 2", "--json")
+
+    assert payload["matches"][0]["resolved_image_path"] == str(
+        root / "image_pages" / "0002.png"
+    )
+    assert payload["matches"][0]["image_exists"] is False
+
+
+def test_lookup_accepts_absolute_image_inside_case_root(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    image_path = root / "image_pages" / "0001.png"
+    _set_page_image_path(root, "0001.txt", str(image_path))
+
+    payload = _run_helper(root, "lookup", "--citation", "CT 1", "--json")
+
+    assert payload["matches"][0]["image_path"] == str(image_path)
+    assert payload["matches"][0]["resolved_image_path"] == str(image_path)
+    assert payload["matches"][0]["image_exists"] is True
+
+
+def test_lookup_rejects_image_outside_case_root(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    outside_image = tmp_path / "outside.png"
+    outside_image.write_bytes(b"fake png payload")
+    _set_page_image_path(root, "0002.txt", "../outside.png")
+
+    payload = _run_helper(root, "lookup", "--citation", "CT 2", "--json")
+
+    assert payload["matches"][0]["resolved_image_path"] == ""
+    assert payload["matches"][0]["image_exists"] is False
 
 
 def test_lookup_unknown_file_returns_no_matches(tmp_path) -> None:

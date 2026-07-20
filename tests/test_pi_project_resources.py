@@ -42,6 +42,12 @@ def test_pi_record_skill_has_expected_contract() -> None:
     assert 'lookup --file "text_pages/0001.txt" --json' in skill
     assert "Do not use web research, RAG, vector" in skill
     assert "Never expose local paths" in skill
+    assert "checkboxes, signatures, initials, handwriting" in skill
+    assert "`resolved_image_path` directly to PI's `read`" in skill
+    assert "current model does not support images" in skill
+    assert "claim is inherently visual" in skill
+    assert "sentinel key containing `:missing:`" in skill
+    assert "Never invent a record citation" in skill
     assert "(RT 6, 34; CT 140, 190.)" in skill
 
 

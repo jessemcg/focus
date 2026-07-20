@@ -235,8 +235,14 @@ For each Agent question, Focus:
 
 The skill prohibits edits to case files, external web research, and use of the
 RAG/vector database. PI searches record text with its ripgrep-backed `grep`
-tool, then resolves final citations through `source_map.json`. Focus's separate
-RAG panel remains available for vector-based questions.
+tool, then resolves final citations through `source_map.json`. When a question
+depends on visual details such as checkboxes, signatures, handwriting, stamps,
+tables, form layout, or ambiguous OCR, the skill can selectively inspect the
+paired page image with PI's `read` tool. Image paths are resolved against the
+active case bundle at runtime and remain internal to the Agent. A model without
+image support must rely on adequate text evidence or state that the visual fact
+could not be verified. Focus's separate RAG panel remains available for
+vector-based questions.
 
 Command-line model, provider, session, skill, trust, and tool overrides are
 rejected for embedded Agent sessions so that project policy remains in force.

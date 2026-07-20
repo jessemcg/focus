@@ -34,9 +34,20 @@ Run helper commands with:
 4. Resolve every page used in the answer with
    `lookup --file "text_pages/0001.txt" --json`. Use
    `lookup --citation "CT 6" --json` to follow a record citation.
-5. Use `document --id "document-id" --json` when document boundaries, titles,
+5. Inspect a paired page image only when visual appearance could change the
+   answer, such as checkboxes, signatures, initials, handwriting, stamps,
+   crossed-out text, tables, field alignment, form identity, or ambiguous OCR.
+   Treat `page_type` as a hint rather than a reason to inspect every image. When
+   `image_exists` is true, pass `resolved_image_path` directly to PI's `read`
+   tool and inspect only the smallest necessary set of pages. If PI reports that
+   the current model does not support images, the image is missing, or the scan
+   is unclear, do not claim visual verification or guess. Use clear text
+   evidence when sufficient and state any remaining limitation. If OCR and the
+   image conflict, treat the image as controlling only for visual properties
+   and describe the discrepancy without overstating an unclear scan.
+6. Use `document --id "document-id" --json` when document boundaries, titles,
    dates, or citation ranges matter.
-6. Compare all relevant passages before answering. Do not rely on a search
+7. Compare all relevant passages before answering. Do not rely on a search
    snippet alone. Treat an optional current Focus citation as a navigation hint,
    not evidence by itself.
 
@@ -48,11 +59,20 @@ conflict, cite the competing evidence and make the uncertainty explicit.
 ## Answer requirements
 
 - Lead with the direct answer.
-- Base every material factual claim on text actually read from the bundle.
+- Base every material factual claim on record text actually read or, when the
+  claim is inherently visual, on the corresponding page image after resolving
+  its record citation.
 - Use only `citation_label`, `citation_range`, or citation keys resolved through
   `source_map.json` as final citations.
-- Never expose local paths, `text_pages` filenames, raw file-page numbers, grep
-  line numbers, or tool output as final citations.
+- Never expose local paths, `image_path`, `resolved_image_path`, `text_pages`
+  filenames, raw file-page numbers, grep line numbers, or tool output as final
+  citations.
+- An image does not supply a missing record citation. Use an image-bearing page
+  without a resolved citation only as context when a citable page independently
+  supports the claim. Otherwise explain that the material has no source-map
+  record citation. Treat a blank `citation_label`, a `status` of `missing`, or a
+  sentinel key containing `:missing:` as unresolved rather than as a citation.
+  Never invent a record citation for an appended or unnumbered page.
 - Put each citation in the sentence or paragraph it supports.
 - Group citations by exact label, de-duplicate pages, sort pages within each
   label, and compress only truly consecutive pages. Put reporter-transcript
