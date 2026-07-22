@@ -144,8 +144,14 @@ class Focus(Adw.Application):
         self._auto_loading_summary = False
         self._summary_scroll_handler_id: int | None = None
         self._summary_scroll_restore_guard = False
+        self._summary_pending_restore_fraction: float | None = None
+        self._summary_scroll_restore_source_id: int | None = None
+        self._summary_scroll_restore_geometry: tuple[float, float, float] | None = None
+        self._summary_scroll_restore_stable_passes = 0
+        self._summary_scroll_restore_attempts = 0
         self._summary_active_source: str | None = None
         self._summary_progress_label: Gtk.Label | None = None
+        self._summary_source_buttons: dict[str, Gtk.Button] = {}
         self._more_case_tools_button: Gtk.MenuButton | None = None
         self._summary_bookmark_action_button: Gtk.Button | None = None
         self._summary_return_bookmark_action_button: Gtk.Button | None = None
@@ -684,11 +690,23 @@ class Focus(Adw.Application):
         )
         ai_mode_strip.append(agent_mode_button)
 
+        hearings_button = self._build_summary_mode_button(
+            "Hearings",
+            SUMMARY_SOURCE_HEARING,
+            "Open hearing summaries",
+        )
+        ai_mode_strip.append(hearings_button)
+
+        reports_button = self._build_summary_mode_button(
+            "Reports",
+            SUMMARY_SOURCE_REPORTS,
+            "Open report summaries",
+        )
+        ai_mode_strip.append(reports_button)
+
         more_case_tools_menu = Gio.Menu()
         more_case_tools_menu.append("Summarize", "app.show_summarize")
         more_case_tools_menu.append("Minute Orders", "app.show_minutes_summary")
-        more_case_tools_menu.append("Hearings", "app.show_hearings_summary")
-        more_case_tools_menu.append("Reports", "app.show_reports_summary")
 
         self._more_case_tools_button = Gtk.MenuButton()
         self._more_case_tools_button.set_label("More")
@@ -1591,6 +1609,7 @@ class Focus(Adw.Application):
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
         self._stop_agent_answer_polling()
+        self._cancel_pending_summary_scroll_restore()
         self._page_citation_range_start = None
         self._sync_citation_buttons()
         self._set_grep_entry_text("")
@@ -1636,11 +1655,7 @@ class Focus(Adw.Application):
             and self._summary_scroller
             and self._summary_loaded_path
         ):
-            vadj = self._summary_scroller.get_vadjustment()
-            if vadj:
-                fraction = self._summary_scroll_fraction(vadj)
-                fraction = min(1.0, max(0.0, fraction))
-                state.summary_scroll_fraction = fraction
+            self._capture_summary_scroll_position()
         state.current_index = self.current_index
         state.show_image = self._show_image
         state.sidebar_visible = self._toc_sidebar_visible
@@ -2518,6 +2533,22 @@ class Focus(Adw.Application):
         button.set_tooltip_text(tooltip)
         button.connect("toggled", self._on_ai_mode_button_toggled, view_name)
         self._ai_view_buttons[view_name] = button
+        return button
+
+    def _build_summary_mode_button(
+        self,
+        label: str,
+        source: str,
+        tooltip: str,
+    ) -> Gtk.Button:
+        button = Gtk.Button(label=label)
+        button.add_css_class("flat")
+        button.add_css_class("no-bold")
+        button.add_css_class("focus-pill-segment")
+        button.set_valign(Gtk.Align.CENTER)
+        button.set_tooltip_text(tooltip)
+        button.connect("clicked", lambda _button: self._open_case_tool_summary(source))
+        self._summary_source_buttons[source] = button
         return button
 
     def _build_agent_subview_button(
@@ -3560,9 +3591,99 @@ class Focus(Adw.Application):
     def _on_summary_scroll(self, adjustment: Gtk.Adjustment) -> None:
         fraction = self._summary_scroll_fraction(adjustment)
         fraction = min(1.0, max(0.0, fraction))
-        if self._ai_active_view == AI_VIEW_FILE and not self._summary_scroll_restore_guard:
+        if (
+            self._ai_active_view == AI_VIEW_FILE
+            and not self._summary_scroll_restore_guard
+            and self._summary_pending_restore_fraction is None
+        ):
             self._current_view_state().summary_scroll_fraction = fraction
         self._update_summary_progress_label(adjustment)
+
+    def _capture_summary_scroll_position(self) -> None:
+        if not self._summary_scroller or not self._summary_loaded_path:
+            return
+        state = self._current_view_state()
+        if self._summary_pending_restore_fraction is not None:
+            state.summary_scroll_fraction = self._summary_pending_restore_fraction
+            return
+        vadj = self._summary_scroller.get_vadjustment()
+        if not vadj:
+            return
+        fraction = self._summary_scroll_fraction(vadj)
+        state.summary_scroll_fraction = min(1.0, max(0.0, fraction))
+
+    def _cancel_pending_summary_scroll_restore(self) -> None:
+        if self._summary_scroll_restore_source_id is not None:
+            GLib.source_remove(self._summary_scroll_restore_source_id)
+        self._summary_scroll_restore_source_id = None
+        self._summary_pending_restore_fraction = None
+        self._summary_scroll_restore_geometry = None
+        self._summary_scroll_restore_stable_passes = 0
+        self._summary_scroll_restore_attempts = 0
+
+    def _prepare_summary_scroll_restore(self, fraction: float) -> None:
+        self._cancel_pending_summary_scroll_restore()
+        self._summary_pending_restore_fraction = min(1.0, max(0.0, fraction))
+
+    def _schedule_pending_summary_scroll_restore(self, fraction: float) -> None:
+        self._prepare_summary_scroll_restore(fraction)
+        self._summary_scroll_restore_source_id = GLib.timeout_add(
+            SUMMARY_SCROLL_RESTORE_INTERVAL_MS,
+            self._apply_pending_summary_scroll_restore,
+        )
+
+    def _apply_pending_summary_scroll_restore(self) -> bool:
+        fraction = self._summary_pending_restore_fraction
+        if fraction is None or not self._summary_scroller:
+            self._cancel_pending_summary_scroll_restore()
+            return False
+        vadj = self._summary_scroller.get_vadjustment()
+        if not vadj:
+            self._cancel_pending_summary_scroll_restore()
+            return False
+
+        lower = vadj.get_lower()
+        upper = vadj.get_upper()
+        page_size = vadj.get_page_size()
+        geometry = (lower, upper, page_size)
+        # ViewStack mapping and panel sizing can update the adjustment over
+        # several frames. Keep restoring until its geometry settles.
+        if geometry == self._summary_scroll_restore_geometry:
+            self._summary_scroll_restore_stable_passes += 1
+        else:
+            self._summary_scroll_restore_geometry = geometry
+            self._summary_scroll_restore_stable_passes = 1
+        self._summary_scroll_restore_attempts += 1
+
+        total = upper - lower - page_size
+        if total > 0:
+            target = lower + fraction * total
+            self._summary_scroll_restore_guard = True
+            try:
+                vadj.set_value(target)
+            finally:
+                self._summary_scroll_restore_guard = False
+            self._update_summary_progress_label(vadj)
+
+        restore_complete = (
+            total > 0
+            and self._summary_scroll_restore_stable_passes
+            >= SUMMARY_SCROLL_RESTORE_STABLE_PASSES
+        )
+        attempts_exhausted = (
+            self._summary_scroll_restore_attempts
+            >= SUMMARY_SCROLL_RESTORE_MAX_ATTEMPTS
+        )
+        if not restore_complete and not attempts_exhausted:
+            return True
+
+        self._current_view_state().summary_scroll_fraction = fraction
+        self._summary_scroll_restore_source_id = None
+        self._summary_pending_restore_fraction = None
+        self._summary_scroll_restore_geometry = None
+        self._summary_scroll_restore_stable_passes = 0
+        self._summary_scroll_restore_attempts = 0
+        return False
 
     def _restore_summary_scroll_position(self, path: Path | None) -> None:
         if not path or not self._summary_scroller:
@@ -3737,31 +3858,7 @@ class Focus(Adw.Application):
     def _restore_summary_scroll_fraction(self, fraction: float) -> None:
         if not self._summary_scroller:
             return
-        retries = 8
-
-        def _apply_remaining(remaining: int) -> bool:
-            if not self._summary_scroller:
-                return False
-            vadj = self._summary_scroller.get_vadjustment()
-            if not vadj:
-                return False
-            lower = vadj.get_lower()
-            upper = vadj.get_upper()
-            page_size = vadj.get_page_size()
-            total = upper - lower - page_size
-            if total <= 0:
-                if remaining <= 0:
-                    return False
-                GLib.timeout_add(50, _apply_remaining, remaining - 1)
-                return False
-            target = lower + min(1.0, max(0.0, fraction)) * total
-            self._summary_scroll_restore_guard = True
-            vadj.set_value(target)
-            self._summary_scroll_restore_guard = False
-            self._update_summary_progress_label(vadj)
-            return False
-
-        GLib.idle_add(_apply_remaining, retries)
+        self._schedule_pending_summary_scroll_restore(fraction)
 
     def _summary_link_at_coords(
         self,
@@ -5485,6 +5582,7 @@ class Focus(Adw.Application):
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
         self._stop_grep_search_if_running()
         self._stop_ai_panel_resize_tracking()
+        self._cancel_pending_summary_scroll_restore()
         if self._image_print_window:
             self._image_print_window.destroy()
             self._image_print_window = None
@@ -5953,12 +6051,27 @@ class Focus(Adw.Application):
         self._set_ai_panel_visible(button.get_active())
 
     def _set_ai_panel_visible(self, visible: bool) -> None:
+        was_visible = bool(
+            self._ai_panel_revealer
+            and self._ai_panel_revealer.get_reveal_child()
+        )
+        if not visible and was_visible and self._ai_active_view == AI_VIEW_FILE:
+            self._capture_summary_scroll_position()
+            fraction = self._current_view_state().summary_scroll_fraction
+            if fraction is not None:
+                self._prepare_summary_scroll_restore(fraction)
+        elif visible and not was_visible and self._ai_active_view == AI_VIEW_FILE:
+            fraction = self._current_view_state().summary_scroll_fraction
+            if fraction is not None:
+                self._prepare_summary_scroll_restore(fraction)
         if self._ai_panel_revealer:
             self._ai_panel_revealer.set_reveal_child(visible)
             if visible:
                 self._update_embedded_ai_panel_height(force=True)
             else:
                 self._reset_embedded_ai_panel_sizing()
+        if visible and self._ai_active_view == AI_VIEW_FILE:
+            self._restore_summary_scroll_position(self._summary_loaded_path)
         self._current_view_state().ai_panel_visible = visible
         self._update_ai_panel_toggle(visible)
         self._refresh_search_highlighted_button()
@@ -5983,6 +6096,18 @@ class Focus(Adw.Application):
         target = view_name
         if target not in self._ai_outputs and target != AI_VIEW_FILE:
             target = AI_VIEW_SUMMARIZE
+        previous = self._ai_active_view
+        if previous == AI_VIEW_FILE and target != AI_VIEW_FILE:
+            # Capture before the outgoing summary scroller is collapsed.
+            self._capture_summary_scroll_position()
+            self._cancel_pending_summary_scroll_restore()
+        elif previous != AI_VIEW_FILE and target == AI_VIEW_FILE:
+            state = self._current_view_state()
+            if (
+                state.summary_loaded_path == self._summary_loaded_path
+                and state.summary_scroll_fraction is not None
+            ):
+                self._prepare_summary_scroll_restore(state.summary_scroll_fraction)
         self._ai_active_view = target
         self._current_view_state().ai_active_view = target
         if target == AI_VIEW_FILE and not self._auto_loading_summary:
@@ -6026,7 +6151,11 @@ class Focus(Adw.Application):
         self._auto_load_summary_file()
 
     def _sync_ai_view_toggles(self, target: str) -> None:
-        if not self._ai_view_buttons and not self._more_case_tools_button:
+        if (
+            not self._ai_view_buttons
+            and not self._summary_source_buttons
+            and not self._more_case_tools_button
+        ):
             return
         self._ai_view_toggle_guard = True
         try:
@@ -6037,8 +6166,20 @@ class Focus(Adw.Application):
                     button.add_css_class("focus-ai-view-active")
                 else:
                     button.remove_css_class("focus-ai-view-active")
+            for source, button in self._summary_source_buttons.items():
+                active = target == AI_VIEW_FILE and source == self._summary_active_source
+                if active:
+                    button.add_css_class("focus-ai-view-active")
+                else:
+                    button.remove_css_class("focus-ai-view-active")
             if self._more_case_tools_button:
-                more_active = target in {AI_VIEW_SUMMARIZE, AI_VIEW_FILE}
+                exposed_summary_active = (
+                    target == AI_VIEW_FILE
+                    and self._summary_active_source in self._summary_source_buttons
+                )
+                more_active = target == AI_VIEW_SUMMARIZE or (
+                    target == AI_VIEW_FILE and not exposed_summary_active
+                )
                 if more_active:
                     self._more_case_tools_button.add_css_class("focus-ai-view-active")
                 else:
@@ -6988,13 +7129,19 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Could not read {resolved.name}: {exc}")
             return
         self._stop_ai_stream_if_running()
+        state = self._current_view_state()
+        if state.summary_loaded_path == resolved:
+            if self._ai_active_view == AI_VIEW_FILE:
+                self._capture_summary_scroll_position()
+            if state.summary_scroll_fraction is not None:
+                self._prepare_summary_scroll_restore(state.summary_scroll_fraction)
+        else:
+            self._cancel_pending_summary_scroll_restore()
+            state.summary_scroll_fraction = None
         self._summary_loaded_path = resolved
         if source is None:
             source = self._infer_summary_source(resolved)
         self._set_summary_active_source(source)
-        state = self._current_view_state()
-        if state.summary_loaded_path != resolved:
-            state.summary_scroll_fraction = None
         state.summary_loaded_path = resolved
         state.summary_active_source = source
         self._set_summary_text(text, switch_view=not allow_auto)

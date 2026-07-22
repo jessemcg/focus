@@ -68,6 +68,82 @@ class FakeScrollerBounds:
         self.calls.append(("max", height))
 
 
+class FakeAdjustment:
+    def __init__(
+        self,
+        *,
+        lower: float = 0.0,
+        upper: float = 1000.0,
+        page_size: float = 100.0,
+        value: float = 0.0,
+    ) -> None:
+        self.lower = lower
+        self.upper = upper
+        self.page_size = page_size
+        self.value = value
+
+    def get_lower(self) -> float:
+        return self.lower
+
+    def get_upper(self) -> float:
+        return self.upper
+
+    def get_page_size(self) -> float:
+        return self.page_size
+
+    def get_value(self) -> float:
+        return self.value
+
+    def set_value(self, value: float) -> None:
+        self.value = value
+
+
+class FakeScroller:
+    def __init__(self, adjustment: FakeAdjustment) -> None:
+        self.adjustment = adjustment
+
+    def get_vadjustment(self) -> FakeAdjustment:
+        return self.adjustment
+
+
+class FakeSummaryState:
+    def __init__(self, fraction: float | None = None) -> None:
+        self.summary_scroll_fraction = fraction
+
+
+class SummaryScrollHarness:
+    _summary_scroll_fraction = Focus._summary_scroll_fraction
+    _on_summary_scroll = Focus._on_summary_scroll
+    _capture_summary_scroll_position = Focus._capture_summary_scroll_position
+    _apply_pending_summary_scroll_restore = Focus._apply_pending_summary_scroll_restore
+
+    def __init__(self, adjustment: FakeAdjustment, fraction: float | None) -> None:
+        self.state = FakeSummaryState(fraction)
+        self._summary_scroller = FakeScroller(adjustment)
+        self._summary_loaded_path = object()
+        self._ai_active_view = AI_VIEW_FILE
+        self._summary_scroll_restore_guard = False
+        self._summary_pending_restore_fraction = fraction
+        self._summary_scroll_restore_source_id = 1
+        self._summary_scroll_restore_geometry = None
+        self._summary_scroll_restore_stable_passes = 0
+        self._summary_scroll_restore_attempts = 0
+        self.progress_updates = 0
+
+    def _current_view_state(self) -> FakeSummaryState:
+        return self.state
+
+    def _update_summary_progress_label(self, _adjustment: FakeAdjustment) -> None:
+        self.progress_updates += 1
+
+    def _cancel_pending_summary_scroll_restore(self) -> None:
+        self._summary_scroll_restore_source_id = None
+        self._summary_pending_restore_fraction = None
+        self._summary_scroll_restore_geometry = None
+        self._summary_scroll_restore_stable_passes = 0
+        self._summary_scroll_restore_attempts = 0
+
+
 class CaseToolHarness:
     _open_case_tool_view = Focus._open_case_tool_view
     _open_case_tool_summary = Focus._open_case_tool_summary
@@ -99,6 +175,11 @@ class ToggleHarness:
             AI_VIEW_QA: FakeButton(),
             AI_VIEW_AGENT_QA: FakeButton(),
         }
+        self._summary_source_buttons = {
+            SUMMARY_SOURCE_HEARING: FakeButton(),
+            SUMMARY_SOURCE_REPORTS: FakeButton(),
+        }
+        self._summary_active_source: str | None = None
         self._more_case_tools_button = FakeButton()
         self._ai_view_toggle_guard = False
 
@@ -157,7 +238,7 @@ def test_case_tool_summary_actions_open_panel_and_route_sources() -> None:
         assert harness.calls == [("visible", None), ("summary", source)]
 
 
-def test_more_button_is_active_only_for_summary_views() -> None:
+def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
     harness = ToggleHarness()
 
     harness._sync_ai_view_toggles(AI_VIEW_SUMMARIZE)
@@ -167,6 +248,30 @@ def test_more_button_is_active_only_for_summary_views() -> None:
 
     harness._sync_ai_view_toggles(AI_VIEW_FILE)
     assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
+
+    harness._summary_active_source = SUMMARY_SOURCE_HEARING
+    harness._sync_ai_view_toggles(AI_VIEW_FILE)
+    assert (
+        "focus-ai-view-active"
+        in harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].css_classes
+    )
+    assert (
+        "focus-ai-view-active"
+        not in harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].css_classes
+    )
+    assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
+
+    harness._summary_active_source = SUMMARY_SOURCE_REPORTS
+    harness._sync_ai_view_toggles(AI_VIEW_FILE)
+    assert (
+        "focus-ai-view-active"
+        not in harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].css_classes
+    )
+    assert (
+        "focus-ai-view-active"
+        in harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].css_classes
+    )
+    assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
 
     harness._sync_ai_view_toggles(AI_VIEW_RAG_AUDIT)
     assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
@@ -227,3 +332,35 @@ def test_scroller_bounds_clear_the_minimum_before_changing_the_maximum() -> None
     Focus._set_scroller_content_height_bounds(scroller, 36, 207)
 
     assert scroller.calls == [("min", -1), ("max", 207), ("min", 36)]
+
+
+def test_pending_summary_restore_ignores_transient_scroll_fraction() -> None:
+    adjustment = FakeAdjustment(upper=400.0, page_size=100.0, value=99.0)
+    harness = SummaryScrollHarness(adjustment, 0.09)
+
+    harness._on_summary_scroll(adjustment)
+    harness._capture_summary_scroll_position()
+
+    assert harness.state.summary_scroll_fraction == 0.09
+    assert harness.progress_updates == 1
+
+
+def test_pending_summary_restore_reapplies_fraction_until_geometry_is_stable() -> None:
+    adjustment = FakeAdjustment(upper=1000.0, page_size=100.0, value=300.0)
+    harness = SummaryScrollHarness(adjustment, 0.09)
+
+    assert harness._apply_pending_summary_scroll_restore()
+    assert adjustment.value == 81.0
+
+    adjustment.upper = 400.0
+    adjustment.value = 99.0
+    harness._on_summary_scroll(adjustment)
+    assert harness.state.summary_scroll_fraction == 0.09
+
+    assert harness._apply_pending_summary_scroll_restore()
+    assert adjustment.value == 27.0
+    assert not harness._apply_pending_summary_scroll_restore()
+
+    assert adjustment.value == 27.0
+    assert harness.state.summary_scroll_fraction == 0.09
+    assert harness._summary_pending_restore_fraction is None

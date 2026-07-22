@@ -1,5 +1,5 @@
 {
   "defaultProvider": "fireworks",
-  "defaultModel": "accounts/fireworks/models/minimax-m3",
+  "defaultModel": "accounts/fireworks/routers/glm-5p2-fast",
   "enableSkillCommands": true
 }
