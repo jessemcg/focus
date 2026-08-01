@@ -2387,6 +2387,7 @@ PI_INCOMPATIBLE_AGENT_VALUE_FLAGS = frozenset(
         "--provider",
         "--model",
         "--models",
+        "--thinking",
         "--system-prompt",
         "--append-system-prompt",
         "--tools",

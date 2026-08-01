@@ -230,6 +230,8 @@ def test_incompatible_pi_agent_flag_rejects_noninteractive_modes() -> None:
 def test_incompatible_pi_agent_flag_rejects_project_policy_overrides() -> None:
     assert incompatible_pi_agent_flag(["pi", "--model", "other"]) == "--model"
     assert incompatible_pi_agent_flag(["pi", "--provider=other"]) == "--provider=other"
+    assert incompatible_pi_agent_flag(["pi", "--thinking", "high"]) == "--thinking"
+    assert incompatible_pi_agent_flag(["pi", "--thinking=high"]) == "--thinking=high"
     assert incompatible_pi_agent_flag(["pi", "--tools", "read"]) == "--tools"
     assert incompatible_pi_agent_flag(["pi", "--no-skills"]) == "--no-skills"
     assert incompatible_pi_agent_flag(["pi", "--no-approve"]) == "--no-approve"

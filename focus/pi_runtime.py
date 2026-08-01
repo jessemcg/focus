@@ -14,6 +14,15 @@ from typing import Any, Sequence
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 PROJECT_PI_SETTINGS_PATH = PROJECT_DIR / ".pi" / "settings.json"
 PI_MODEL_DISCOVERY_TIMEOUT_SECONDS = 10
+PI_THINKING_LEVELS: tuple[str, ...] = (
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+)
 
 
 class PiRuntimeError(RuntimeError):
@@ -29,6 +38,7 @@ class PiModel:
     provider: str
     model_id: str
     name: str
+    supported_thinking_levels: tuple[str, ...] = PI_THINKING_LEVELS[:5]
 
     @property
     def label(self) -> str:
@@ -37,6 +47,54 @@ class PiModel:
     @property
     def settings_key(self) -> tuple[str, str]:
         return self.provider, self.model_id
+
+
+def clamp_pi_thinking_level(model: PiModel, level: str) -> str:
+    supported = model.supported_thinking_levels or ("off",)
+    if level in supported:
+        return level
+    try:
+        requested_index = PI_THINKING_LEVELS.index(level)
+    except ValueError:
+        requested_index = PI_THINKING_LEVELS.index("medium")
+    for candidate in PI_THINKING_LEVELS[requested_index:]:
+        if candidate in supported:
+            return candidate
+    for candidate in reversed(PI_THINKING_LEVELS[:requested_index]):
+        if candidate in supported:
+            return candidate
+    return supported[0]
+
+
+def _supported_thinking_levels(raw_model: dict[str, Any]) -> tuple[str, ...]:
+    if raw_model.get("reasoning") is False:
+        return ("off",)
+    raw_map = raw_model.get("thinkingLevelMap")
+    thinking_map = raw_map if isinstance(raw_map, dict) else {}
+    levels: list[str] = []
+    for level in PI_THINKING_LEVELS:
+        if level in thinking_map and thinking_map[level] is None:
+            continue
+        if level in {"xhigh", "max"} and level not in thinking_map:
+            continue
+        levels.append(level)
+    return tuple(levels) or ("off",)
+
+
+def _pi_model_from_json(raw_model: Any) -> PiModel | None:
+    if not isinstance(raw_model, dict):
+        return None
+    provider = str(raw_model.get("provider") or "").strip()
+    model_id = str(raw_model.get("id") or "").strip()
+    if not provider or not model_id:
+        return None
+    name = str(raw_model.get("name") or model_id).strip() or model_id
+    return PiModel(
+        provider=provider,
+        model_id=model_id,
+        name=name,
+        supported_thinking_levels=_supported_thinking_levels(raw_model),
+    )
 
 
 def _pi_discovery_command(pi_command: Sequence[str]) -> list[str]:
@@ -216,14 +274,9 @@ def available_pi_models(
 
     models: dict[tuple[str, str], PiModel] = {}
     for raw_model in raw_models:
-        if not isinstance(raw_model, dict):
+        model = _pi_model_from_json(raw_model)
+        if model is None:
             continue
-        provider = str(raw_model.get("provider") or "").strip()
-        model_id = str(raw_model.get("id") or "").strip()
-        if not provider or not model_id:
-            continue
-        name = str(raw_model.get("name") or model_id).strip() or model_id
-        model = PiModel(provider=provider, model_id=model_id, name=name)
         models[model.settings_key] = model
 
     return sorted(
@@ -259,13 +312,26 @@ def current_project_pi_model(
     return provider, model_id
 
 
-def save_project_pi_model(
+def current_project_pi_thinking_level(
+    path: Path = PROJECT_PI_SETTINGS_PATH,
+) -> str | None:
+    settings = _read_pi_settings(path)
+    level = str(settings.get("defaultThinkingLevel") or "").strip().lower()
+    return level if level in PI_THINKING_LEVELS else None
+
+
+def save_project_pi_runtime(
     model: PiModel,
+    thinking_level: str,
     path: Path = PROJECT_PI_SETTINGS_PATH,
 ) -> None:
+    normalized_thinking = thinking_level.strip().lower()
+    if normalized_thinking not in PI_THINKING_LEVELS:
+        raise PiSettingsError(f"Unsupported PI reasoning effort: {thinking_level}")
     settings = _read_pi_settings(path)
     settings["defaultProvider"] = model.provider
     settings["defaultModel"] = model.model_id
+    settings["defaultThinkingLevel"] = normalized_thinking
     temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         temp_path.write_text(
@@ -277,3 +343,11 @@ def save_project_pi_model(
         raise PiSettingsError(f"Unable to save PI project settings: {exc}") from exc
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def save_project_pi_model(
+    model: PiModel,
+    path: Path = PROJECT_PI_SETTINGS_PATH,
+) -> None:
+    thinking_level = current_project_pi_thinking_level(path) or "medium"
+    save_project_pi_runtime(model, thinking_level, path)

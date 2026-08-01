@@ -21,6 +21,9 @@ set -euo pipefail
     if grep -q '"defaultModel":"test-model"' .pi/settings.json; then
       printf 'model=staged\\n'
     fi
+    if grep -q '"defaultThinkingLevel":"medium"' .pi/settings.json; then
+      printf 'thinking=staged\\n'
+    fi
   fi
   if [[ -f .pi/skills/focus-answer-record-questions/SKILL.md ]]; then
     printf 'skill=staged\\n'
@@ -48,7 +51,8 @@ def _run_wrapper(tmp_path: Path) -> tuple[list[str], Path, Path]:
     )
     skill_dir.mkdir(parents=True)
     (pi_project_dir / "settings.json").write_text(
-        '{"defaultProvider":"fireworks","defaultModel":"test-model"}',
+        '{"defaultProvider":"fireworks","defaultModel":"test-model",'
+        '"defaultThinkingLevel":"medium"}',
         encoding="utf-8",
     )
     (skill_dir / "SKILL.md").write_text(
@@ -85,6 +89,7 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "with a second line.",
         "settings=staged",
         "model=staged",
+        "thinking=staged",
         "skill=staged",
     ]
     assert not workspace.exists()

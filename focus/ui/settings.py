@@ -6,9 +6,16 @@ from focus.pi_runtime import (
     PiRuntimeError,
     PiSettingsError,
     available_pi_models,
+    clamp_pi_thinking_level,
     current_project_pi_model,
-    save_project_pi_model,
+    current_project_pi_thinking_level,
+    save_project_pi_runtime,
 )
+
+
+def _format_pi_thinking_level(level: str) -> str:
+    return "XHigh" if level == "xhigh" else level.title()
+
 
 @dataclass
 class SummarizationPromptWidgets:
@@ -73,15 +80,20 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._prompt_stack: Gtk.Stack | None = None
         self._speech_rag_source_dialog: Gtk.FileDialog | None = None
         self._pi_model_options: list[PiModel | None] = []
+        self._pi_available_model_keys: set[tuple[str, str]] = set()
+        self._pi_thinking_options: list[str] = []
         self._pi_model_generation = 0
         self._pi_model_applying = False
         self._pi_model_selection_changed = False
+        self._pi_thinking_selection_changed = False
         self._pi_model_closed = False
         try:
             self._original_pi_model_key = current_project_pi_model()
+            self._original_pi_thinking_level = current_project_pi_thinking_level()
             self._pi_model_settings_error = ""
         except PiSettingsError as exc:
             self._original_pi_model_key = None
+            self._original_pi_thinking_level = None
             self._pi_model_settings_error = str(exc)
 
         self.set_title("Settings")
@@ -746,10 +758,25 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             add_model_suffix(self.pi_model_refresh_button)
         launch_group.add(self.pi_model_row)
 
+        self.pi_thinking_row = Adw.ComboRow(
+            title="Reasoning Effort",
+            subtitle=(
+                self._pi_model_settings_error
+                or "Loading reasoning levels for the selected model..."
+            ),
+        )
+        self.pi_thinking_row.set_model(Gtk.StringList.new(["Medium"]))
+        self.pi_thinking_row.set_sensitive(False)
+        self.pi_thinking_row.connect(
+            "notify::selected",
+            self._on_pi_thinking_selected,
+        )
+        launch_group.add(self.pi_thinking_row)
+
         pi_configuration_row = Adw.ActionRow(
             title="PI configuration",
             subtitle=(
-                "The selected provider and model are saved in project "
+                "The selected provider, model, and reasoning effort are saved in project "
                 ".pi/settings.json; credentials remain in your global PI configuration."
             ),
         )
@@ -789,6 +816,69 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             return self._pi_model_options[selected]
         return None
 
+    def _selected_pi_thinking_level(self) -> str:
+        selected = int(self.pi_thinking_row.get_selected())
+        if 0 <= selected < len(self._pi_thinking_options):
+            return self._pi_thinking_options[selected]
+        return ""
+
+    def _populate_pi_thinking_row(self, preferred: str) -> None:
+        model = self._selected_pi_model()
+        requested = preferred or self._original_pi_thinking_level or "medium"
+        self._pi_model_applying = True
+        try:
+            if model is None:
+                self._pi_thinking_options = [requested]
+                self.pi_thinking_row.set_model(
+                    Gtk.StringList.new([_format_pi_thinking_level(requested)])
+                )
+                self.pi_thinking_row.set_selected(0)
+                self.pi_thinking_row.set_sensitive(False)
+                self.pi_thinking_row.set_subtitle(
+                    "Select an available PI model to choose reasoning effort."
+                )
+                self._pi_thinking_selection_changed = False
+                return
+
+            if model.settings_key not in self._pi_available_model_keys:
+                self._pi_thinking_options = [requested]
+                self.pi_thinking_row.set_model(
+                    Gtk.StringList.new([_format_pi_thinking_level(requested)])
+                )
+                self.pi_thinking_row.set_selected(0)
+                self.pi_thinking_row.set_sensitive(False)
+                self.pi_thinking_row.set_subtitle(
+                    "The configured model is unavailable; this value is preserved."
+                )
+                self._pi_thinking_selection_changed = False
+                return
+
+            effective = clamp_pi_thinking_level(model, requested)
+            levels = list(model.supported_thinking_levels or ("off",))
+            self._pi_thinking_options = levels
+            self.pi_thinking_row.set_model(
+                Gtk.StringList.new(
+                    [_format_pi_thinking_level(level) for level in levels]
+                )
+            )
+            self.pi_thinking_row.set_selected(levels.index(effective))
+            self.pi_thinking_row.set_sensitive(True)
+            self._pi_thinking_selection_changed = (
+                effective != self._original_pi_thinking_level
+            )
+            if effective != requested:
+                self.pi_thinking_row.set_subtitle(
+                    f"{_format_pi_thinking_level(requested)} is unsupported by "
+                    f"this model; PI will use {_format_pi_thinking_level(effective)}."
+                )
+            else:
+                self.pi_thinking_row.set_subtitle(
+                    "New Agent sessions start with "
+                    f"{_format_pi_thinking_level(effective)} reasoning."
+                )
+        finally:
+            self._pi_model_applying = False
+
     def _update_pi_model_subtitle(self) -> None:
         model = self._selected_pi_model()
         if model is None:
@@ -811,6 +901,26 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             model.settings_key != self._original_pi_model_key
         )
         self._update_pi_model_subtitle()
+        preferred = self._selected_pi_thinking_level()
+        self._populate_pi_thinking_row(preferred)
+
+    def _on_pi_thinking_selected(
+        self,
+        _row: Adw.ComboRow,
+        _parameter: object,
+    ) -> None:
+        if self._pi_model_applying:
+            return
+        thinking_level = self._selected_pi_thinking_level()
+        if not thinking_level:
+            return
+        self._pi_thinking_selection_changed = (
+            thinking_level != self._original_pi_thinking_level
+        )
+        self.pi_thinking_row.set_subtitle(
+            "New Agent sessions start with "
+            f"{_format_pi_thinking_level(thinking_level)} reasoning."
+        )
 
     def _on_refresh_pi_models(self, _button: Gtk.Button) -> None:
         self._load_pi_models()
@@ -821,10 +931,15 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if self._pi_model_settings_error:
             try:
                 self._original_pi_model_key = current_project_pi_model()
+                self._original_pi_thinking_level = (
+                    current_project_pi_thinking_level()
+                )
                 self._pi_model_settings_error = ""
             except PiSettingsError as exc:
                 self.pi_model_row.set_subtitle(str(exc))
                 self.pi_model_row.set_sensitive(False)
+                self.pi_thinking_row.set_subtitle(str(exc))
+                self.pi_thinking_row.set_sensitive(False)
                 self.pi_model_refresh_button.set_sensitive(True)
                 return
 
@@ -833,6 +948,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             selected.settings_key
             if self._pi_model_selection_changed and selected is not None
             else self._original_pi_model_key
+        )
+        selected_thinking = self._selected_pi_thinking_level()
+        desired_thinking = (
+            selected_thinking
+            if self._pi_thinking_selection_changed and selected_thinking
+            else self._original_pi_thinking_level or "medium"
         )
         self._pi_model_generation += 1
         generation = self._pi_model_generation
@@ -853,6 +974,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 [],
                 f"Invalid PI command: {exc}",
                 desired_key,
+                desired_thinking,
             )
             return
         if not command_argv:
@@ -861,6 +983,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 [],
                 "PI command is empty.",
                 desired_key,
+                desired_thinking,
             )
             return
         incompatible_flag = incompatible_pi_agent_flag(command_argv)
@@ -873,11 +996,16 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                     "the embedded session."
                 ),
                 desired_key,
+                desired_thinking,
             )
             return
 
         self.pi_model_row.set_sensitive(False)
         self.pi_model_row.set_subtitle("Loading models authorized in PI...")
+        self.pi_thinking_row.set_sensitive(False)
+        self.pi_thinking_row.set_subtitle(
+            "Loading reasoning levels for the selected model..."
+        )
         self.pi_model_refresh_button.set_sensitive(False)
 
         def worker() -> None:
@@ -893,6 +1021,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 models,
                 error,
                 desired_key,
+                desired_thinking,
             )
 
         threading.Thread(
@@ -907,11 +1036,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         models: list[PiModel],
         error: str,
         desired_key: tuple[str, str] | None,
+        desired_thinking: str,
     ) -> bool:
         if self._pi_model_closed or generation != self._pi_model_generation:
             return False
         self.pi_model_refresh_button.set_sensitive(True)
         if error:
+            self._pi_available_model_keys = set()
             current = self._original_pi_model_key
             if current is None:
                 self._pi_model_options = [None]
@@ -931,9 +1062,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._pi_model_selection_changed = False
             self.pi_model_row.set_sensitive(False)
             self.pi_model_row.set_subtitle(error)
+            self._populate_pi_thinking_row(desired_thinking)
+            self.pi_thinking_row.set_subtitle(error)
             return False
 
         available_keys = {model.settings_key for model in models}
+        self._pi_available_model_keys = available_keys
         options: list[PiModel | None] = []
         labels: list[str] = []
         current = self._original_pi_model_key
@@ -976,6 +1110,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             )
         else:
             self._update_pi_model_subtitle()
+        self._populate_pi_thinking_row(desired_thinking)
         return False
 
     def _on_prompt_row_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
@@ -1288,18 +1423,27 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             task_profile_defaults=task_profile_defaults,
         )
         selected_pi_model = self._selected_pi_model()
-        pi_model_saved = False
-        if self._pi_model_selection_changed and selected_pi_model is not None:
+        selected_pi_thinking = self._selected_pi_thinking_level()
+        pi_runtime_saved = False
+        if (
+            self._pi_model_selection_changed
+            or self._pi_thinking_selection_changed
+        ) and selected_pi_model is not None and selected_pi_thinking:
             try:
-                save_project_pi_model(selected_pi_model)
-                pi_model_saved = True
+                save_project_pi_runtime(
+                    selected_pi_model,
+                    selected_pi_thinking,
+                )
+                pi_runtime_saved = True
             except PiSettingsError as exc:
-                self._show_status_toast(f"Unable to save PI model: {exc}")
+                self._show_status_toast(f"Unable to save PI Agent settings: {exc}")
                 return
         save_ai_settings(settings)
-        if pi_model_saved and selected_pi_model is not None:
+        if pi_runtime_saved and selected_pi_model is not None:
             self._original_pi_model_key = selected_pi_model.settings_key
+            self._original_pi_thinking_level = selected_pi_thinking
             self._pi_model_selection_changed = False
+            self._pi_thinking_selection_changed = False
         self.app.update_font_sizes(
             font_size_pt=record_font_size,
             ai_font_size_pt=ai_font_size,
@@ -1307,9 +1451,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             record_font_family_name=record_font_family_name,
         )
         self.app.on_ai_settings_saved(settings)
-        if pi_model_saved:
+        if pi_runtime_saved:
             self._show_status_toast(
-                "Saved. The PI model applies to new Agent sessions."
+                "Saved. The PI model and reasoning effort apply to new "
+                "Agent sessions."
             )
         elif settings.is_configured() and settings.is_rag_ready():
             self._show_status_toast("Saved. Summaries and RAG questions are enabled.")

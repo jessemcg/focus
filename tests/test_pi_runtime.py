@@ -15,8 +15,11 @@ from focus.pi_runtime import (
     _pi_process_environment,
     _pi_rpc_response,
     available_pi_models,
+    clamp_pi_thinking_level,
     current_project_pi_model,
+    current_project_pi_thinking_level,
     save_project_pi_model,
+    save_project_pi_runtime,
 )
 
 
@@ -31,16 +34,28 @@ def test_available_models_uses_rpc_and_sorts_deduplicated_models() -> None:
                     "provider": "openai-codex",
                     "id": "gpt-5.6-sol",
                     "name": "GPT-5.6 Sol",
+                    "reasoning": True,
+                    "thinkingLevelMap": {
+                        "off": "none",
+                        "minimal": None,
+                        "low": "low",
+                        "medium": "medium",
+                        "high": "high",
+                        "xhigh": "xhigh",
+                        "max": None,
+                    },
                 },
                 {
                     "provider": "fireworks",
                     "id": "accounts/fireworks/models/glm-5p2",
                     "name": "GLM 5.2",
+                    "reasoning": False,
                 },
                 {
                     "provider": "fireworks",
                     "id": "accounts/fireworks/models/glm-5p2",
                     "name": "GLM 5.2",
+                    "reasoning": False,
                 },
                 {"provider": "", "id": "invalid"},
             ]
@@ -59,6 +74,14 @@ def test_available_models_uses_rpc_and_sorts_deduplicated_models() -> None:
         ("openai-codex", "gpt-5.6-sol"),
     ]
     assert models[1].label == "GPT-5.6 Sol — openai-codex"
+    assert models[0].supported_thinking_levels == ("off",)
+    assert models[1].supported_thinking_levels == (
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
     command = rpc.call_args.args[0]
     assert command[:3] == ["pi", "--thinking", "high"]
     assert "--mode=text" not in command
@@ -154,6 +177,7 @@ def test_reads_and_atomically_updates_project_model(tmp_path: Path) -> None:
             {
                 "defaultProvider": "openai-codex",
                 "defaultModel": "gpt-5.6-sol",
+                "defaultThinkingLevel": "medium",
                 "enableSkillCommands": True,
                 "futureSetting": {"enabled": True},
             }
@@ -165,21 +189,63 @@ def test_reads_and_atomically_updates_project_model(tmp_path: Path) -> None:
         "openai-codex",
         "gpt-5.6-sol",
     )
-    save_project_pi_model(
+    assert current_project_pi_thinking_level(path) == "medium"
+    save_project_pi_runtime(
         PiModel(
             provider="fireworks",
             model_id="accounts/fireworks/models/glm-5p2",
             name="GLM 5.2",
         ),
+        "high",
         path,
     )
 
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["defaultProvider"] == "fireworks"
     assert saved["defaultModel"] == "accounts/fireworks/models/glm-5p2"
+    assert saved["defaultThinkingLevel"] == "high"
     assert saved["enableSkillCommands"] is True
     assert saved["futureSetting"] == {"enabled": True}
     assert list(path.parent.glob(".settings.json.*.tmp")) == []
+
+
+def test_missing_or_invalid_project_reasoning_uses_ui_default(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(
+        '{"defaultProvider":"provider","defaultModel":"model"}',
+        encoding="utf-8",
+    )
+    assert current_project_pi_thinking_level(path) is None
+
+    path.write_text('{"defaultThinkingLevel":"unknown"}', encoding="utf-8")
+    assert current_project_pi_thinking_level(path) is None
+
+
+def test_save_project_runtime_rejects_invalid_reasoning(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(PiSettingsError, match="Unsupported"):
+        save_project_pi_runtime(
+            PiModel("provider", "model", "Model"),
+            "extreme",
+            path,
+        )
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {}
+
+
+def test_clamp_reasoning_prefers_next_supported_level() -> None:
+    model = PiModel(
+        "provider",
+        "model",
+        "Model",
+        supported_thinking_levels=("off", "low", "high"),
+    )
+
+    assert clamp_pi_thinking_level(model, "medium") == "high"
+    assert clamp_pi_thinking_level(model, "max") == "high"
+    assert clamp_pi_thinking_level(model, "unknown") == "high"
 
 
 def test_invalid_project_settings_are_not_overwritten(tmp_path: Path) -> None:

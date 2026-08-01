@@ -40,21 +40,40 @@ class FakeButton:
 
 def model_window(
     original: tuple[str, str] | None,
+    original_thinking: str | None = "medium",
 ) -> SimpleNamespace:
     window = SimpleNamespace(
         _pi_model_closed=False,
         _pi_model_generation=1,
         _pi_model_options=[],
+        _pi_available_model_keys=set(),
+        _pi_thinking_options=[],
         _pi_model_applying=False,
         _pi_model_selection_changed=False,
+        _pi_thinking_selection_changed=False,
         _original_pi_model_key=original,
+        _original_pi_thinking_level=original_thinking,
         pi_model_row=FakeComboRow(),
+        pi_thinking_row=FakeComboRow(),
         pi_model_refresh_button=FakeButton(),
     )
+
     def selected_pi_model() -> PiModel | None:
         return AiSettingsWindow._selected_pi_model(window)  # type: ignore[arg-type]
 
+    def selected_pi_thinking_level() -> str:
+        return AiSettingsWindow._selected_pi_thinking_level(  # type: ignore[arg-type]
+            window
+        )
+
     window._selected_pi_model = selected_pi_model
+    window._selected_pi_thinking_level = selected_pi_thinking_level
+    window._populate_pi_thinking_row = (  # type: ignore[attr-defined]
+        lambda preferred: AiSettingsWindow._populate_pi_thinking_row(  # type: ignore[arg-type]
+            window,
+            preferred,
+        )
+    )
     window._update_pi_model_subtitle = (  # type: ignore[attr-defined]
         lambda: AiSettingsWindow._update_pi_model_subtitle(window)  # type: ignore[arg-type]
     )
@@ -86,6 +105,7 @@ def test_available_models_select_current_project_model() -> None:
             models,
             "",
             ("openai-codex", "gpt-5.6-sol"),
+            "medium",
         )
 
     assert result is False
@@ -96,6 +116,15 @@ def test_available_models_select_current_project_model() -> None:
         window.pi_model_row.subtitle
         == "Project-wide setting: openai-codex / gpt-5.6-sol"
     )
+    assert window.pi_thinking_row.model == [
+        "Off",
+        "Minimal",
+        "Low",
+        "Medium",
+        "High",
+    ]
+    assert window.pi_thinking_row.selected == 3
+    assert window.pi_thinking_row.sensitive is True
 
 
 def test_unavailable_current_model_is_preserved() -> None:
@@ -116,12 +145,15 @@ def test_unavailable_current_model_is_preserved() -> None:
             [available],
             "",
             ("openai-codex", "retired-model"),
+            "medium",
         )
 
     assert window.pi_model_row.selected == 0
     assert window.pi_model_row.sensitive is True
     assert window._pi_model_selection_changed is False
     assert "currently configured; unavailable" in window.pi_model_row.model[0]
+    assert window.pi_thinking_row.model == ["Medium"]
+    assert window.pi_thinking_row.sensitive is False
 
     window.pi_model_row.selected = 1
     AiSettingsWindow._on_pi_model_selected(  # type: ignore[arg-type]
@@ -145,11 +177,14 @@ def test_model_query_failure_disables_row_without_changing_model() -> None:
             [],
             "PI model query failed.",
             ("openai-codex", "gpt-5.6-sol"),
+            "medium",
         )
 
     assert window.pi_model_row.sensitive is False
     assert window.pi_model_refresh_button.sensitive is True
     assert window.pi_model_row.subtitle == "PI model query failed."
+    assert window.pi_thinking_row.sensitive is False
+    assert window.pi_thinking_row.subtitle == "PI model query failed."
     assert window._selected_pi_model().settings_key == (
         "openai-codex",
         "gpt-5.6-sol",
@@ -169,11 +204,14 @@ def test_empty_model_list_prompts_for_pi_authorization() -> None:
             [],
             "",
             None,
+            "medium",
         )
 
     assert window.pi_model_row.model == ["No authenticated PI models found"]
     assert window.pi_model_row.sensitive is False
     assert "Authorize a provider in PI" in window.pi_model_row.subtitle
+    assert window.pi_thinking_row.model == ["Medium"]
+    assert window.pi_thinking_row.sensitive is False
 
 
 def test_stale_model_query_result_is_ignored() -> None:
@@ -186,7 +224,83 @@ def test_stale_model_query_result_is_ignored() -> None:
         [PiModel("fireworks", "stale", "Stale")],
         "",
         ("fireworks", "stale"),
+        "medium",
     )
 
     assert result is False
     assert window._pi_model_options == []
+
+
+def test_model_change_clamps_reasoning_to_supported_level() -> None:
+    original = PiModel("provider", "original", "Original")
+    high_only = PiModel(
+        "provider",
+        "high-only",
+        "High only",
+        supported_thinking_levels=("off", "high"),
+    )
+    window = model_window(original.settings_key)
+
+    with patch(
+        "focus.ui.settings.Gtk.StringList.new",
+        side_effect=lambda labels: list(labels),
+    ):
+        AiSettingsWindow._finish_pi_model_load(  # type: ignore[arg-type]
+            window,
+            1,
+            [original, high_only],
+            "",
+            original.settings_key,
+            "medium",
+        )
+        window.pi_model_row.selected = 1
+        AiSettingsWindow._on_pi_model_selected(  # type: ignore[arg-type]
+            window,
+            window.pi_model_row,
+            object(),
+        )
+
+    assert window.pi_thinking_row.model == ["Off", "High"]
+    assert window.pi_thinking_row.selected == 1
+    assert window._selected_pi_thinking_level() == "high"
+    assert window._pi_thinking_selection_changed is True
+    assert "Medium is unsupported" in window.pi_thinking_row.subtitle
+
+
+def test_missing_project_reasoning_defaults_to_medium_and_is_saveable() -> None:
+    model = PiModel("provider", "model", "Model")
+    window = model_window(model.settings_key, original_thinking=None)
+
+    with patch(
+        "focus.ui.settings.Gtk.StringList.new",
+        side_effect=lambda labels: list(labels),
+    ):
+        AiSettingsWindow._finish_pi_model_load(  # type: ignore[arg-type]
+            window,
+            1,
+            [model],
+            "",
+            model.settings_key,
+            "medium",
+        )
+
+    assert window._selected_pi_thinking_level() == "medium"
+    assert window._pi_thinking_selection_changed is True
+
+
+def test_reasoning_selection_tracks_change_and_updates_subtitle() -> None:
+    model = PiModel("provider", "model", "Model")
+    window = model_window(model.settings_key)
+    window._pi_model_options = [model]
+    window._pi_available_model_keys = {model.settings_key}
+    window._pi_thinking_options = list(model.supported_thinking_levels)
+    window.pi_thinking_row.selected = window._pi_thinking_options.index("high")
+
+    AiSettingsWindow._on_pi_thinking_selected(  # type: ignore[arg-type]
+        window,
+        window.pi_thinking_row,
+        object(),
+    )
+
+    assert window._pi_thinking_selection_changed is True
+    assert "High reasoning" in window.pi_thinking_row.subtitle

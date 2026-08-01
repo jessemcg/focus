@@ -30,6 +30,7 @@ def test_pi_project_settings_select_model_without_credentials() -> None:
     assert settings["defaultProvider"].strip()
     assert isinstance(settings.get("defaultModel"), str)
     assert settings["defaultModel"].strip()
+    assert settings.get("defaultThinkingLevel") == "medium"
     assert settings.get("enableSkillCommands") is True
     assert not any("key" in name.casefold() for name in settings)
 
