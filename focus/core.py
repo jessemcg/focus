@@ -173,6 +173,12 @@ DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
 DEFAULT_PI_AGENT_COMMAND = "pi"
 FOCUS_RECORD_AGENT_HELPER = PROJECT_DIR / "focus" / "agent_helper.py"
 FOCUS_PI_PROJECT_DIR = PROJECT_DIR / ".pi"
+FOCUS_PI_PRIORITY_MANIFEST_FILE = (
+    FOCUS_PI_PROJECT_DIR / "fireworks-priority-models.json"
+)
+FOCUS_PI_PRIORITY_EXTENSION_FILE = (
+    FOCUS_PI_PROJECT_DIR / "extensions" / "fireworks-priority.js"
+)
 FOCUS_PI_SKILL_NAME = "focus-answer-record-questions"
 FOCUS_PI_SKILL_FILE = (
     FOCUS_PI_PROJECT_DIR / "skills" / FOCUS_PI_SKILL_NAME / "SKILL.md"

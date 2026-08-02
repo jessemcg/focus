@@ -13,7 +13,11 @@ from typing import Any, Sequence
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 PROJECT_PI_SETTINGS_PATH = PROJECT_DIR / ".pi" / "settings.json"
+PROJECT_PI_PRIORITY_MODELS_PATH = (
+    PROJECT_DIR / ".pi" / "fireworks-priority-models.json"
+)
 PI_MODEL_DISCOVERY_TIMEOUT_SECONDS = 10
+PI_FIREWORKS_PRIORITY_SETTING_KEY = "fireworksPriorityServiceTier"
 PI_THINKING_LEVELS: tuple[str, ...] = (
     "off",
     "minimal",
@@ -39,6 +43,7 @@ class PiModel:
     model_id: str
     name: str
     supported_thinking_levels: tuple[str, ...] = PI_THINKING_LEVELS[:5]
+    supports_priority_service_tier: bool = False
 
     @property
     def label(self) -> str:
@@ -81,7 +86,38 @@ def _supported_thinking_levels(raw_model: dict[str, Any]) -> tuple[str, ...]:
     return tuple(levels) or ("off",)
 
 
-def _pi_model_from_json(raw_model: Any) -> PiModel | None:
+def _read_fireworks_priority_model_ids(
+    path: Path = PROJECT_PI_PRIORITY_MODELS_PATH,
+) -> frozenset[str]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise PiSettingsError(
+            f"Fireworks Priority model manifest not found: {path}"
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PiSettingsError(
+            f"Unable to read Fireworks Priority model manifest: {exc}"
+        ) from exc
+    raw_models = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(raw_models, list):
+        raise PiSettingsError(
+            "Fireworks Priority model manifest must contain a models list."
+        )
+    model_ids: set[str] = set()
+    for raw_model_id in raw_models:
+        if not isinstance(raw_model_id, str) or not raw_model_id.strip():
+            raise PiSettingsError(
+                "Fireworks Priority model manifest contains an invalid model ID."
+            )
+        model_ids.add(raw_model_id.strip())
+    return frozenset(model_ids)
+
+
+def _pi_model_from_json(
+    raw_model: Any,
+    fireworks_priority_model_ids: frozenset[str] = frozenset(),
+) -> PiModel | None:
     if not isinstance(raw_model, dict):
         return None
     provider = str(raw_model.get("provider") or "").strip()
@@ -94,6 +130,9 @@ def _pi_model_from_json(raw_model: Any) -> PiModel | None:
         model_id=model_id,
         name=name,
         supported_thinking_levels=_supported_thinking_levels(raw_model),
+        supports_priority_service_tier=(
+            provider == "fireworks" and model_id in fireworks_priority_model_ids
+        ),
     )
 
 
@@ -257,6 +296,10 @@ def available_pi_models(
     *,
     timeout: float = PI_MODEL_DISCOVERY_TIMEOUT_SECONDS,
 ) -> list[PiModel]:
+    try:
+        fireworks_priority_model_ids = _read_fireworks_priority_model_ids()
+    except PiSettingsError as exc:
+        raise PiRuntimeError(str(exc)) from exc
     command = _pi_discovery_command(pi_command)
     response = _pi_rpc_response(
         command,
@@ -274,7 +317,7 @@ def available_pi_models(
 
     models: dict[tuple[str, str], PiModel] = {}
     for raw_model in raw_models:
-        model = _pi_model_from_json(raw_model)
+        model = _pi_model_from_json(raw_model, fireworks_priority_model_ids)
         if model is None:
             continue
         models[model.settings_key] = model
@@ -320,18 +363,34 @@ def current_project_pi_thinking_level(
     return level if level in PI_THINKING_LEVELS else None
 
 
+def current_project_pi_priority_service_tier(
+    path: Path = PROJECT_PI_SETTINGS_PATH,
+) -> bool:
+    settings = _read_pi_settings(path)
+    value = settings.get(PI_FIREWORKS_PRIORITY_SETTING_KEY, True)
+    if not isinstance(value, bool):
+        raise PiSettingsError(
+            f"PI project setting {PI_FIREWORKS_PRIORITY_SETTING_KEY} must be true or false."
+        )
+    return value
+
+
 def save_project_pi_runtime(
     model: PiModel,
     thinking_level: str,
+    priority_service_tier: bool,
     path: Path = PROJECT_PI_SETTINGS_PATH,
 ) -> None:
     normalized_thinking = thinking_level.strip().lower()
     if normalized_thinking not in PI_THINKING_LEVELS:
         raise PiSettingsError(f"Unsupported PI reasoning effort: {thinking_level}")
+    if not isinstance(priority_service_tier, bool):
+        raise PiSettingsError("PI Priority setting must be true or false.")
     settings = _read_pi_settings(path)
     settings["defaultProvider"] = model.provider
     settings["defaultModel"] = model.model_id
     settings["defaultThinkingLevel"] = normalized_thinking
+    settings[PI_FIREWORKS_PRIORITY_SETTING_KEY] = priority_service_tier
     temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         temp_path.write_text(
@@ -350,4 +409,10 @@ def save_project_pi_model(
     path: Path = PROJECT_PI_SETTINGS_PATH,
 ) -> None:
     thinking_level = current_project_pi_thinking_level(path) or "medium"
-    save_project_pi_runtime(model, thinking_level, path)
+    priority_service_tier = current_project_pi_priority_service_tier(path)
+    save_project_pi_runtime(
+        model,
+        thinking_level,
+        priority_service_tier,
+        path,
+    )

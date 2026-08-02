@@ -29,8 +29,8 @@ for its earlier `text_record/` and `images/` layout.
 - VoyageAI or Isaacus embeddings for local Chroma-based RAG.
 - PI-only Agent questions in an embedded VTE terminal, with the final response
   mirrored into a formatted Answer view.
-- PI model and model-aware reasoning-effort selection from the models currently
-  authorized in PI.
+- PI model, model-aware reasoning-effort, and Fireworks Priority selection from
+  the models currently authorized in PI.
 - Record-citation insertion into Prose, clipboard fallback, keyboard shortcuts,
   and D-Bus actions for external speech-to-text launchers.
 - Current-case integration that can repoint `config.json` at the selected case
@@ -72,7 +72,8 @@ Authorize every provider you want to use before launching an Agent question:
 3. Select the subscription or API-key provider.
 4. Complete the browser login or enter the API key when PI prompts for it.
 5. Open Focus Settings, select **Agent**, refresh the **PI Model** row, and
-   choose the **Reasoning Effort** for new Agent sessions.
+   choose the **Reasoning Effort** and **Priority** preference for new Agent
+   sessions.
 
 PI also accepts documented provider environment variables. For example, an API
 key can be exported in the shell before launching Focus:
@@ -95,8 +96,16 @@ authorization because it runs PI as the same user.
 The checked-in project default is
 `fireworks/accounts/fireworks/routers/glm-5p2-fast`. The Agent page in Settings
 lists the models PI reports as currently available and saves the selected
-project-wide model and reasoning effort to `.pi/settings.json`. New selections
-apply to newly launched Agent sessions; they do not restart an existing session.
+project-wide model, reasoning effort, and Priority preference to
+`.pi/settings.json`. Priority starts on, but the switch is enabled only for
+Fireworks models listed in `.pi/fireworks-priority-models.json`; Fast routers
+and unknown models fail closed. New selections apply to newly launched Agent
+sessions; they do not restart an existing session.
+
+For an eligible model, Focus's project PI extension adds
+`service_tier: "priority"` to each provider request. Fireworks bills those
+requests at Priority rates. PI may still display a Standard-rate cost estimate,
+so Fireworks usage and billing are authoritative.
 
 ## Run the App
 
@@ -210,8 +219,8 @@ Current settings include:
 
 Older individual API URL/model/key fields remain readable for compatibility,
 but Settings writes the current model-profile structure. PI provider, model,
-and reasoning selection is intentionally separate from `config.json`: it is
-stored in `.pi/settings.json`, while PI authorization stays in PI's user
+reasoning, and Priority selection is intentionally separate from `config.json`:
+it is stored in `.pi/settings.json`, while PI authorization stays in PI's user
 configuration.
 
 ## Agent Questions
@@ -296,14 +305,18 @@ questions.
 - `focus/core.py`: shared settings, record parsing, search, citation,
   rendering, RAG, and PI session-log helpers.
 - `focus/pi_runtime.py`: PI model capability discovery and atomic project
-  model/reasoning settings.
+  model/reasoning/Priority settings.
 - `focus/cli.py`: `focus` command dispatcher.
 - `focus/current_case.py`: current-case to `config.json` integration.
 - `focus/agent_helper.py`: read-only source-map lookup for Agent sessions.
 - `focus/ui/`: Settings and D-Bus command windows.
 - `scripts/focus-agent-vte.sh`: temporary-workspace and embedded PI launcher.
-- `.pi/settings.json`: project-wide PI provider, model, and reasoning effort;
-  no credentials.
+- `.pi/settings.json`: project-wide PI provider, model, reasoning effort, and
+  Priority preference; no credentials.
+- `.pi/fireworks-priority-models.json`: reviewed allowlist of Fireworks models
+  that support Priority processing.
+- `.pi/extensions/fireworks-priority.js`: PI provider-request hook that applies
+  Priority to eligible Fireworks requests.
 - `.pi/skills/focus-answer-record-questions/SKILL.md`: record research and
   citation policy.
 - `tests/`: automated regression tests.
@@ -338,7 +351,7 @@ git diff --check
 ```
 
 For UI changes, also open a sanitized bundle and exercise transcript paging,
-grep, TOC navigation, image view, summaries, RAG, PI model/reasoning
+grep, TOC navigation, image view, summaries, RAG, PI model/reasoning/Priority
 refresh/save, and a new embedded Agent session.
 
 ## License

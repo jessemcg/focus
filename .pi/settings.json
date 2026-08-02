@@ -2,5 +2,6 @@
   "defaultProvider": "fireworks",
   "defaultModel": "accounts/fireworks/routers/glm-5p2-fast",
   "defaultThinkingLevel": "medium",
+  "fireworksPriorityServiceTier": true,
   "enableSkillCommands": true
 }

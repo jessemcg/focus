@@ -28,6 +28,12 @@ set -euo pipefail
   if [[ -f .pi/skills/focus-answer-record-questions/SKILL.md ]]; then
     printf 'skill=staged\\n'
   fi
+  if [[ -f .pi/fireworks-priority-models.json ]]; then
+    printf 'priority-manifest=staged\\n'
+  fi
+  if [[ -f .pi/extensions/fireworks-priority.js ]]; then
+    printf 'priority-extension=staged\\n'
+  fi
 } > "$FOCUS_TEST_OUTPUT"
 """,
         encoding="utf-8",
@@ -50,6 +56,8 @@ def _run_wrapper(tmp_path: Path) -> tuple[list[str], Path, Path]:
         / "focus-answer-record-questions"
     )
     skill_dir.mkdir(parents=True)
+    extension_dir = pi_project_dir / "extensions"
+    extension_dir.mkdir(parents=True)
     (pi_project_dir / "settings.json").write_text(
         '{"defaultProvider":"fireworks","defaultModel":"test-model",'
         '"defaultThinkingLevel":"medium"}',
@@ -57,6 +65,14 @@ def _run_wrapper(tmp_path: Path) -> tuple[list[str], Path, Path]:
     )
     (skill_dir / "SKILL.md").write_text(
         "---\nname: focus-answer-record-questions\ndescription: Test skill.\n---\n",
+        encoding="utf-8",
+    )
+    (pi_project_dir / "fireworks-priority-models.json").write_text(
+        '{"models":["test-model"]}',
+        encoding="utf-8",
+    )
+    (extension_dir / "fireworks-priority.js").write_text(
+        "module.exports = () => {};\n",
         encoding="utf-8",
     )
     executable = _fake_agent(tmp_path)
@@ -91,6 +107,8 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "model=staged",
         "thinking=staged",
         "skill=staged",
+        "priority-manifest=staged",
+        "priority-extension=staged",
     ]
     assert not workspace.exists()
     assert not prompt_path.exists()

@@ -6561,9 +6561,14 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Record Agent helper not found: {helper}")
             return
         pi_settings = FOCUS_PI_PROJECT_DIR / "settings.json"
-        if not pi_settings.is_file() or not FOCUS_PI_SKILL_FILE.is_file():
+        if (
+            not pi_settings.is_file()
+            or not FOCUS_PI_SKILL_FILE.is_file()
+            or not FOCUS_PI_PRIORITY_MANIFEST_FILE.is_file()
+            or not FOCUS_PI_PRIORITY_EXTENSION_FILE.is_file()
+        ):
             self._ai_transient_toast(
-                "Focus PI project settings or record-question skill is missing."
+                "Focus PI project settings, skill, or Priority resources are missing."
             )
             return
 

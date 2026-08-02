@@ -38,9 +38,29 @@ class FakeButton:
         self.sensitive = sensitive
 
 
+class FakeSwitchRow:
+    def __init__(self) -> None:
+        self.active = False
+        self.sensitive = False
+        self.subtitle = ""
+
+    def get_active(self) -> bool:
+        return self.active
+
+    def set_active(self, active: bool) -> None:
+        self.active = active
+
+    def set_sensitive(self, sensitive: bool) -> None:
+        self.sensitive = sensitive
+
+    def set_subtitle(self, subtitle: str) -> None:
+        self.subtitle = subtitle
+
+
 def model_window(
     original: tuple[str, str] | None,
     original_thinking: str | None = "medium",
+    original_priority: bool = True,
 ) -> SimpleNamespace:
     window = SimpleNamespace(
         _pi_model_closed=False,
@@ -51,10 +71,14 @@ def model_window(
         _pi_model_applying=False,
         _pi_model_selection_changed=False,
         _pi_thinking_selection_changed=False,
+        _pi_priority_selection_changed=False,
         _original_pi_model_key=original,
         _original_pi_thinking_level=original_thinking,
+        _original_pi_priority_service_tier=original_priority,
+        _pi_priority_preference=original_priority,
         pi_model_row=FakeComboRow(),
         pi_thinking_row=FakeComboRow(),
+        pi_priority_row=FakeSwitchRow(),
         pi_model_refresh_button=FakeButton(),
     )
 
@@ -73,6 +97,9 @@ def model_window(
             window,
             preferred,
         )
+    )
+    window._populate_pi_priority_row = (  # type: ignore[attr-defined]
+        lambda: AiSettingsWindow._populate_pi_priority_row(window)  # type: ignore[arg-type]
     )
     window._update_pi_model_subtitle = (  # type: ignore[attr-defined]
         lambda: AiSettingsWindow._update_pi_model_subtitle(window)  # type: ignore[arg-type]
@@ -125,6 +152,8 @@ def test_available_models_select_current_project_model() -> None:
     ]
     assert window.pi_thinking_row.selected == 3
     assert window.pi_thinking_row.sensitive is True
+    assert window.pi_priority_row.active is False
+    assert window.pi_priority_row.sensitive is False
 
 
 def test_unavailable_current_model_is_preserved() -> None:
@@ -185,6 +214,9 @@ def test_model_query_failure_disables_row_without_changing_model() -> None:
     assert window.pi_model_row.subtitle == "PI model query failed."
     assert window.pi_thinking_row.sensitive is False
     assert window.pi_thinking_row.subtitle == "PI model query failed."
+    assert window.pi_priority_row.active is False
+    assert window.pi_priority_row.sensitive is False
+    assert window.pi_priority_row.subtitle == "PI model query failed."
     assert window._selected_pi_model().settings_key == (
         "openai-codex",
         "gpt-5.6-sol",
@@ -304,3 +336,64 @@ def test_reasoning_selection_tracks_change_and_updates_subtitle() -> None:
 
     assert window._pi_thinking_selection_changed is True
     assert "High reasoning" in window.pi_thinking_row.subtitle
+
+
+def test_priority_is_enabled_for_allowlisted_fireworks_model() -> None:
+    model = PiModel(
+        "fireworks",
+        "accounts/fireworks/models/glm-5p2",
+        "GLM 5.2",
+        supports_priority_service_tier=True,
+    )
+    window = model_window(model.settings_key)
+    window._pi_model_options = [model]
+    window._pi_available_model_keys = {model.settings_key}
+
+    AiSettingsWindow._populate_pi_priority_row(window)  # type: ignore[arg-type]
+
+    assert window.pi_priority_row.active is True
+    assert window.pi_priority_row.sensitive is True
+    assert "Priority billing" in window.pi_priority_row.subtitle
+
+    window.pi_priority_row.active = False
+    AiSettingsWindow._on_pi_priority_selected(  # type: ignore[arg-type]
+        window,
+        window.pi_priority_row,
+        object(),
+    )
+    assert window._pi_priority_preference is False
+    assert window._pi_priority_selection_changed is True
+    assert "Standard service tier" in window.pi_priority_row.subtitle
+
+
+def test_priority_is_disabled_for_fast_router_and_preserves_preference() -> None:
+    priority_model = PiModel(
+        "fireworks",
+        "accounts/fireworks/models/glm-5p2",
+        "GLM 5.2",
+        supports_priority_service_tier=True,
+    )
+    fast_model = PiModel(
+        "fireworks",
+        "accounts/fireworks/routers/glm-5p2-fast",
+        "GLM 5.2 Fast",
+    )
+    window = model_window(priority_model.settings_key, original_priority=False)
+    window._pi_model_options = [priority_model, fast_model]
+    window._pi_available_model_keys = {
+        priority_model.settings_key,
+        fast_model.settings_key,
+    }
+
+    window.pi_model_row.selected = 1
+    AiSettingsWindow._populate_pi_priority_row(window)  # type: ignore[arg-type]
+    assert window.pi_priority_row.active is False
+    assert window.pi_priority_row.sensitive is False
+    assert "Fast router" in window.pi_priority_row.subtitle
+    assert window._pi_priority_preference is False
+
+    window.pi_model_row.selected = 0
+    AiSettingsWindow._populate_pi_priority_row(window)  # type: ignore[arg-type]
+    assert window.pi_priority_row.active is False
+    assert window.pi_priority_row.sensitive is True
+    assert window._pi_priority_preference is False

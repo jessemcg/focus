@@ -11,12 +11,14 @@ from focus.pi_runtime import (
     PiModel,
     PiRuntimeError,
     PiSettingsError,
+    _read_fireworks_priority_model_ids,
     _pi_discovery_command,
     _pi_process_environment,
     _pi_rpc_response,
     available_pi_models,
     clamp_pi_thinking_level,
     current_project_pi_model,
+    current_project_pi_priority_service_tier,
     current_project_pi_thinking_level,
     save_project_pi_model,
     save_project_pi_runtime,
@@ -75,6 +77,8 @@ def test_available_models_uses_rpc_and_sorts_deduplicated_models() -> None:
     ]
     assert models[1].label == "GPT-5.6 Sol — openai-codex"
     assert models[0].supported_thinking_levels == ("off",)
+    assert models[0].supports_priority_service_tier is True
+    assert models[1].supports_priority_service_tier is False
     assert models[1].supported_thinking_levels == (
         "off",
         "low",
@@ -197,6 +201,7 @@ def test_reads_and_atomically_updates_project_model(tmp_path: Path) -> None:
             name="GLM 5.2",
         ),
         "high",
+        False,
         path,
     )
 
@@ -204,6 +209,7 @@ def test_reads_and_atomically_updates_project_model(tmp_path: Path) -> None:
     assert saved["defaultProvider"] == "fireworks"
     assert saved["defaultModel"] == "accounts/fireworks/models/glm-5p2"
     assert saved["defaultThinkingLevel"] == "high"
+    assert saved["fireworksPriorityServiceTier"] is False
     assert saved["enableSkillCommands"] is True
     assert saved["futureSetting"] == {"enabled": True}
     assert list(path.parent.glob(".settings.json.*.tmp")) == []
@@ -221,6 +227,40 @@ def test_missing_or_invalid_project_reasoning_uses_ui_default(tmp_path: Path) ->
     assert current_project_pi_thinking_level(path) is None
 
 
+def test_priority_preference_defaults_on_and_requires_boolean(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text("{}", encoding="utf-8")
+    assert current_project_pi_priority_service_tier(path) is True
+
+    path.write_text(
+        '{"fireworksPriorityServiceTier":false}',
+        encoding="utf-8",
+    )
+    assert current_project_pi_priority_service_tier(path) is False
+
+    path.write_text(
+        '{"fireworksPriorityServiceTier":"yes"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(PiSettingsError, match="must be true or false"):
+        current_project_pi_priority_service_tier(path)
+
+
+def test_priority_manifest_is_validated_and_deduplicated(tmp_path: Path) -> None:
+    path = tmp_path / "priority.json"
+    path.write_text(
+        '{"models":["accounts/fireworks/models/a",'
+        '"accounts/fireworks/models/a"]}',
+        encoding="utf-8",
+    )
+    assert _read_fireworks_priority_model_ids(path) == {
+        "accounts/fireworks/models/a"
+    }
+
+    path.write_text('{"models":[""]}', encoding="utf-8")
+    with pytest.raises(PiSettingsError, match="invalid model ID"):
+        _read_fireworks_priority_model_ids(path)
+
 def test_save_project_runtime_rejects_invalid_reasoning(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     path.write_text("{}", encoding="utf-8")
@@ -229,6 +269,7 @@ def test_save_project_runtime_rejects_invalid_reasoning(tmp_path: Path) -> None:
         save_project_pi_runtime(
             PiModel("provider", "model", "Model"),
             "extreme",
+            True,
             path,
         )
 
