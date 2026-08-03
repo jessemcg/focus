@@ -83,5 +83,12 @@ export TMPDIR="$workspace/tmp"
 prompt="$(cat "$prompt_file")"
 "${agent_command[@]}" \
   --approve \
+  --no-extensions \
+  --no-skills \
+  --no-prompt-templates \
+  --no-themes \
+  --no-context-files \
+  --extension "$workspace/.pi/extensions/fireworks-priority.js" \
+  --skill "$workspace/.pi/skills/focus-answer-record-questions/SKILL.md" \
   --tools read,bash,grep,find,ls \
   "$prompt"

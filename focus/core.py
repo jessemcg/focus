@@ -2381,6 +2381,9 @@ PI_INCOMPATIBLE_AGENT_FLAGS = frozenset(
         "-ns",
         "--no-prompt-templates",
         "-np",
+        "--no-themes",
+        "--no-context-files",
+        "-nc",
         "--approve",
         "-a",
         "--no-approve",
@@ -2404,6 +2407,7 @@ PI_INCOMPATIBLE_AGENT_VALUE_FLAGS = frozenset(
         "-e",
         "--skill",
         "--prompt-template",
+        "--theme",
     }
 )
 

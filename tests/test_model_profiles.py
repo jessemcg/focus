@@ -234,4 +234,7 @@ def test_incompatible_pi_agent_flag_rejects_project_policy_overrides() -> None:
     assert incompatible_pi_agent_flag(["pi", "--thinking=high"]) == "--thinking=high"
     assert incompatible_pi_agent_flag(["pi", "--tools", "read"]) == "--tools"
     assert incompatible_pi_agent_flag(["pi", "--no-skills"]) == "--no-skills"
+    assert incompatible_pi_agent_flag(["pi", "--theme", "home.json"]) == "--theme"
+    assert incompatible_pi_agent_flag(["pi", "--no-context-files"]) == "--no-context-files"
+    assert incompatible_pi_agent_flag(["pi", "-nc"]) == "-nc"
     assert incompatible_pi_agent_flag(["pi", "--no-approve"]) == "--no-approve"
