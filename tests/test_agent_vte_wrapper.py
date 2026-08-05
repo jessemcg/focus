@@ -25,6 +25,9 @@ set -euo pipefail
       printf 'thinking=staged\\n'
     fi
   fi
+  if [[ -s .pi/SYSTEM.md ]]; then
+    printf 'system=staged\n'
+  fi
   if [[ -f .pi/skills/focus-answer-record-questions/SKILL.md ]]; then
     printf 'skill=staged\\n'
   fi
@@ -62,6 +65,9 @@ def _run_wrapper(tmp_path: Path) -> tuple[list[str], Path, Path]:
         '{"defaultProvider":"fireworks","defaultModel":"test-model",'
         '"defaultThinkingLevel":"medium"}',
         encoding="utf-8",
+    )
+    (pi_project_dir / "SYSTEM.md").write_text(
+        "Focus record knowledge work", encoding="utf-8"
     )
     (skill_dir / "SKILL.md").write_text(
         "---\nname: focus-answer-record-questions\ndescription: Test skill.\n---\n",
@@ -104,6 +110,8 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "arg=--no-prompt-templates",
         "arg=--no-themes",
         "arg=--no-context-files",
+        "arg=--system-prompt",
+        f"arg={workspace}/.pi/SYSTEM.md",
         "arg=--extension",
         f"arg={workspace}/.pi/extensions/fireworks-priority.js",
         "arg=--skill",
@@ -115,12 +123,39 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "settings=staged",
         "model=staged",
         "thinking=staged",
+        "system=staged",
         "skill=staged",
         "priority-manifest=staged",
         "priority-extension=staged",
     ]
     assert not workspace.exists()
     assert not prompt_path.exists()
+
+
+def test_pi_wrapper_rejects_missing_system_prompt(tmp_path) -> None:
+    case_root = tmp_path / "case"
+    case_root.mkdir()
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("Question", encoding="utf-8")
+    pi_project_dir = tmp_path / "pi-project"
+    pi_project_dir.mkdir()
+    (pi_project_dir / "settings.json").write_text("{}", encoding="utf-8")
+    env = os.environ.copy()
+    env.update(
+        {
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
+            "FOCUS_AGENT_CASE_ROOT": str(case_root),
+            "FOCUS_PI_PROJECT_DIR": str(pi_project_dir),
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(WRAPPER)], check=False, env=env, text=True, capture_output=True
+    )
+
+    assert completed.returncode == 2
+    assert "Focus PI system prompt not found or empty" in completed.stderr
 
 
 def test_pi_wrapper_rejects_missing_project_resources(tmp_path) -> None:

@@ -52,6 +52,12 @@ if [[ -z "$pi_project_dir" || ! -f "$pi_project_dir/settings.json" ]]; then
   exit 2
 fi
 
+if [[ ! -s "$pi_project_dir/SYSTEM.md" ]]; then
+  printf 'Focus PI system prompt not found or empty: %s\n' \
+    "$pi_project_dir/SYSTEM.md" >&2
+  exit 2
+fi
+
 if [[ ! -f "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" ]]; then
   printf 'Focus PI record-question skill not found: %s\n' \
     "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" >&2
@@ -88,6 +94,7 @@ prompt="$(cat "$prompt_file")"
   --no-prompt-templates \
   --no-themes \
   --no-context-files \
+  --system-prompt "$workspace/.pi/SYSTEM.md" \
   --extension "$workspace/.pi/extensions/fireworks-priority.js" \
   --skill "$workspace/.pi/skills/focus-answer-record-questions/SKILL.md" \
   --tools read,bash,grep,find,ls \

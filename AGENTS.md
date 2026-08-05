@@ -10,6 +10,7 @@
 - `focus/agent_helper.py`: read-only source-map lookup helper CLI used by embedded PI Agent sessions.
 - `focus/ui/`: secondary Libadwaita windows such as settings and D-Bus command reference.
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
+- `.pi/SYSTEM.md`: replacement knowledge-work system prompt copied into each private embedded-Agent workspace.
 - `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions.
 - `config.json`: user-specific settings (input_dir, font sizes, API credentials, prompts); do not commit secrets.
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.

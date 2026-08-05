@@ -11,6 +11,7 @@ from focus.core import (
     FOCUS_PI_PROJECT_DIR,
     FOCUS_PI_SKILL_FILE,
     FOCUS_PI_SKILL_NAME,
+    FOCUS_PI_SYSTEM_PROMPT_FILE,
 )
 
 
@@ -40,6 +41,15 @@ def test_pi_project_settings_select_model_without_credentials() -> None:
     assert settings.get("fireworksPriorityServiceTier") is True
     assert settings.get("enableSkillCommands") is True
     assert not any("key" in name.casefold() for name in settings)
+
+
+def test_pi_system_prompt_has_focus_knowledge_work_contract() -> None:
+    prompt = FOCUS_PI_SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
+
+    assert "read-only appellate-record investigator" in prompt
+    assert "not a coding assistant" in prompt
+    assert "FOCUS_AGENT_CASE_ROOT" in prompt
+    assert "private, disposable runtime workspace" in prompt
 
 
 def test_pi_priority_resources_are_present_and_fail_closed() -> None:
