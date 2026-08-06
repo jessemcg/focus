@@ -5,8 +5,6 @@ from focus.core import (
     AI_VIEW_AGENT_QA,
     AI_VIEW_EXTRACT,
     AI_VIEW_FILE,
-    AI_VIEW_QA,
-    AI_VIEW_RAG_AUDIT,
     AI_VIEW_SUMMARIZE,
     SUMMARY_SOURCE_HEARING,
     SUMMARY_SOURCE_MINUTES,
@@ -172,7 +170,6 @@ class ToggleHarness:
 
     def __init__(self) -> None:
         self._ai_view_buttons = {
-            AI_VIEW_QA: FakeButton(),
             AI_VIEW_AGENT_QA: FakeButton(),
         }
         self._summary_source_buttons = {
@@ -206,7 +203,6 @@ class BodyVisibilityHarness:
         self._ai_view_stack = FakeViewStack(view_name)
         self._ai_active_view = view_name
         self._agent_subview_name = AGENT_SUBVIEW_ANSWER
-        self._rag_filter_chip = FakeVisibility()
         self.has_output = False
         self.has_agent_session = False
 
@@ -243,7 +239,6 @@ def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
 
     harness._sync_ai_view_toggles(AI_VIEW_SUMMARIZE)
     assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
-    assert not harness._ai_view_buttons[AI_VIEW_QA].active
     assert not harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
 
     harness._sync_ai_view_toggles(AI_VIEW_FILE)
@@ -273,9 +268,6 @@ def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
     )
     assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
 
-    harness._sync_ai_view_toggles(AI_VIEW_RAG_AUDIT)
-    assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
-
     harness._sync_ai_view_toggles(AI_VIEW_AGENT_QA)
     assert harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
     assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
@@ -298,14 +290,14 @@ def test_print_summary_action_tracks_printable_summary_state() -> None:
 
 
 def test_empty_header_only_views_do_not_reserve_body_space() -> None:
-    for view_name in (AI_VIEW_QA, AI_VIEW_AGENT_QA, AI_VIEW_SUMMARIZE, AI_VIEW_FILE):
+    for view_name in (AI_VIEW_AGENT_QA, AI_VIEW_SUMMARIZE, AI_VIEW_FILE):
         harness = BodyVisibilityHarness(view_name)
 
         assert not harness._active_ai_body_has_content()
 
 
 def test_views_with_body_controls_remain_expanded() -> None:
-    for view_name in (AI_VIEW_EXTRACT, AI_VIEW_RAG_AUDIT):
+    for view_name in (AI_VIEW_EXTRACT,):
         harness = BodyVisibilityHarness(view_name)
 
         assert harness._active_ai_body_has_content()
@@ -315,10 +307,6 @@ def test_dynamic_case_tool_content_expands_the_body() -> None:
     output_harness = BodyVisibilityHarness(AI_VIEW_SUMMARIZE)
     output_harness.has_output = True
     assert output_harness._active_ai_body_has_content()
-
-    filter_harness = BodyVisibilityHarness(AI_VIEW_QA)
-    filter_harness._rag_filter_chip.visible = True
-    assert filter_harness._active_ai_body_has_content()
 
     agent_harness = BodyVisibilityHarness(AI_VIEW_AGENT_QA)
     agent_harness._agent_subview_name = AGENT_SUBVIEW_SESSION

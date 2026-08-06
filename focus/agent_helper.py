@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -183,12 +184,14 @@ def command_map(args: argparse.Namespace) -> None:
     source_map = _load_source_map(root)
     _emit_json(
         {
+            "schema_version": source_map.get("schema_version", 1),
             "case_name": source_map.get("case_name", ""),
             "root_dir": source_map.get("root_dir", ""),
             "counts": source_map.get("counts", {}),
             "paths": source_map.get("paths", {}),
             "citation_series": source_map.get("citation_series", []),
             "documents": source_map.get("documents", []),
+            "participant_index": source_map.get("participant_index", {}),
             "warnings": source_map.get("warnings", []),
         }
     )
@@ -213,6 +216,193 @@ def command_lookup(args: argparse.Namespace) -> None:
             "matches": _page_match_payloads(root, matches),
         }
     )
+
+
+def _normalize_search_text(value: str) -> str:
+    value = unicodedata.normalize("NFKC", value).casefold()
+    value = re.sub(r"-\s*\n\s*", "", value)
+    value = re.sub(r"[^\w]+", " ", value, flags=re.UNICODE)
+    return " ".join(value.split())
+
+
+def _document_page_numbers(document: dict[str, Any]) -> set[int]:
+    try:
+        start = int(document.get("start_page") or 0)
+        end = int(document.get("end_page") or 0)
+    except (TypeError, ValueError):
+        return set()
+    return set(range(start, end + 1)) if start and end >= start else set()
+
+
+def _candidate_pages(source_map: dict[str, Any], args: argparse.Namespace) -> list[dict[str, Any]]:
+    pages = [item for item in source_map.get("pages", []) if isinstance(item, dict)]
+    allowed: set[int] | None = None
+    documents = [item for item in source_map.get("documents", []) if isinstance(item, dict)]
+    for document_id in args.document or []:
+        document = _document_by_id(source_map, document_id)
+        scope = _document_page_numbers(document) if document else set()
+        allowed = scope if allowed is None else allowed & scope
+    if args.hearing_date:
+        wanted = _normalize_search_text(args.hearing_date)
+        scope: set[int] = set()
+        for document in documents:
+            if document.get("type") == "hearing" and _normalize_search_text(str(document.get("date") or "")) == wanted:
+                scope.update(_document_page_numbers(document))
+        allowed = scope if allowed is None else allowed & scope
+    participant = source_map.get("participant_index") if isinstance(source_map.get("participant_index"), dict) else {}
+    hearings = [item for item in participant.get("hearings", []) if isinstance(item, dict)]
+    if args.witness:
+        wanted = _normalize_search_text(args.witness)
+        scope: set[int] = set()
+        for hearing in hearings:
+            for witness in hearing.get("witnesses", []):
+                if not isinstance(witness, dict):
+                    continue
+                names = [str(witness.get("name") or ""), *[str(item) for item in witness.get("aliases", [])]]
+                if any(wanted in _normalize_search_text(name) or _normalize_search_text(name) in wanted for name in names if name):
+                    for exam in witness.get("examinations", []):
+                        if not isinstance(exam, dict):
+                            continue
+                        try:
+                            start = int(exam.get("start_file_page") or 0)
+                            end = int(exam.get("end_file_page") or start)
+                        except (TypeError, ValueError):
+                            continue
+                        scope.update(range(start, end + 1))
+        allowed = scope if allowed is None else allowed & scope
+    if args.counsel_role:
+        wanted = _normalize_search_text(args.counsel_role).replace(" ", "_")
+        scope: set[int] = set()
+        for hearing in hearings:
+            if any(
+                _normalize_search_text(str(item.get("role_id") or "")).replace(" ", "_") == wanted
+                or _normalize_search_text(str(item.get("role_label") or "")).replace(" ", "_") == wanted
+                for item in hearing.get("counsel", []) if isinstance(item, dict)
+            ):
+                try:
+                    scope.update(range(int(hearing.get("start_page") or 0), int(hearing.get("end_page") or -1) + 1))
+                except (TypeError, ValueError):
+                    pass
+        allowed = scope if allowed is None else allowed & scope
+    if allowed is None:
+        return pages
+    return [page for page in pages if isinstance(page.get("file_page"), int) and page["file_page"] in allowed]
+
+
+def _participant_aliases_for_page(source_map: dict[str, Any], page_number: int) -> list[str]:
+    participant = source_map.get("participant_index") if isinstance(source_map.get("participant_index"), dict) else {}
+    aliases: list[str] = []
+    for hearing in participant.get("hearings", []):
+        if not isinstance(hearing, dict):
+            continue
+        try:
+            if not int(hearing.get("start_page") or 0) <= page_number <= int(hearing.get("end_page") or 0):
+                continue
+        except (TypeError, ValueError):
+            continue
+        for person in [*hearing.get("counsel", []), *hearing.get("witnesses", [])]:
+            if not isinstance(person, dict):
+                continue
+            aliases.extend(
+                str(value) for value in (
+                    person.get("name"), person.get("role_id"), person.get("role_label"),
+                    *person.get("aliases", []),
+                ) if value
+            )
+    return aliases
+
+
+def _search_score(normalized_text: str, normalized_query: str, metadata: str) -> tuple[float, str]:
+    if not normalized_query:
+        return 0.0, ""
+    if normalized_query in normalized_text:
+        return 100.0 + min(20.0, len(normalized_query) / 10), "exact-phrase"
+    terms = [term for term in normalized_query.split() if len(term) > 1]
+    if not terms:
+        return 0.0, ""
+    positions = [normalized_text.find(term) for term in terms]
+    present = [position for position in positions if position >= 0]
+    metadata_hits = sum(term in metadata for term in terms)
+    if len(present) == len(terms):
+        span = max(present) - min(present) if len(present) > 1 else 0
+        return 65.0 + 20.0 / (1.0 + span / 100.0) + metadata_hits * 2, "all-terms"
+    if present:
+        return 15.0 * len(present) / len(terms) + metadata_hits * 3, "partial-terms"
+    if metadata_hits:
+        return 10.0 + metadata_hits * 3, "participant-metadata"
+    return 0.0, ""
+
+
+def command_search(args: argparse.Namespace) -> None:
+    root = args.case_root.resolve(strict=False)
+    source_map = _load_source_map(root)
+    queries = [value for value in args.query if _normalize_search_text(value)]
+    candidates = _candidate_pages(source_map, args)
+    near_pages = _lookup_pages_for_citation(source_map, args.current_citation) if args.current_citation else []
+    near_number = int(near_pages[0].get("file_page") or 0) if near_pages else 0
+    results: list[dict[str, Any]] = []
+    for page in candidates:
+        text_path = str(page.get("text_path") or "").strip()
+        candidate = root / text_path
+        try:
+            candidate.resolve(strict=False).relative_to(root)
+            raw_text = candidate.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, ValueError):
+            continue
+        normalized_text = _normalize_search_text(raw_text)
+        page_number = int(page.get("file_page") or 0)
+        aliases = _participant_aliases_for_page(source_map, page_number)
+        metadata = _normalize_search_text(" ".join([
+            str(page.get("citation_label") or ""), str(page.get("page_type") or ""),
+            *[str(value) for value in page.get("document_ids", [])], *aliases,
+        ]))
+        best_score = 0.0
+        best_reason = ""
+        matched: list[str] = []
+        for query in queries:
+            score, reason = _search_score(normalized_text, _normalize_search_text(query), metadata)
+            if score > 0:
+                matched.append(query)
+            if score > best_score:
+                best_score, best_reason = score, reason
+        if not best_score:
+            continue
+        if near_number:
+            best_score += max(0.0, 12.0 - abs(page_number - near_number) * 0.5)
+        first_terms = [_normalize_search_text(value).split()[0] for value in matched if _normalize_search_text(value).split()]
+        compact = " ".join(raw_text.split())
+        position = -1
+        for term in first_terms:
+            position = compact.casefold().find(term.casefold())
+            if position >= 0:
+                break
+        if position < 0:
+            position = 0
+        snippet = compact[max(0, position - 220): position + 500]
+        if position > 220:
+            snippet = "…" + snippet
+        if position + 500 < len(compact):
+            snippet += "…"
+        results.append({
+            "score": round(best_score, 3), "reason": best_reason,
+            "matched_queries": matched, "citation_label": page.get("citation_label", ""),
+            "citation_key": page.get("citation_key", ""), "file_page": page_number,
+            "text_path": text_path, "document_ids": page.get("document_ids", []),
+            "hearing_id": page.get("hearing_id", ""), "witnesses": page.get("witnesses", []),
+            "examinations": page.get("examinations", []), "snippet": snippet,
+        })
+    results.sort(key=lambda item: (-float(item["score"]), int(item["file_page"])))
+    total = len(results)
+    limited = results[: args.max_results]
+    _emit_json({
+        "queries": queries, "scopes": {
+            "document": args.document or [], "hearing_date": args.hearing_date or "",
+            "witness": args.witness or "", "counsel_role": args.counsel_role or "",
+            "current_citation": args.current_citation or "",
+        },
+        "candidate_pages": len(candidates), "total_matches": total,
+        "truncated": total > len(limited), "matches": limited,
+    })
 
 
 def command_document(args: argparse.Namespace) -> None:
@@ -254,6 +444,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Accepted for readability; output is always JSON.",
     )
     lookup_parser.set_defaults(func=command_lookup)
+
+    search_parser = subparsers.add_parser(
+        "search",
+        help="Search source pages on demand without an index or database.",
+    )
+    search_parser.add_argument("--query", action="append", required=True)
+    search_parser.add_argument("--document", action="append")
+    search_parser.add_argument("--hearing-date")
+    search_parser.add_argument("--witness")
+    search_parser.add_argument("--counsel-role")
+    search_parser.add_argument("--current-citation")
+    search_parser.add_argument("--max-results", type=int, default=20, choices=range(1, 101))
+    search_parser.add_argument("--json", action="store_true")
+    search_parser.set_defaults(func=command_search)
 
     doc_parser = subparsers.add_parser(
         "document",

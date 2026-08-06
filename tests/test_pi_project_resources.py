@@ -33,8 +33,10 @@ class PromptHarness:
 def test_pi_project_settings_select_model_without_credentials() -> None:
     settings = json.loads((FOCUS_PI_PROJECT_DIR / "settings.json").read_text())
 
-    assert settings.get("defaultProvider") == "local-llama"
-    assert settings.get("defaultModel") == "Qwen3.6-27B-UD-Q4_K_XL.gguf"
+    assert isinstance(settings.get("defaultProvider"), str)
+    assert settings.get("defaultProvider")
+    assert isinstance(settings.get("defaultModel"), str)
+    assert settings.get("defaultModel")
     assert settings.get("defaultThinkingLevel") == "medium"
     assert settings.get("fireworksPriorityServiceTier") is False
     assert settings.get("enableSkillCommands") is True
@@ -78,6 +80,10 @@ def test_pi_record_skill_has_expected_contract() -> None:
     assert skill.startswith(f"---\nname: {FOCUS_PI_SKILL_NAME}\n")
     assert "PI's `grep` tool, which is backed by ripgrep" in skill
     assert 'lookup --file "text_pages/0001.txt" --json' in skill
+    assert 'search \\' in skill
+    assert '--witness' in skill
+    assert "creates no index, cache, or database" in skill
+    assert "Q/A formatting alone does not establish testimony" in skill
     assert "Do not use web research, RAG, vector" in skill
     assert "Never expose local paths" in skill
     assert "checkboxes, signatures, initials, handwriting" in skill

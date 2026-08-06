@@ -2,12 +2,12 @@
 
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
-- `focus/app.py`: main `Focus` application class; owns transcript browsing, TOC sidebar, dual-view state, image view, grep, AI panel, RAG, and embedded Agent orchestration.
-- `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, search normalization, citation formatting, markdown/link rendering, RAG helpers, and PI session-log helpers.
+- `focus/app.py`: main `Focus` application class; owns transcript browsing, TOC sidebar, dual-view state, image view, grep, AI tools, and embedded Agent orchestration.
+- `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, citation formatting, markdown/link rendering, and PI session-log helpers.
 - `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
-- `focus/agent_helper.py`: read-only source-map lookup helper CLI used by embedded PI Agent sessions.
+- `focus/agent_helper.py`: read-only source-map lookup and database-free lexical search CLI used by embedded PI Agent sessions.
 - `focus/ui/`: secondary Libadwaita windows such as settings and D-Bus command reference.
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
 - `.pi/SYSTEM.md`: replacement knowledge-work system prompt copied into each private embedded-Agent workspace.
@@ -16,7 +16,7 @@
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.
 - `prompts/`: change notes and UI prompt history.
 - Always use modern Libadwaita GUI elements over plain vanilla GTK4. Buttons should always be in the flat style.
-- `pyproject.toml` and `uv.lock`: define the Python 3.13 runtime and dependencies (PyGObject, langchain/chroma/voyageai); keep them in sync when adding packages.
+- `pyproject.toml` and the local ignored `uv.lock`: define the Python 3.13 runtime and dependencies (PyGObject and markdown-it-py); keep the environment in sync when packages change.
 
 ## Build, Test, and Development Commands
 - `uv sync`: resolve and install dependencies into the managed environment.
@@ -25,6 +25,7 @@
 - `uv run focus refresh-current-case --quiet`: update Focus `config.json` from the currently selected case.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle map --json`: run the read-only embedded-Agent helper directly.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle lookup --file text_pages/0001.txt --json`: resolve a searched text page to its record citation.
+- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle search --query "placement" --json`: scan source pages without creating an index or database.
 
 ## Coding Style & Naming Conventions
 - Follow PEP 8: 4-space indentation, snake_case for functions and variables, CapWords for classes.
@@ -33,7 +34,7 @@
 
 ## Testing Guidelines
 - Add or update coverage under `tests/` using `pytest` when introducing non-trivial logic.
-- For UI changes, exercise core flows manually: open a transcript, step pages, run a grep search, toggle TOC sidebar, switch views, try continuous view + image view, and verify AI panel summary/RAG flows.
+- For UI changes, exercise core flows manually: open a transcript, step pages, run grep, toggle TOC sidebar, switch views, try image view, and verify summary/extraction plus Agent Q&A flows.
 - Document any manual test steps in PR descriptions until automated coverage exists.
 
 ## Commit & Pull Request Guidelines
@@ -45,6 +46,6 @@
 ## Case Configuration Notes
 - Do not commit real client data; point `input_dir` at sanitized fixtures when possible.
 - `input_dir` can be a legacy transcript root (`text_record/`, `images/`) or a record_prep root with `manifest.json`.
-- Record-prep layout expects `text_pages/`, `image_pages/`, `artifacts/toc.txt`, and optional `rag/` assets (`vector_database/`, `case_overview.txt`).
+- RecordPrep layout expects `text_pages/`, optional `image_pages/`, `artifacts/toc.txt`, and a citation-aware `artifacts/source_map.json`; schema v2 may include `participant_index.json` counsel/witness metadata.
 - Summary files can live under `summaries/` (hearing/reports) or be referenced via `manifest.json` using `summarized_minutes`.
 - Store machine-specific credentials outside the repo and reference them via environment variables or local `config.json`.

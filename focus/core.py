@@ -10,7 +10,7 @@ Features
 - Mouse wheel scrolls within the current record; hold Ctrl and wheel to load the previous/next page.
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the document toolbar.
 - Grep matches render in red and navigate hit-by-hit while one transcript page stays visible.
-- Ctrl+Shift+A opens case tools and focuses the RAG question box.
+- Ctrl+Shift+A opens case tools and focuses the Agent question box.
 - Ctrl+P prints the current page image.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import bisect
 from datetime import date, datetime, timezone
-import importlib
 import io
 import json
 import os
@@ -102,24 +101,8 @@ CONFIG_KEY_SUMMARIZATION_PROMPT = "summarization_prompt"
 CONFIG_KEY_PAGE_PROMPT = "page_summarization_prompt"
 CONFIG_KEY_RANGE_PROMPT = "range_summarization_prompt"
 CONFIG_KEY_EXTRACT_PROMPT = "extract_information_prompt"
-CONFIG_KEY_VOYAGE_API_KEY = "voyage_api_key"
-CONFIG_KEY_VOYAGE_MODEL = "voyage_model"
-CONFIG_KEY_RAG_PROVIDER = "rag_provider"
-CONFIG_KEY_RAG_VOYAGE_API_KEY = "rag_voyage_api_key"
-CONFIG_KEY_RAG_VOYAGE_MODEL = "rag_voyage_model"
-CONFIG_KEY_RAG_ISAACUS_API_KEY = "rag_isaacus_api_key"
-CONFIG_KEY_RAG_ISAACUS_MODEL = "rag_isaacus_model"
-CONFIG_KEY_RAG_MODEL = "rag_model_id"
-CONFIG_KEY_RAG_DEEP_MODEL = "rag_deep_model_id"
-CONFIG_KEY_RAG_PROMPT = "rag_prompt"
-CONFIG_KEY_RAG_API_URL = "rag_api_url"
-CONFIG_KEY_RAG_API_KEY = "rag_api_key"
-CONFIG_KEY_RAG_DEEP_API_URL = "rag_deep_api_url"
-CONFIG_KEY_RAG_DEEP_API_KEY = "rag_deep_api_key"
-CONFIG_KEY_RAG_DISABLE_REASONING = "rag_disable_reasoning"
-CONFIG_KEY_RAG_DEEP_DISABLE_REASONING = "rag_deep_disable_reasoning"
-CONFIG_KEY_RAG_CHUNK_COUNT = "rag_chunk_count"
-CONFIG_KEY_SPEECH_RAG_SOURCE_FILE = "speech_rag_source_file"
+CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE = "speech_agent_source_file"
+DEFAULT_SPEECH_AGENT_SOURCE_FILE = "/dev/shm/speech.txt"
 CONFIG_KEY_PI_AGENT_COMMAND = "pi_agent_command"
 CONFIG_KEY_MODEL_PROFILES = "model_profiles"
 CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
@@ -146,30 +129,8 @@ DEFAULT_EXTRACT_PROMPT = (
     "quote when available. If a DOB is incomplete, conflicting, or not found, say so plainly and "
     "do not guess. Always respond in English."
 )
-DEFAULT_RAG_PROMPT = (
-    'I will ask you a question about a child welfare case. Below are case details and retrieved record excerpts from '
-    'hearings and reports. Some excerpts may include explicit metadata labels such as "Hearing Date" for hearing '
-    'transcript chunks and "Report Name" or "Report Date" for report chunks. Use those labels to identify the source of the excerpt, '
-    'and when helpful, refer to that hearing date, report date, or report name in your answer. Do not invent a hearing date or '
-    'report name if the label is not provided. Base your answer only on the supplied material, and make clear when '
-    'the record is ambiguous or incomplete. In your answer, include short direct quotes taken from the record to '
-    'highlight legally significant statements. Each quote must be enclosed in quotation marks, must consist of an '
-    'uninterrupted five-to-ten-word sequence taken verbatim from the source text, must not use ellipses, and must not '
-    'alter the quoted text in any way. The direct quotes must be bold. Begin your answer with a heading named '
-    '"Answer:" Always respond in English. Here is the material:'
-)
-DEFAULT_RAG_CHUNK_COUNT = 8
-DEFAULT_RAG_VOYAGE_MODEL = "voyage-law-2"
-DEFAULT_RAG_ISAACUS_MODEL = "kanon-2-embedder"
 DEFAULT_DISABLE_REASONING = False
 EMBEDDED_AI_PANEL_HEIGHT_DIVISOR = 4
-RAG_PAYLOAD_CASE_DETAILS_HEADING = "# Case Context"
-RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING = "# Retrieved Record Excerpts"
-RAG_PAYLOAD_QUESTION_HEADING = "# Question"
-RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX = "## Record Excerpt"
-RAG_PROVIDER_VOYAGE = "voyage"
-RAG_PROVIDER_ISAACUS = "isaacus"
-DEFAULT_RAG_PROVIDER = RAG_PROVIDER_VOYAGE
 DEFAULT_PI_AGENT_COMMAND = "pi"
 FOCUS_RECORD_AGENT_HELPER = PROJECT_DIR / "focus" / "agent_helper.py"
 FOCUS_PI_PROJECT_DIR = PROJECT_DIR / ".pi"
@@ -185,24 +146,19 @@ FOCUS_PI_SKILL_FILE = (
     FOCUS_PI_PROJECT_DIR / "skills" / FOCUS_PI_SKILL_NAME / "SKILL.md"
 )
 UNSET_PROFILE_LABEL = "Legacy credentials"
-MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3", "profile4")
+MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3")
 DEFAULT_MODEL_PROFILE_NICKNAMES = {
     "profile1": "Profile 1",
     "profile2": "Profile 2",
     "profile3": "Profile 3",
-    "profile4": "Profile 4",
 }
 TASK_PROFILE_PAGE = "page"
 TASK_PROFILE_RANGE = "range"
 TASK_PROFILE_EXTRACT = "extract"
-TASK_PROFILE_RAG = "rag"
-TASK_PROFILE_RAG_DEEP = "rag-deep"
 TASK_PROFILE_KEYS = (
     TASK_PROFILE_PAGE,
     TASK_PROFILE_RANGE,
     TASK_PROFILE_EXTRACT,
-    TASK_PROFILE_RAG,
-    TASK_PROFILE_RAG_DEEP,
 )
 SUMMARY_DIR_NAME = "summaries"
 HEARING_SUMMARY_CANDIDATES = (
@@ -286,7 +242,6 @@ DEFAULT_RECORD_FONT_FAMILY_NAME = RECORD_FONT_FAMILY_OPTIONS[0][0]
 LEGACY_RECORD_FONT_FAMILY_ALIASES: dict[str, str] = {}
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
-DEFAULT_RAG_AUDIT_FONT_SIZE_PT = 10
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
 DEFAULT_HIGHLIGHT_COLOR = "#e5e4e2"     # platinum
 DEFAULT_SUMMARY_EMPHASIS_COLOR = "#f6c65b"
@@ -476,24 +431,10 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
             ),
             FocusCommand(
                 "AI Panel",
-                "Focus RAG question box",
-                "focus_rag_question",
-                "<Primary>Q",
-                "Focus the RAG question box.",
-            ),
-            FocusCommand(
-                "AI Panel",
                 "Focus Agent question box",
                 "focus_agent_question",
-                "D-Bus",
+                "<Primary>Q / D-Bus",
                 "Focus the Agent question box.",
-            ),
-            FocusCommand(
-                "AI Panel",
-                "Submit speech RAG question",
-                "submit_speech_rag_question",
-                "D-Bus",
-                "Read the configured speech text file and submit it as a quick RAG question.",
             ),
             FocusCommand(
                 "AI Panel",
@@ -577,79 +518,12 @@ MONTH_NAME_TO_NUMBER = {
     "december": 12,
     "dec": 12,
 }
-RAG_HEARING_QUERY_KEYWORDS = (
-    "hearing",
-    "transcript",
-    "proceeding",
-    "proceedings",
-    "court appearance",
-)
-RAG_REPORT_QUERY_KEYWORDS = (
-    "report",
-    "reports",
-    "addendum",
-    "assessment",
-    "evaluation",
-    "review",
-    "status review",
-)
-RAG_REPORT_NAME_STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "assessment",
-    "child",
-    "children",
-    "county",
-    "court",
-    "department",
-    "for",
-    "of",
-    "report",
-    "reports",
-    "review",
-    "services",
-    "social",
-    "status",
-    "the",
-    "to",
-    "worker",
-    "workers",
-}
-RAG_REPORT_NAME_STRONG_TOKENS = {
-    "addendum",
-    "detention",
-    "disposition",
-    "evaluation",
-    "jurisdiction",
-    "permanency",
-    "psychological",
-    "section36626",
-    "36626",
-}
-RAG_REPORT_NUMBER_WORDS = {
-    "six": "6",
-    "twelve": "12",
-    "eighteen": "18",
-    "twentyfour": "24",
-    "twenty": "20",
-}
-RAG_LONG_DATE_PATTERN = re.compile(
-    r"\b("
-    r"january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|"
-    r"august|aug|september|sep|sept|october|oct|november|nov|december|dec"
-    r")\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?\s+(\d{4})\b",
-    re.IGNORECASE,
-)
-RAG_NUMERIC_DATE_PATTERN = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 RIGHT_SCROLL_ZONE_EDGE_MARGIN = 18
 IMAGE_PREVIEW_RAIL_WIDTH = 212
 IMAGE_PREVIEW_THUMB_WIDTH = IMAGE_PREVIEW_RAIL_WIDTH
 AI_VIEW_SUMMARIZE = "summarize"
 AI_VIEW_EXTRACT = "extract"
-AI_VIEW_QA = "qa"
 AI_VIEW_AGENT_QA = "agent-qa"
-AI_VIEW_RAG_AUDIT = "rag-audit"
 AGENT_SUBVIEW_ANSWER = "answer"
 AGENT_SUBVIEW_SESSION = "session"
 PI_SESSION_LOG_GLOB = "*.jsonl"
@@ -697,107 +571,6 @@ def _apply_priority_service_tier_to_body(
 
 
 AI_VIEW_FILE = "show-file"
-
-
-def _normalize_rag_provider(value: str) -> str:
-    provider = (value or "").strip().lower()
-    if provider not in {RAG_PROVIDER_VOYAGE, RAG_PROVIDER_ISAACUS}:
-        return DEFAULT_RAG_PROVIDER
-    return provider
-
-
-def _normalize_rag_metadata_text(value: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
-
-
-def _canonicalize_report_phrase(value: str) -> str:
-    normalized = _normalize_rag_metadata_text(value)
-    tokens = [RAG_REPORT_NUMBER_WORDS.get(token, token) for token in normalized.split()]
-    return " ".join(tokens)
-
-
-def _format_rag_long_us_date(month: int, day: int, year: int) -> str | None:
-    try:
-        parsed = datetime(year, month, day)
-    except ValueError:
-        return None
-    return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
-
-
-def _extract_rag_date_mention(text: str) -> str | None:
-    long_match = RAG_LONG_DATE_PATTERN.search(text)
-    if long_match:
-        month_name = long_match.group(1).rstrip(".").lower()
-        month = MONTH_NAME_TO_NUMBER.get(month_name)
-        if month is not None:
-            formatted = _format_rag_long_us_date(
-                month,
-                int(long_match.group(2)),
-                int(long_match.group(3)),
-            )
-            if formatted:
-                return formatted
-
-    numeric_match = RAG_NUMERIC_DATE_PATTERN.search(text)
-    if not numeric_match:
-        return None
-    month = int(numeric_match.group(1))
-    day = int(numeric_match.group(2))
-    year = int(numeric_match.group(3))
-    if year < 100:
-        year += 2000 if year <= 69 else 1900
-    return _format_rag_long_us_date(month, day, year)
-
-
-def _extract_hearing_date_filter(question: str) -> str | None:
-    lowered = question.lower()
-    if not any(keyword in lowered for keyword in RAG_HEARING_QUERY_KEYWORDS):
-        return None
-    return _extract_rag_date_mention(question)
-
-
-def _extract_embedding_vectors(response: Any) -> list[list[float]]:
-    embeddings = getattr(response, "embeddings", None)
-    if embeddings is None and isinstance(response, dict):
-        embeddings = response.get("embeddings")
-    if not isinstance(embeddings, list):
-        raise ValueError("Invalid embeddings response format.")
-    vectors: list[list[float]] = []
-    for item in embeddings:
-        vector = getattr(item, "embedding", None)
-        if vector is None and isinstance(item, dict):
-            vector = item.get("embedding")
-        if not isinstance(vector, list):
-            raise ValueError("Missing embedding vector in response.")
-        vectors.append(vector)
-    return vectors
-
-
-class IsaacusEmbeddings:
-    def __init__(self, client: Any, model: str) -> None:
-        self._client = client
-        self._model = model
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        if not texts:
-            return []
-        response = self._client.embeddings.create(
-            model=self._model,
-            texts=texts,
-            task="retrieval/document",
-        )
-        return _extract_embedding_vectors(response)
-
-    def embed_query(self, text: str) -> list[float]:
-        response = self._client.embeddings.create(
-            model=self._model,
-            texts=[text],
-            task="retrieval/query",
-        )
-        vectors = _extract_embedding_vectors(response)
-        if not vectors:
-            raise ValueError("Isaacus returned no embedding vectors.")
-        return vectors[0]
 
 
 def _read_config() -> dict[str, Any]:
@@ -917,8 +690,6 @@ class RecordLayout:
     transcript_page_numbers_path: Path
     transcript_page_number_series_path: Path
     source_map_path: Path
-    rag_vector_dir: Path | None
-    rag_case_overview_path: Path | None
     is_record_prep: bool
 
 
@@ -1665,15 +1436,12 @@ def _looks_like_record_prep(root: Path) -> bool:
         return True
     if (root / "artifacts" / "toc.txt").exists():
         return True
-    if (root / "rag" / "vector_database").is_dir():
-        return True
     return False
 
 
 def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
     dirs = manifest.get("dirs") if isinstance(manifest.get("dirs"), dict) else {}
     files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-    rag = manifest.get("rag") if isinstance(manifest.get("rag"), dict) else {}
     text_dir = _path_from_manifest(dirs.get("text_pages"), root) or root / "text_pages"
     images_dir = _path_from_manifest(dirs.get("image_pages"), root) or root / "image_pages"
     toc_path = _path_from_manifest(files.get("toc"), root) or root / "artifacts" / "toc.txt"
@@ -1698,14 +1466,6 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
     transcript_page_numbers_path = _transcript_page_numbers_path(root, manifest)
     transcript_page_number_series_path = _transcript_page_number_series_path(root, manifest)
     source_map_path = _source_map_path(root, manifest)
-    rag_vector_dir = (
-        _path_from_manifest(rag.get("vector_database"), root)
-        or root / "rag" / "vector_database"
-    )
-    rag_case_overview_path = (
-        _path_from_manifest(files.get("case_overview"), root)
-        or root / "rag" / "case_overview.txt"
-    )
     return RecordLayout(
         root=root,
         text_dir=text_dir,
@@ -1717,8 +1477,6 @@ def _layout_from_manifest(root: Path, manifest: dict[str, Any]) -> RecordLayout:
         transcript_page_numbers_path=transcript_page_numbers_path,
         transcript_page_number_series_path=transcript_page_number_series_path,
         source_map_path=source_map_path,
-        rag_vector_dir=rag_vector_dir,
-        rag_case_overview_path=rag_case_overview_path,
         is_record_prep=True,
     )
 
@@ -1743,8 +1501,6 @@ def _resolve_record_layout(root: Path) -> RecordLayout:
         transcript_page_numbers_path=root / "artifacts" / "transcript_page_numbers.json",
         transcript_page_number_series_path=root / "artifacts" / "transcript_page_number_series.md",
         source_map_path=root / "artifacts" / "source_map.json",
-        rag_vector_dir=None,
-        rag_case_overview_path=None,
         is_record_prep=False,
     )
 
@@ -1847,10 +1603,6 @@ def prune_deprecated_summary_bookmarking_config() -> None:
         "page_deepseek_reasoning",
         "range_kimi_reasoning",
         "range_deepseek_reasoning",
-        "rag_kimi_reasoning",
-        "rag_deepseek_reasoning",
-        "rag_deep_kimi_reasoning",
-        "rag_deep_deepseek_reasoning",
     )
     for key in deprecated_reasoning_keys:
         if key in config:
@@ -1869,15 +1621,7 @@ def _coerce_font_size(value: Any, default: int) -> int:
     return min(48, max(8, size))
 
 
-def _coerce_rag_chunk_count(value: Any, default: int) -> int:
-    try:
-        count = int(value)
-    except (TypeError, ValueError):
-        return default
-    return min(50, max(1, count))
-
-
-def _normalize_speech_rag_question_text(text: str) -> str:
+def _normalize_speech_agent_question_text(text: str) -> str:
     return " ".join(text.split())
 
 
@@ -1997,22 +1741,7 @@ class AiSettings:
     page_prompt: str
     range_prompt: str
     extract_prompt: str
-    rag_provider: str
-    voyage_api_key: str
-    voyage_model: str
-    isaacus_api_key: str
-    isaacus_model: str
-    rag_llm_model: str
-    rag_deep_llm_model: str
-    rag_prompt: str
-    rag_api_url: str
-    rag_api_key: str
-    rag_deep_api_url: str
-    rag_deep_api_key: str
-    rag_disable_reasoning: bool
-    rag_deep_disable_reasoning: bool
-    rag_chunk_count: int
-    speech_rag_source_file: str
+    speech_agent_source_file: str
     highlight_phrases: list[str]
     grep_highlight_color: str
     phrase_highlight_color: str
@@ -2105,36 +1834,6 @@ class AiSettings:
             profile_key=profile_key,
         )
 
-    def rag_credentials(self) -> tuple[str, str]:
-        credentials = self.rag_llm_credentials()
-        return (credentials.api_url, credentials.api_key)
-
-    def rag_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
-        page_credentials = self.page_llm_credentials()
-        return self.credentials_for_task(
-            TASK_PROFILE_RAG,
-            self.rag_api_url.strip() or page_credentials.api_url,
-            self.rag_llm_model.strip() or page_credentials.model_id,
-            self.rag_api_key.strip() or page_credentials.api_key,
-            bool(self.rag_disable_reasoning),
-            profile_key=profile_key,
-        )
-
-    def rag_deep_credentials(self) -> tuple[str, str]:
-        credentials = self.rag_deep_llm_credentials()
-        return (credentials.api_url, credentials.api_key)
-
-    def rag_deep_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
-        rag_credentials = self.rag_llm_credentials()
-        return self.credentials_for_task(
-            TASK_PROFILE_RAG_DEEP,
-            self.rag_deep_api_url.strip() or rag_credentials.api_url,
-            self.rag_deep_llm_model.strip() or rag_credentials.model_id,
-            self.rag_deep_api_key.strip() or rag_credentials.api_key,
-            bool(self.rag_deep_disable_reasoning),
-            profile_key=profile_key,
-        )
-
     def is_configured(self) -> bool:
         page_api_url, page_model_id, page_api_key = self.page_credentials()
         range_api_url, range_model_id, range_api_key = self.range_credentials()
@@ -2163,23 +1862,6 @@ class AiSettings:
                 self.extract_prompt,
             )
         )
-
-    def is_rag_ready(self) -> bool:
-        rag_api_url, rag_api_key = self.rag_credentials()
-        provider = _normalize_rag_provider(self.rag_provider)
-        if provider == RAG_PROVIDER_ISAACUS:
-            has_embeddings = bool(self.isaacus_api_key.strip() and self.isaacus_model.strip())
-        else:
-            has_embeddings = bool(self.voyage_api_key.strip() and self.voyage_model.strip())
-        return all(
-            value.strip()
-            for value in (
-                self.rag_llm_model,
-                self.rag_prompt,
-                rag_api_url,
-                rag_api_key,
-            )
-        ) and has_embeddings
 
 
 def _default_profile_nickname(profile_key: str) -> str:
@@ -2262,9 +1944,6 @@ def _load_model_profiles_from_config(config: dict[str, Any]) -> list[ModelProfil
     extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip() or range_api_url
     extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip() or range_model_id
     extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip() or range_api_key
-    rag_api_url = str(config.get(CONFIG_KEY_RAG_API_URL, "") or "").strip() or page_api_url
-    rag_model_id = str(config.get(CONFIG_KEY_RAG_MODEL, "") or "").strip() or page_model_id
-    rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip() or page_api_key
     return [
         _legacy_profile(
             "profile1",
@@ -2289,14 +1968,6 @@ def _load_model_profiles_from_config(config: dict[str, Any]) -> list[ModelProfil
             extract_model_id,
             extract_api_key,
             _coerce_bool_config(config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
-        ),
-        _legacy_profile(
-            "profile4",
-            "RAG",
-            rag_api_url,
-            rag_model_id,
-            rag_api_key,
-            _coerce_bool_config(config.get(CONFIG_KEY_RAG_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
         ),
     ]
 
@@ -2448,12 +2119,6 @@ def _load_task_profile_defaults_from_config(
     extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip() or range_api_url
     extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip() or range_model_id
     extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip() or range_api_key
-    rag_api_url = str(config.get(CONFIG_KEY_RAG_API_URL, "") or "").strip() or page_api_url
-    rag_model_id = str(config.get(CONFIG_KEY_RAG_MODEL, "") or "").strip() or page_model_id
-    rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip() or page_api_key
-    rag_deep_api_url = str(config.get(CONFIG_KEY_RAG_DEEP_API_URL, "") or "").strip() or rag_api_url
-    rag_deep_model_id = str(config.get(CONFIG_KEY_RAG_DEEP_MODEL, "") or "").strip() or rag_model_id
-    rag_deep_api_key = str(config.get(CONFIG_KEY_RAG_DEEP_API_KEY, "") or "").strip() or rag_api_key
 
     defaults[TASK_PROFILE_PAGE] = _match_profile_key_for_credentials(
         profiles, page_api_url, page_model_id, page_api_key
@@ -2463,12 +2128,6 @@ def _load_task_profile_defaults_from_config(
     )
     defaults[TASK_PROFILE_EXTRACT] = _match_profile_key_for_credentials(
         profiles, extract_api_url, extract_model_id, extract_api_key
-    )
-    defaults[TASK_PROFILE_RAG] = _match_profile_key_for_credentials(
-        profiles, rag_api_url, rag_model_id, rag_api_key
-    )
-    defaults[TASK_PROFILE_RAG_DEEP] = _match_profile_key_for_credentials(
-        profiles, rag_deep_api_url, rag_deep_model_id, rag_deep_api_key
     )
     return defaults
 
@@ -2500,14 +2159,12 @@ class FocusViewState:
     matching_lookup: dict[int, int] = field(default_factory=dict)
     grep_match_order: list[tuple[int, int]] = field(default_factory=list)
     grep_current_match_index: int = -1
-    ai_active_view: str = AI_VIEW_QA
+    ai_active_view: str = AI_VIEW_AGENT_QA
     ai_output_raw: dict[str, str] = field(
         default_factory=lambda: {
             AI_VIEW_SUMMARIZE: "",
             AI_VIEW_EXTRACT: "",
-            AI_VIEW_QA: "",
             AI_VIEW_AGENT_QA: "",
-            AI_VIEW_RAG_AUDIT: "",
         }
     )
     ai_status_text: str = ""
@@ -2520,18 +2177,32 @@ class FocusViewState:
     ai_range_end_text: str = ""
     ai_range_autofilled: bool = True
     extract_range_text: str = ""
-    rag_question_text: str = ""
     agent_question_text: str = ""
-    rag_filter_chip_text: str = ""
     sidebar_expanded: list[str] = field(default_factory=list)
     summary_loaded_path: Path | None = None
     summary_active_source: str | None = None
     summary_scroll_fraction: float | None = None
 
-def load_ai_settings() -> AiSettings:
+OBSOLETE_SEARCH_CONFIG_KEYS = {
+    "voyage_api_key", "voyage_model", "rag_provider", "rag_voyage_api_key",
+    "rag_voyage_model", "rag_isaacus_api_key", "rag_isaacus_model",
+    "rag_model_id", "rag_deep_model_id", "rag_prompt", "rag_api_url",
+    "rag_api_key", "rag_deep_api_url", "rag_deep_api_key",
+    "rag_disable_reasoning", "rag_deep_disable_reasoning", "rag_chunk_count",
+    "speech_rag_source_file",
+}
+
+
+def _load_agent_only_ai_settings() -> AiSettings:
     config = _read_config()
-    model_profiles = _load_model_profiles_from_config(config)
-    task_profile_defaults = _load_task_profile_defaults_from_config(config, model_profiles)
+    cleaned = dict(config)
+    for key in OBSOLETE_SEARCH_CONFIG_KEYS:
+        cleaned.pop(key, None)
+    if cleaned != config:
+        _write_config(cleaned)
+    config = cleaned
+    profiles = _load_model_profiles_from_config(config)
+    defaults = _load_task_profile_defaults_from_config(config, profiles)
     api_url = str(config.get(CONFIG_KEY_API_URL, "") or "").strip()
     model_id = str(config.get(CONFIG_KEY_MODEL_ID, "") or "").strip()
     api_key = str(config.get(CONFIG_KEY_API_KEY, "") or "").strip()
@@ -2544,209 +2215,75 @@ def load_ai_settings() -> AiSettings:
     extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip()
     extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip()
     extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip()
-    page_disable_reasoning = _coerce_bool_config(
-        config.get(CONFIG_KEY_PAGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
-    )
-    range_disable_reasoning = _coerce_bool_config(
-        config.get(CONFIG_KEY_RANGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
-    )
-    extract_disable_reasoning = _coerce_bool_config(
-        config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
-    )
-    fallback_prompt = str(config.get(CONFIG_KEY_SUMMARIZATION_PROMPT, DEFAULT_SUMMARIZATION_PROMPT) or "").strip()
-    page_prompt = str(config.get(CONFIG_KEY_PAGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
-    range_prompt = str(config.get(CONFIG_KEY_RANGE_PROMPT, fallback_prompt) or fallback_prompt).strip()
-    extract_prompt = str(
-        config.get(CONFIG_KEY_EXTRACT_PROMPT, DEFAULT_EXTRACT_PROMPT) or DEFAULT_EXTRACT_PROMPT
-    ).strip()
-    rag_prompt = str(config.get(CONFIG_KEY_RAG_PROMPT, DEFAULT_RAG_PROMPT) or DEFAULT_RAG_PROMPT).strip()
-    rag_provider = _normalize_rag_provider(str(config.get(CONFIG_KEY_RAG_PROVIDER, DEFAULT_RAG_PROVIDER) or ""))
-    voyage_model = str(
-        config.get(
-            CONFIG_KEY_RAG_VOYAGE_MODEL,
-            config.get(CONFIG_KEY_VOYAGE_MODEL, DEFAULT_RAG_VOYAGE_MODEL),
-        )
-        or DEFAULT_RAG_VOYAGE_MODEL
-    ).strip()
-    voyage_api_key = str(
-        config.get(
-            CONFIG_KEY_RAG_VOYAGE_API_KEY,
-            config.get(CONFIG_KEY_VOYAGE_API_KEY, ""),
-        )
-        or ""
-    ).strip()
-    isaacus_model = str(
-        config.get(CONFIG_KEY_RAG_ISAACUS_MODEL, DEFAULT_RAG_ISAACUS_MODEL) or DEFAULT_RAG_ISAACUS_MODEL
-    ).strip()
-    rag_api_url = str(config.get(CONFIG_KEY_RAG_API_URL, "") or "").strip()
-    rag_api_key = str(config.get(CONFIG_KEY_RAG_API_KEY, "") or "").strip()
-    rag_deep_api_url = str(config.get(CONFIG_KEY_RAG_DEEP_API_URL, "") or "").strip()
-    rag_deep_api_key = str(config.get(CONFIG_KEY_RAG_DEEP_API_KEY, "") or "").strip()
-    rag_disable_reasoning = _coerce_bool_config(
-        config.get(CONFIG_KEY_RAG_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
-    )
-    rag_deep_disable_reasoning = _coerce_bool_config(
-        config.get(CONFIG_KEY_RAG_DEEP_DISABLE_REASONING), DEFAULT_DISABLE_REASONING
-    )
-    rag_chunk_count = _coerce_rag_chunk_count(
-        config.get(CONFIG_KEY_RAG_CHUNK_COUNT),
-        DEFAULT_RAG_CHUNK_COUNT,
-    )
-    speech_rag_source_file = str(config.get(CONFIG_KEY_SPEECH_RAG_SOURCE_FILE, "") or "")
-    pi_agent_command = str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, "") or "").strip()
-    if not pi_agent_command:
-        pi_agent_command = discover_pi_agent_command()
-    highlight_phrases = _normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES))
-    grep_highlight_color = _coerce_color_value(
-        config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR),
-        DEFAULT_MATCH_COLOR,
-    )
-    phrase_highlight_color = _coerce_color_value(
-        config.get(CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR),
-        DEFAULT_HIGHLIGHT_COLOR,
-    )
-    summary_emphasis_color = _coerce_color_value(
-        config.get(CONFIG_KEY_SUMMARY_EMPHASIS_COLOR),
-        DEFAULT_SUMMARY_EMPHASIS_COLOR,
-    )
-    search_chip_color = _coerce_color_value(
-        config.get(CONFIG_KEY_SEARCH_CHIP_COLOR),
-        DEFAULT_SEARCH_CHIP_COLOR,
-    )
+    fallback = str(config.get(CONFIG_KEY_SUMMARIZATION_PROMPT, DEFAULT_SUMMARIZATION_PROMPT) or DEFAULT_SUMMARIZATION_PROMPT).strip()
     return AiSettings(
-        api_url=api_url,
-        model_id=model_id,
-        api_key=api_key,
-        page_api_url=page_api_url,
-        page_model_id=page_model_id,
-        page_api_key=page_api_key,
-        range_api_url=range_api_url,
-        range_model_id=range_model_id,
-        range_api_key=range_api_key,
-        extract_api_url=extract_api_url,
-        extract_model_id=extract_model_id,
-        extract_api_key=extract_api_key,
-        page_disable_reasoning=page_disable_reasoning,
-        range_disable_reasoning=range_disable_reasoning,
-        extract_disable_reasoning=extract_disable_reasoning,
-        page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
-        range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
-        extract_prompt=extract_prompt or DEFAULT_EXTRACT_PROMPT,
-        rag_provider=rag_provider,
-        voyage_api_key=voyage_api_key,
-        voyage_model=voyage_model or DEFAULT_RAG_VOYAGE_MODEL,
-        isaacus_api_key=str(config.get(CONFIG_KEY_RAG_ISAACUS_API_KEY, "") or "").strip(),
-        isaacus_model=isaacus_model or DEFAULT_RAG_ISAACUS_MODEL,
-        rag_llm_model=str(config.get(CONFIG_KEY_RAG_MODEL, "") or "").strip(),
-        rag_deep_llm_model=str(config.get(CONFIG_KEY_RAG_DEEP_MODEL, "") or "").strip(),
-        rag_prompt=rag_prompt or DEFAULT_RAG_PROMPT,
-        rag_api_url=rag_api_url,
-        rag_api_key=rag_api_key,
-        rag_deep_api_url=rag_deep_api_url,
-        rag_deep_api_key=rag_deep_api_key,
-        rag_disable_reasoning=rag_disable_reasoning,
-        rag_deep_disable_reasoning=rag_deep_disable_reasoning,
-        rag_chunk_count=rag_chunk_count,
-        speech_rag_source_file=speech_rag_source_file,
-        highlight_phrases=highlight_phrases,
-        grep_highlight_color=grep_highlight_color,
-        phrase_highlight_color=phrase_highlight_color,
-        summary_emphasis_color=summary_emphasis_color,
-        search_chip_color=search_chip_color,
-        model_profiles=model_profiles,
-        task_profile_defaults=task_profile_defaults,
-        pi_agent_command=pi_agent_command or DEFAULT_PI_AGENT_COMMAND,
+        api_url=api_url, model_id=model_id, api_key=api_key,
+        page_api_url=page_api_url, page_model_id=page_model_id, page_api_key=page_api_key,
+        range_api_url=range_api_url, range_model_id=range_model_id, range_api_key=range_api_key,
+        extract_api_url=extract_api_url, extract_model_id=extract_model_id, extract_api_key=extract_api_key,
+        page_disable_reasoning=_coerce_bool_config(config.get(CONFIG_KEY_PAGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
+        range_disable_reasoning=_coerce_bool_config(config.get(CONFIG_KEY_RANGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
+        extract_disable_reasoning=_coerce_bool_config(config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
+        page_prompt=str(config.get(CONFIG_KEY_PAGE_PROMPT, fallback) or fallback).strip(),
+        range_prompt=str(config.get(CONFIG_KEY_RANGE_PROMPT, fallback) or fallback).strip(),
+        extract_prompt=str(config.get(CONFIG_KEY_EXTRACT_PROMPT, DEFAULT_EXTRACT_PROMPT) or DEFAULT_EXTRACT_PROMPT).strip(),
+        speech_agent_source_file=str(config.get(CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE, DEFAULT_SPEECH_AGENT_SOURCE_FILE) or DEFAULT_SPEECH_AGENT_SOURCE_FILE).strip(),
+        highlight_phrases=_normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES, [])),
+        grep_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR, "") or ""), DEFAULT_MATCH_COLOR),
+        phrase_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR, "") or ""), DEFAULT_HIGHLIGHT_COLOR),
+        summary_emphasis_color=_coerce_color_value(str(config.get(CONFIG_KEY_SUMMARY_EMPHASIS_COLOR, "") or ""), DEFAULT_SUMMARY_EMPHASIS_COLOR),
+        search_chip_color=_coerce_color_value(str(config.get(CONFIG_KEY_SEARCH_CHIP_COLOR, "") or ""), DEFAULT_SEARCH_CHIP_COLOR),
+        model_profiles=profiles, task_profile_defaults=defaults,
+        pi_agent_command=str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, DEFAULT_PI_AGENT_COMMAND) or DEFAULT_PI_AGENT_COMMAND).strip(),
     )
 
 
-def save_ai_settings(settings: AiSettings) -> None:
+def _save_agent_only_ai_settings(settings: AiSettings) -> None:
     config = _read_config()
-    page_credentials = settings.page_llm_credentials()
+    for key in OBSOLETE_SEARCH_CONFIG_KEYS:
+        config.pop(key, None)
+    config.pop("agent_prompt_template", None)
+    page = settings.page_llm_credentials()
     range_credentials = settings.range_llm_credentials()
-    extract_credentials = settings.extract_llm_credentials()
-    rag_credentials = settings.rag_llm_credentials()
-    rag_deep_credentials = settings.rag_deep_llm_credentials()
-
+    extract = settings.extract_llm_credentials()
     config[CONFIG_KEY_MODEL_PROFILES] = [
-        {
-            "nickname": profile.display_name(),
-            "abbreviation": profile.abbreviation.strip(),
-            "api_url": profile.api_url,
-            "model_id": profile.model_id,
-            "api_key": profile.api_key,
-            "disable_reasoning": bool(profile.disable_reasoning),
-            "priority_service_tier": bool(profile.priority_service_tier),
-        }
+        {"nickname": profile.display_name(), "abbreviation": profile.abbreviation.strip(),
+         "api_url": profile.api_url, "model_id": profile.model_id, "api_key": profile.api_key,
+         "disable_reasoning": bool(profile.disable_reasoning),
+         "priority_service_tier": bool(profile.priority_service_tier)}
         for profile in settings.model_profiles[: len(MODEL_PROFILE_IDS)]
     ]
     config[CONFIG_KEY_TASK_DEFAULT_PROFILES] = {
-        key: value
-        for key, value in _sanitize_task_profile_defaults(settings.task_profile_defaults).items()
+        key: value for key, value in _sanitize_task_profile_defaults(settings.task_profile_defaults).items()
         if value in MODEL_PROFILE_IDS
     }
-    config[CONFIG_KEY_API_URL] = page_credentials.api_url
-    config[CONFIG_KEY_MODEL_ID] = page_credentials.model_id
-    config[CONFIG_KEY_API_KEY] = page_credentials.api_key
-    config[CONFIG_KEY_PAGE_API_URL] = page_credentials.api_url
-    config[CONFIG_KEY_PAGE_MODEL_ID] = page_credentials.model_id
-    config[CONFIG_KEY_PAGE_API_KEY] = page_credentials.api_key
-    config[CONFIG_KEY_RANGE_API_URL] = range_credentials.api_url
-    config[CONFIG_KEY_RANGE_MODEL_ID] = range_credentials.model_id
-    config[CONFIG_KEY_RANGE_API_KEY] = range_credentials.api_key
-    config[CONFIG_KEY_EXTRACT_API_URL] = extract_credentials.api_url
-    config[CONFIG_KEY_EXTRACT_MODEL_ID] = extract_credentials.model_id
-    config[CONFIG_KEY_EXTRACT_API_KEY] = extract_credentials.api_key
-    config[CONFIG_KEY_PAGE_DISABLE_REASONING] = bool(page_credentials.disable_reasoning)
+    for key, value in (
+        (CONFIG_KEY_API_URL, page.api_url), (CONFIG_KEY_MODEL_ID, page.model_id), (CONFIG_KEY_API_KEY, page.api_key),
+        (CONFIG_KEY_PAGE_API_URL, page.api_url), (CONFIG_KEY_PAGE_MODEL_ID, page.model_id), (CONFIG_KEY_PAGE_API_KEY, page.api_key),
+        (CONFIG_KEY_RANGE_API_URL, range_credentials.api_url), (CONFIG_KEY_RANGE_MODEL_ID, range_credentials.model_id), (CONFIG_KEY_RANGE_API_KEY, range_credentials.api_key),
+        (CONFIG_KEY_EXTRACT_API_URL, extract.api_url), (CONFIG_KEY_EXTRACT_MODEL_ID, extract.model_id), (CONFIG_KEY_EXTRACT_API_KEY, extract.api_key),
+    ):
+        config[key] = value
+    config[CONFIG_KEY_PAGE_DISABLE_REASONING] = bool(page.disable_reasoning)
     config[CONFIG_KEY_RANGE_DISABLE_REASONING] = bool(range_credentials.disable_reasoning)
-    config[CONFIG_KEY_EXTRACT_DISABLE_REASONING] = bool(extract_credentials.disable_reasoning)
+    config[CONFIG_KEY_EXTRACT_DISABLE_REASONING] = bool(extract.disable_reasoning)
     config[CONFIG_KEY_SUMMARIZATION_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_PAGE_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_RANGE_PROMPT] = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
     config[CONFIG_KEY_EXTRACT_PROMPT] = settings.extract_prompt or DEFAULT_EXTRACT_PROMPT
-    config[CONFIG_KEY_RAG_PROVIDER] = _normalize_rag_provider(settings.rag_provider)
-    config[CONFIG_KEY_VOYAGE_API_KEY] = settings.voyage_api_key
-    config[CONFIG_KEY_VOYAGE_MODEL] = settings.voyage_model or DEFAULT_RAG_VOYAGE_MODEL
-    config[CONFIG_KEY_RAG_VOYAGE_API_KEY] = settings.voyage_api_key
-    config[CONFIG_KEY_RAG_VOYAGE_MODEL] = settings.voyage_model or DEFAULT_RAG_VOYAGE_MODEL
-    config[CONFIG_KEY_RAG_ISAACUS_API_KEY] = settings.isaacus_api_key
-    config[CONFIG_KEY_RAG_ISAACUS_MODEL] = settings.isaacus_model or DEFAULT_RAG_ISAACUS_MODEL
-    config[CONFIG_KEY_RAG_MODEL] = rag_credentials.model_id
-    config[CONFIG_KEY_RAG_DEEP_MODEL] = rag_deep_credentials.model_id
-    config[CONFIG_KEY_RAG_PROMPT] = settings.rag_prompt or DEFAULT_RAG_PROMPT
-    config[CONFIG_KEY_RAG_API_URL] = rag_credentials.api_url
-    config[CONFIG_KEY_RAG_API_KEY] = rag_credentials.api_key
-    config[CONFIG_KEY_RAG_DEEP_API_URL] = rag_deep_credentials.api_url
-    config[CONFIG_KEY_RAG_DEEP_API_KEY] = rag_deep_credentials.api_key
-    config[CONFIG_KEY_RAG_DISABLE_REASONING] = bool(rag_credentials.disable_reasoning)
-    config[CONFIG_KEY_RAG_DEEP_DISABLE_REASONING] = bool(rag_deep_credentials.disable_reasoning)
-    config[CONFIG_KEY_RAG_CHUNK_COUNT] = _coerce_rag_chunk_count(
-        settings.rag_chunk_count,
-        DEFAULT_RAG_CHUNK_COUNT,
-    )
-    config[CONFIG_KEY_SPEECH_RAG_SOURCE_FILE] = settings.speech_rag_source_file
-    config.pop("agent_prompt_template", None)
-    config[CONFIG_KEY_PI_AGENT_COMMAND] = (
-        settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
-    )
+    config[CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE] = settings.speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
+    config[CONFIG_KEY_PI_AGENT_COMMAND] = settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
-    config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(
-        settings.grep_highlight_color,
-        DEFAULT_MATCH_COLOR,
-    )
-    config.pop("grep_current_highlight_color", None)
-    config[CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR] = _coerce_color_value(
-        settings.phrase_highlight_color,
-        DEFAULT_HIGHLIGHT_COLOR,
-    )
-    config[CONFIG_KEY_SUMMARY_EMPHASIS_COLOR] = _coerce_color_value(
-        settings.summary_emphasis_color,
-        DEFAULT_SUMMARY_EMPHASIS_COLOR,
-    )
-    config[CONFIG_KEY_SEARCH_CHIP_COLOR] = _coerce_color_value(
-        settings.search_chip_color,
-        DEFAULT_SEARCH_CHIP_COLOR,
-    )
+    config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(settings.grep_highlight_color, DEFAULT_MATCH_COLOR)
+    config[CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR] = _coerce_color_value(settings.phrase_highlight_color, DEFAULT_HIGHLIGHT_COLOR)
+    config[CONFIG_KEY_SUMMARY_EMPHASIS_COLOR] = _coerce_color_value(settings.summary_emphasis_color, DEFAULT_SUMMARY_EMPHASIS_COLOR)
+    config[CONFIG_KEY_SEARCH_CHIP_COLOR] = _coerce_color_value(settings.search_chip_color, DEFAULT_SEARCH_CHIP_COLOR)
     _write_config(config)
+
+
+# Later definitions intentionally replace the pre-Agent-only migration routines above.
+load_ai_settings = _load_agent_only_ai_settings
+save_ai_settings = _save_agent_only_ai_settings
 
 
 def compose_extract_information_prompt(

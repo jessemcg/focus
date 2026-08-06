@@ -25,22 +25,9 @@ class SummarizationPromptWidgets:
 
 
 @dataclass
-class RagPromptWidgets:
-    profile_dropdown: Gtk.DropDown
-    provider_row: Adw.ComboRow
-    provider_values: list[str]
-    voyage_model_row: Adw.EntryRow
-    voyage_key_row: Adw.EntryRow
-    isaacus_model_row: Adw.EntryRow
-    isaacus_key_row: Adw.EntryRow
-    rag_chunk_row: Adw.SpinRow
-    speech_rag_source_row: Adw.EntryRow
-    prompt_buffer: Gtk.TextBuffer
-
-
-@dataclass
 class AgentSettingsWidgets:
     pi_agent_command_row: Adw.EntryRow
+    speech_agent_source_row: Adw.EntryRow
 
 
 @dataclass
@@ -72,14 +59,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._prompt_editors: dict[
             str,
-            SummarizationPromptWidgets | RagPromptWidgets | AgentSettingsWidgets,
+            SummarizationPromptWidgets | AgentSettingsWidgets,
         ] = {}
         self._model_profiles: list[ModelProfile] = list(app._ai_settings.model_profiles)
         self._model_profile_editors: dict[str, ModelProfileEditorWidgets] = {}
         self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
         self._prompt_list: Gtk.ListBox | None = None
         self._prompt_stack: Gtk.Stack | None = None
-        self._speech_rag_source_dialog: Gtk.FileDialog | None = None
         self._pi_model_options: list[PiModel | None] = []
         self._pi_available_model_keys: set[tuple[str, str]] = set()
         self._pi_thinking_options: list[str] = []
@@ -283,7 +269,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             ("page", "Single Page Summarization", self._build_summarization_prompt_page),
             ("range", "Page Range Summarization", self._build_summarization_prompt_page),
             ("extract", "Extract Information", self._build_summarization_prompt_page),
-            ("rag", "RAG Answer Prompt", self._build_rag_prompt_page),
             ("agent", "Agent", self._build_agent_settings_page),
         ]
         first_row: Gtk.ListBoxRow | None = None
@@ -591,130 +576,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         return page
 
-    def _build_rag_prompt_page(self, key: str, title: str) -> Gtk.Widget:
-        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        page_box.set_margin_top(12)
-        page_box.set_margin_bottom(12)
-        page_box.set_margin_start(12)
-        page_box.set_margin_end(12)
-        page_box.set_vexpand(True)
-
-        title_label = Gtk.Label(label=title, xalign=0)
-        title_label.add_css_class("title-3")
-        page_box.append(title_label)
-
-        settings = load_ai_settings()
-        rag_group = Adw.PreferencesGroup(title="Default Model Profile")
-        rag_group.add_css_class("list-stack")
-        rag_group.set_hexpand(True)
-        page_box.append(rag_group)
-
-        rag_profile_row = Adw.ActionRow(
-            title="RAG Answer",
-            subtitle="Uses the selected profile as the default model for RAG answers.",
-        )
-        rag_profile_row.set_activatable(False)
-        rag_profile_dropdown = self._build_profile_dropdown(settings, TASK_PROFILE_RAG)
-        rag_profile_row.add_suffix(rag_profile_dropdown)
-        rag_profile_row.set_activatable_widget(rag_profile_dropdown)
-        rag_group.add(rag_profile_row)
-
-        provider_group = Adw.PreferencesGroup(title="Embedding Provider")
-        provider_group.add_css_class("list-stack")
-        provider_group.set_hexpand(True)
-        page_box.append(provider_group)
-
-        provider_values = [RAG_PROVIDER_VOYAGE, RAG_PROVIDER_ISAACUS]
-        provider_labels = ["VoyageAI", "Isaacus"]
-        provider_row = Adw.ComboRow(title="Provider")
-        provider_row.set_model(Gtk.StringList.new(provider_labels))
-        provider_group.add(provider_row)
-
-        rag_context_group = Adw.PreferencesGroup(title="RAG Context")
-        rag_context_group.add_css_class("list-stack")
-        rag_context_group.set_hexpand(True)
-        page_box.append(rag_context_group)
-
-        rag_chunk_adjustment = Gtk.Adjustment(
-            value=DEFAULT_RAG_CHUNK_COUNT,
-            lower=1,
-            upper=50,
-            step_increment=1,
-            page_increment=2,
-        )
-        rag_chunk_row = Adw.SpinRow(
-            title="Context Chunks",
-            adjustment=rag_chunk_adjustment,
-        )
-        rag_chunk_row.set_digits(0)
-        rag_context_group.add(rag_chunk_row)
-
-        speech_rag_source_row = Adw.EntryRow(title="Speech-to-text question file")
-        speech_rag_source_row.set_hexpand(True)
-        choose_speech_rag_btn = Gtk.Button(label="Choose")
-        choose_speech_rag_btn.add_css_class("flat")
-        choose_speech_rag_btn.connect("clicked", self._on_choose_speech_rag_source_file)
-        speech_rag_source_row.add_suffix(choose_speech_rag_btn)
-        clear_speech_rag_btn = Gtk.Button(label="Clear")
-        clear_speech_rag_btn.add_css_class("flat")
-        clear_speech_rag_btn.connect("clicked", self._on_clear_speech_rag_source_file)
-        speech_rag_source_row.add_suffix(clear_speech_rag_btn)
-        rag_context_group.add(speech_rag_source_row)
-
-        voyage_group = Adw.PreferencesGroup(title="Voyage Embeddings")
-        voyage_group.add_css_class("list-stack")
-        voyage_group.set_hexpand(True)
-        page_box.append(voyage_group)
-
-        voyage_model_row = Adw.EntryRow(title="Voyage Embedding Model")
-        voyage_model_row.set_hexpand(True)
-        voyage_group.add(voyage_model_row)
-
-        voyage_key_row = self._build_password_row("Voyage API Key")
-        voyage_group.add(voyage_key_row)
-
-        isaacus_group = Adw.PreferencesGroup(title="Isaacus Embeddings")
-        isaacus_group.add_css_class("list-stack")
-        isaacus_group.set_hexpand(True)
-        page_box.append(isaacus_group)
-
-        isaacus_model_row = Adw.EntryRow(title="Isaacus Embedding Model")
-        isaacus_model_row.set_hexpand(True)
-        isaacus_group.add(isaacus_model_row)
-
-        isaacus_key_row = self._build_password_row("Isaacus API Key")
-        isaacus_group.add(isaacus_key_row)
-
-        prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        prompt_section.set_hexpand(True)
-        prompt_section.set_vexpand(True)
-        prompt_label = Gtk.Label(label="Prompt", xalign=0)
-        prompt_label.add_css_class("dim-label")
-        prompt_section.append(prompt_label)
-        prompt_scroller, buffer = self._build_prompt_editor(DEFAULT_RAG_PROMPT)
-        prompt_section.append(prompt_scroller)
-        page_box.append(prompt_section)
-
-        page = Gtk.ScrolledWindow()
-        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        page.set_hexpand(True)
-        page.set_vexpand(True)
-        page.set_child(page_box)
-
-        self._prompt_editors[key] = RagPromptWidgets(
-            profile_dropdown=rag_profile_dropdown,
-            provider_row=provider_row,
-            provider_values=provider_values,
-            voyage_model_row=voyage_model_row,
-            voyage_key_row=voyage_key_row,
-            isaacus_model_row=isaacus_model_row,
-            isaacus_key_row=isaacus_key_row,
-            rag_chunk_row=rag_chunk_row,
-            speech_rag_source_row=speech_rag_source_row,
-            prompt_buffer=buffer,
-        )
-        return page
-
     def _build_agent_settings_page(self, key: str, title: str) -> Gtk.Widget:
         page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         page_box.set_margin_top(12)
@@ -738,6 +599,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         pi_agent_command_row = Adw.EntryRow(title="PI command")
         pi_agent_command_row.set_hexpand(True)
         launch_group.add(pi_agent_command_row)
+
+        speech_agent_source_row = Adw.EntryRow(
+            title="Speech-to-text question file",
+            subtitle="Used by the submit_speech_agent_question D-Bus action.",
+        )
+        speech_agent_source_row.set_hexpand(True)
+        launch_group.add(speech_agent_source_row)
 
         self.pi_model_row = Adw.ComboRow(
             title="PI Model",
@@ -828,6 +696,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
         self._prompt_editors[key] = AgentSettingsWidgets(
             pi_agent_command_row=pi_agent_command_row,
+            speech_agent_source_row=speech_agent_source_row,
         )
         return page
 
@@ -1241,55 +1110,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         start, end = buffer.get_bounds()
         return buffer.get_text(start, end, True)
 
-    def _on_choose_speech_rag_source_file(self, _button: Gtk.Button) -> None:
-        rag_widgets = self._prompt_editors.get("rag")
-        if not isinstance(rag_widgets, RagPromptWidgets):
-            return
-        dialog = Gtk.FileDialog()
-        dialog.set_title("Select Speech-to-Text Question File")
-        dialog.set_modal(True)
-        raw_path = rag_widgets.speech_rag_source_row.get_text().strip()
-        if raw_path:
-            current_path = Path(raw_path).expanduser()
-            initial_folder = current_path.parent if current_path.parent.exists() else None
-            if initial_folder is not None:
-                try:
-                    dialog.set_initial_folder(Gio.File.new_for_path(str(initial_folder)))
-                except (TypeError, AttributeError):
-                    pass
-        dialog.open(self, None, self._on_speech_rag_source_file_chosen)
-        self._speech_rag_source_dialog = dialog
-
-    def _on_speech_rag_source_file_chosen(
-        self,
-        dialog: Gtk.FileDialog,
-        result: Gio.AsyncResult,
-    ) -> None:
-        try:
-            file = dialog.open_finish(result)
-        except GLib.Error as exc:
-            if not exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
-                self._show_status_toast(f"File selection failed: {exc.message}")
-        else:
-            path_str = file.get_path() if file else None
-            if path_str:
-                rag_widgets = self._prompt_editors.get("rag")
-                if isinstance(rag_widgets, RagPromptWidgets):
-                    rag_widgets.speech_rag_source_row.set_text(path_str)
-        if self._speech_rag_source_dialog is dialog:
-            self._speech_rag_source_dialog = None
-
-    def _on_clear_speech_rag_source_file(self, _button: Gtk.Button) -> None:
-        rag_widgets = self._prompt_editors.get("rag")
-        if isinstance(rag_widgets, RagPromptWidgets):
-            rag_widgets.speech_rag_source_row.set_text("")
-
     def _load_settings(self) -> None:
         settings = load_ai_settings()
         page_widgets = self._prompt_editors.get("page")
         range_widgets = self._prompt_editors.get("range")
         extract_widgets = self._prompt_editors.get("extract")
-        rag_widgets = self._prompt_editors.get("rag")
         agent_widgets = self._prompt_editors.get("agent")
 
         if isinstance(page_widgets, SummarizationPromptWidgets):
@@ -1313,26 +1138,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             )
             extract_widgets.prompt_buffer.set_text(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
 
-        if isinstance(rag_widgets, RagPromptWidgets):
-            rag_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
-            rag_widgets.profile_dropdown.set_selected(
-                self._profile_dropdown_selected_index(settings, TASK_PROFILE_RAG)
-            )
-            provider = _normalize_rag_provider(settings.rag_provider)
-            if provider in rag_widgets.provider_values:
-                rag_widgets.provider_row.set_selected(rag_widgets.provider_values.index(provider))
-            else:
-                rag_widgets.provider_row.set_selected(0)
-            rag_widgets.voyage_model_row.set_text(settings.voyage_model)
-            rag_widgets.voyage_key_row.set_text(settings.voyage_api_key)
-            rag_widgets.isaacus_model_row.set_text(settings.isaacus_model)
-            rag_widgets.isaacus_key_row.set_text(settings.isaacus_api_key)
-            rag_widgets.rag_chunk_row.set_value(float(settings.rag_chunk_count))
-            rag_widgets.speech_rag_source_row.set_text(settings.speech_rag_source_file)
-            rag_widgets.prompt_buffer.set_text(settings.rag_prompt or DEFAULT_RAG_PROMPT)
-
         if isinstance(agent_widgets, AgentSettingsWidgets):
             agent_widgets.pi_agent_command_row.set_text(settings.pi_agent_command)
+            agent_widgets.speech_agent_source_row.set_text(
+                settings.speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
+            )
 
         if self._ai_font_size_row:
             _, ai_font, _ = self.app.get_font_preferences()
@@ -1386,15 +1196,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         page_widgets = self._prompt_editors.get("page")
         range_widgets = self._prompt_editors.get("range")
         extract_widgets = self._prompt_editors.get("extract")
-        rag_widgets = self._prompt_editors.get("rag")
         agent_widgets = self._prompt_editors.get("agent")
         if not isinstance(page_widgets, SummarizationPromptWidgets):
             return
         if not isinstance(range_widgets, SummarizationPromptWidgets):
             return
         if not isinstance(extract_widgets, SummarizationPromptWidgets):
-            return
-        if not isinstance(rag_widgets, RagPromptWidgets):
             return
         if not isinstance(agent_widgets, AgentSettingsWidgets):
             return
@@ -1427,28 +1234,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             TASK_PROFILE_PAGE: self._profile_key_from_dropdown(page_widgets.profile_dropdown),
             TASK_PROFILE_RANGE: self._profile_key_from_dropdown(range_widgets.profile_dropdown),
             TASK_PROFILE_EXTRACT: self._profile_key_from_dropdown(extract_widgets.profile_dropdown),
-            TASK_PROFILE_RAG: self._profile_key_from_dropdown(rag_widgets.profile_dropdown),
         }
-        provider_index = int(rag_widgets.provider_row.get_selected())
-        if 0 <= provider_index < len(rag_widgets.provider_values):
-            rag_provider = rag_widgets.provider_values[provider_index]
-        else:
-            rag_provider = DEFAULT_RAG_PROVIDER
-        voyage_model = rag_widgets.voyage_model_row.get_text().strip()
-        voyage_key = rag_widgets.voyage_key_row.get_text().strip()
-        isaacus_model = rag_widgets.isaacus_model_row.get_text().strip()
-        isaacus_key = rag_widgets.isaacus_key_row.get_text().strip()
-        rag_chunk_count = _coerce_rag_chunk_count(
-            int(round(rag_widgets.rag_chunk_row.get_value())),
-            DEFAULT_RAG_CHUNK_COUNT,
-        )
-        speech_rag_source_file = rag_widgets.speech_rag_source_row.get_text()
+        speech_agent_source_file = agent_widgets.speech_agent_source_row.get_text().strip()
         pi_agent_command = agent_widgets.pi_agent_command_row.get_text().strip()
 
         page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
         range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
         extract_prompt = self._prompt_text(extract_widgets.prompt_buffer).strip()
-        rag_prompt = self._prompt_text(rag_widgets.prompt_buffer).strip()
         highlight_phrases = (
             _normalize_highlight_phrases(self._prompt_text(self._highlight_phrases_buffer))
             if self._highlight_phrases_buffer is not None
@@ -1514,22 +1306,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
             extract_prompt=extract_prompt or DEFAULT_EXTRACT_PROMPT,
-            rag_provider=rag_provider,
-            voyage_api_key=voyage_key,
-            voyage_model=voyage_model or DEFAULT_RAG_VOYAGE_MODEL,
-            isaacus_api_key=isaacus_key,
-            isaacus_model=isaacus_model or DEFAULT_RAG_ISAACUS_MODEL,
-            rag_llm_model=current_settings.rag_llm_model,
-            rag_deep_llm_model=current_settings.rag_deep_llm_model,
-            rag_prompt=rag_prompt or DEFAULT_RAG_PROMPT,
-            rag_api_url=current_settings.rag_api_url,
-            rag_api_key=current_settings.rag_api_key,
-            rag_deep_api_url=current_settings.rag_deep_api_url,
-            rag_deep_api_key=current_settings.rag_deep_api_key,
-            rag_disable_reasoning=current_settings.rag_disable_reasoning,
-            rag_deep_disable_reasoning=current_settings.rag_deep_disable_reasoning,
-            rag_chunk_count=rag_chunk_count,
-            speech_rag_source_file=speech_rag_source_file,
+            speech_agent_source_file=(
+                speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
+            ),
             pi_agent_command=pi_agent_command or DEFAULT_PI_AGENT_COMMAND,
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
@@ -1579,12 +1358,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 "Saved. The PI model, reasoning effort, and Priority preference "
                 "apply to new Agent sessions."
             )
-        elif settings.is_configured() and settings.is_rag_ready():
-            self._show_status_toast("Saved. Summaries and RAG questions are enabled.")
         elif settings.is_configured():
-            self._show_status_toast(
-                "Saved. Add RAG API URL, embedding provider credentials, and RAG fields "
-                "to enable questions."
-            )
+            self._show_status_toast("Saved. Summaries and Agent questions are enabled.")
         else:
             self._show_status_toast("Saved. Add required fields to enable summaries.")

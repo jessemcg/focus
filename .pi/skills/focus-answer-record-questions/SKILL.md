@@ -23,18 +23,38 @@ Run helper commands with:
 
 ## Research workflow
 
-1. Run `map --json` before substantial research. Review the citation series,
-   document metadata, paths, counts, and warnings.
-2. Use PI's `grep` tool, which is backed by ripgrep, to search the bundle's
-   `text_pages` directory. Begin with distinctive names, dates, phrases, or
-   events. Try reasonable variants and synonyms when the first search is
-   incomplete.
-3. Treat grep results only as leads. Use `read` to inspect each relevant full
-   page and any adjacent pages needed for context.
-4. Resolve every page used in the answer with
+1. Run `map --json` before substantial research. Review schema version,
+   citation series, document ranges, participant index, counts, and warnings.
+   In source-map v2, use hearing-scoped counsel aliases, witness status, and
+   examination ranges to plan the search. Older v1 maps remain searchable but
+   do not provide verified participant context.
+2. Decompose the question into distinctive names, dates, phrases, events,
+   document types, and reasonable OCR/synonym variants. Search several variants
+   in one read-only scan, for example:
+
+   ```bash
+   "$FOCUS_RECORD_AGENT_PYTHON" "$FOCUS_RECORD_AGENT_HELPER" \
+     --case-root "$FOCUS_AGENT_CASE_ROOT" search \
+     --query "maternal grandmother placement" \
+     --query "placed with maternal grandmother" \
+     --hearing-date "January 2, 2025" --max-results 20 --json
+   ```
+
+   Use optional `--document`, `--witness`, `--counsel-role`, and
+   `--current-citation` scopes only when the map supports them. The command scans
+   source pages on demand and creates no index, cache, or database.
+3. Treat ranked snippets and participant metadata only as navigation leads.
+   Use `read` to inspect each relevant full page and adjacent pages. Verify who
+   is speaking from actual appearances/examination evidence. A question is the
+   examiner's speech and an answer is the mapped witness's testimony only within
+   a verified examination. Q/A formatting alone does not establish testimony.
+4. If targeted search is incomplete, broaden terms and use PI's `grep` tool, which is backed by ripgrep, for unusual regex/OCR patterns. Before making a
+   negative finding, search aliases, stems, date variants, and the full relevant
+   document or examination range.
+5. Resolve every page used in the answer with
    `lookup --file "text_pages/0001.txt" --json`. Use
    `lookup --citation "CT 6" --json` to follow a record citation.
-5. Inspect a paired page image only when visual appearance could change the
+6. Inspect a paired page image only when visual appearance could change the
    answer, such as checkboxes, signatures, initials, handwriting, stamps,
    crossed-out text, tables, field alignment, form identity, or ambiguous OCR.
    Treat `page_type` as a hint rather than a reason to inspect every image. When
@@ -45,11 +65,11 @@ Run helper commands with:
    evidence when sufficient and state any remaining limitation. If OCR and the
    image conflict, treat the image as controlling only for visual properties
    and describe the discrepancy without overstating an unclear scan.
-6. Use `document --id "document-id" --json` when document boundaries, titles,
+7. Use `document --id "document-id" --json` when document boundaries, titles,
    dates, or citation ranges matter.
-7. Compare all relevant passages before answering. Do not rely on a search
-   snippet alone. Treat an optional current Focus citation as a navigation hint,
-   not evidence by itself.
+8. Compare all relevant passages before answering. Summaries are
+   nonauthoritative leads and must be checked against source pages. Do not rely
+   on a snippet, participant entry, or current Focus citation as proof by itself.
 
 If the source map is missing or invalid, explain that a citation-grounded answer
 cannot be produced safely. If a reasonable set of searches finds no support,

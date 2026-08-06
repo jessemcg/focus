@@ -18,7 +18,7 @@ def _write_case_bundle(tmp_path: Path) -> Path:
     image_dir.mkdir(parents=True)
     artifacts.mkdir(parents=True)
     (text_dir / "0001.txt").write_text(
-        "Mother attended therapy.\nChild was safe.\n",
+        "Mother attended ther-\napy. The maternal grandmother placement was safe.\n",
         encoding="utf-8",
     )
     (text_dir / "0002.txt").write_text(
@@ -27,6 +27,7 @@ def _write_case_bundle(tmp_path: Path) -> Path:
     )
     (image_dir / "0001.png").write_bytes(b"fake png payload")
     source_map = {
+        "schema_version": 2,
         "case_name": "Test Case",
         "root_dir": str(root),
         "paths": {
@@ -48,6 +49,10 @@ def _write_case_bundle(tmp_path: Path) -> Path:
                 "record_type": "CT",
                 "citation_label": "CT 1",
                 "citation_key": "CT:1",
+                "document_ids": ["hearing:0001"],
+                "hearing_id": "hearing:0001",
+                "witnesses": [{"id": "witness:mother", "name": "Mother"}],
+                "examinations": [{"type": "direct", "examiner_role_id": "mothers_counsel"}],
             },
             {
                 "file_name": "0002.txt",
@@ -55,18 +60,49 @@ def _write_case_bundle(tmp_path: Path) -> Path:
                 "text_path": "text_pages/0002.txt",
                 "citation_label": "CT 2",
                 "citation_key": "CT:2",
+                "document_ids": ["report:0002"],
             },
         ],
         "documents": [
+            {
+                "id": "hearing:0001",
+                "type": "hearing",
+                "label": "January 2, 2025",
+                "date": "January 2, 2025",
+                "start_page": 1,
+                "end_page": 1,
+            },
             {
                 "id": "report:0002",
                 "type": "report",
                 "label": "Test Report",
                 "citation_range": "CT 2-CT 2",
-                "start_page": "0002",
-                "end_page": "0002",
+                "start_page": 2,
+                "end_page": 2,
             }
         ],
+        "participant_index": {
+            "schema_version": 1,
+            "hearings": [{
+                "id": "hearing:0001",
+                "date": "January 2, 2025",
+                "start_page": 1,
+                "end_page": 1,
+                "counsel": [{
+                    "role_id": "mothers_counsel",
+                    "role_label": "Mother’s counsel",
+                    "name": "Jane Smith",
+                    "aliases": ["Ms. Smith"],
+                }],
+                "witness_status": "verified",
+                "witnesses": [{
+                    "id": "witness:mother",
+                    "name": "Mother",
+                    "aliases": ["the mother"],
+                    "examinations": [{"start_file_page": 1, "end_file_page": 1}],
+                }],
+            }],
+        },
         "lookup": {
             "by_citation_key": {"CT:1": ["0001.txt"]},
             "by_report_id": {},
@@ -205,7 +241,65 @@ def test_document_resolves_document_id(tmp_path) -> None:
     assert payload["citation_range"] == "CT 2-CT 2"
 
 
-def test_removed_agent_search_and_rag_commands_are_unavailable(tmp_path) -> None:
+def test_search_normalizes_ocr_hyphenation_and_returns_citation_context(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(
+        root,
+        "search",
+        "--query",
+        "mother attended therapy",
+        "--query",
+        "maternal grandmother placement",
+        "--max-results",
+        "5",
+        "--json",
+    )
+
+    assert payload["candidate_pages"] == 2
+    assert payload["total_matches"] == 1
+    match = payload["matches"][0]
+    assert match["citation_label"] == "CT 1"
+    assert match["text_path"] == "text_pages/0001.txt"
+    assert match["witnesses"][0]["name"] == "Mother"
+    assert match["reason"] == "exact-phrase"
+
+
+def test_search_scopes_by_witness_counsel_and_hearing_date(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(
+        root,
+        "search",
+        "--query",
+        "placement safe",
+        "--witness",
+        "the mother",
+        "--counsel-role",
+        "mothers_counsel",
+        "--hearing-date",
+        "January 2, 2025",
+        "--current-citation",
+        "CT 1",
+        "--json",
+    )
+
+    assert payload["candidate_pages"] == 1
+    assert payload["matches"][0]["hearing_id"] == "hearing:0001"
+    assert payload["matches"][0]["score"] > 65
+
+
+def test_search_is_read_only(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    before = sorted((path.relative_to(root), path.stat().st_mtime_ns) for path in root.rglob("*") if path.is_file())
+
+    _run_helper(root, "search", "--query", "medication compliance", "--json")
+
+    after = sorted((path.relative_to(root), path.stat().st_mtime_ns) for path in root.rglob("*") if path.is_file())
+    assert after == before
+
+
+def test_removed_legacy_search_commands_are_unavailable(tmp_path) -> None:
     root = _write_case_bundle(tmp_path)
 
     for command in ("grep", "rag"):

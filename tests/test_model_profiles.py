@@ -78,22 +78,7 @@ def test_profile_credentials_override_legacy_values() -> None:
         page_prompt="Prompt",
         range_prompt="Prompt",
         extract_prompt="Prompt",
-        rag_provider=focus.DEFAULT_RAG_PROVIDER,
-        voyage_api_key="voyage-key",
-        voyage_model=focus.DEFAULT_RAG_VOYAGE_MODEL,
-        isaacus_api_key="",
-        isaacus_model=focus.DEFAULT_RAG_ISAACUS_MODEL,
-        rag_llm_model="",
-        rag_deep_llm_model="",
-        rag_prompt="Prompt",
-        rag_api_url="",
-        rag_api_key="",
-        rag_deep_api_url="",
-        rag_deep_api_key="",
-        rag_disable_reasoning=False,
-        rag_deep_disable_reasoning=False,
-        rag_chunk_count=focus.DEFAULT_RAG_CHUNK_COUNT,
-        speech_rag_source_file="",
+        speech_agent_source_file=focus.DEFAULT_SPEECH_AGENT_SOURCE_FILE,
         highlight_phrases=[],
         grep_highlight_color=focus.DEFAULT_MATCH_COLOR,
         phrase_highlight_color=focus.DEFAULT_HIGHLIGHT_COLOR,
@@ -184,6 +169,27 @@ def test_save_ai_settings_writes_profiles_and_legacy_compatibility(tmp_path, mon
     assert saved[CONFIG_KEY_PAGE_MODEL_ID] == "profile-model"
     assert saved[CONFIG_KEY_PAGE_API_KEY] == "profile-key"
     assert saved[CONFIG_KEY_SEARCH_CHIP_COLOR] == focus.DEFAULT_SEARCH_CHIP_COLOR
+
+
+def test_load_ai_settings_purges_obsolete_vector_question_credentials(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({
+            "rag_api_key": "secret",
+            "rag_voyage_api_key": "embedding-secret",
+            "rag_chunk_count": 8,
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(focus, "CONFIG_FILE", config_path)
+
+    settings = load_ai_settings()
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert settings.speech_agent_source_file == "/dev/shm/speech.txt"
+    assert "rag_api_key" not in saved
+    assert "rag_voyage_api_key" not in saved
+    assert "rag_chunk_count" not in saved
 
 
 def test_load_ai_settings_ignores_retired_agent_prompt_template(tmp_path, monkeypatch) -> None:

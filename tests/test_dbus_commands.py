@@ -1,10 +1,11 @@
 import shlex
+from pathlib import Path
 
 from focus.core import (
     ACTION_OBJECT_PATH,
     APPLICATION_ID,
     _action_command,
-    _normalize_speech_rag_question_text,
+    _normalize_speech_agent_question_text,
     focus_command_items,
 )
 
@@ -46,27 +47,41 @@ def test_focus_command_items_cover_shortcut_actions_once() -> None:
         "insert_current_page_citation",
         "insert_page_citation_range",
         "toggle_ai_panel",
-        "focus_rag_question",
         "focus_agent_question",
-        "submit_speech_rag_question",
         "submit_speech_agent_question",
         "show_shortcuts",
     ]
 
 
-def test_normalize_speech_rag_question_text_trims_and_collapses_whitespace() -> None:
+def test_removed_vector_question_actions_and_loaders_are_absent() -> None:
+    project = Path(__file__).resolve().parents[1]
+    app_source = (project / "focus/app.py").read_text(encoding="utf-8")
+    settings_source = (project / "focus/ui/settings.py").read_text(encoding="utf-8")
+
+    for obsolete in (
+        "focus_rag_question",
+        "submit_speech_rag_question",
+        "_start_rag_question",
+        "_load_rag_resources",
+        "RAG Audit",
+    ):
+        assert obsolete not in app_source
+        assert obsolete not in settings_source
+
+
+def test_normalize_speech_agent_question_text_trims_and_collapses_whitespace() -> None:
     assert (
-        _normalize_speech_rag_question_text("  What happened\n\nat   the hearing?  ")
+        _normalize_speech_agent_question_text("  What happened\n\nat   the hearing?  ")
         == "What happened at the hearing?"
     )
 
 
-def test_normalize_speech_rag_question_text_preserves_punctuation_and_case() -> None:
+def test_normalize_speech_agent_question_text_preserves_punctuation_and_case() -> None:
     assert (
-        _normalize_speech_rag_question_text('Did Mother say, "I object"?')
+        _normalize_speech_agent_question_text('Did Mother say, "I object"?')
         == 'Did Mother say, "I object"?'
     )
 
 
-def test_normalize_speech_rag_question_text_empty_input() -> None:
-    assert _normalize_speech_rag_question_text(" \n\t ") == ""
+def test_normalize_speech_agent_question_text_empty_input() -> None:
+    assert _normalize_speech_agent_question_text(" \n\t ") == ""

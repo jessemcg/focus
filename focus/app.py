@@ -117,11 +117,9 @@ class Focus(Adw.Application):
         self._ai_outputs: dict[str, AiOutputView] = {
             AI_VIEW_SUMMARIZE: AiOutputView(),
             AI_VIEW_EXTRACT: AiOutputView(),
-            AI_VIEW_QA: AiOutputView(),
             AI_VIEW_AGENT_QA: AiOutputView(),
-            AI_VIEW_RAG_AUDIT: AiOutputView(),
         }
-        self._ai_active_view = AI_VIEW_QA
+        self._ai_active_view = AI_VIEW_AGENT_QA
         self._textview_click_gesture: Gtk.GestureClick | None = None
         self._textview_focus_controller: Gtk.EventControllerFocus | None = None
         self._textview_motion_controller: Gtk.EventControllerMotion | None = None
@@ -212,16 +210,6 @@ class Focus(Adw.Application):
         self._ai_settings: AiSettings = load_ai_settings()
         self._ai_in_flight = False
         self._ai_request_generation = 0
-        self._rag_vectorstore: Any | None = None
-        self._rag_case_details: str | None = None
-        self._rag_report_name_catalog: tuple[dict[str, str], ...] = ()
-        self._rag_load_thread: threading.Thread | None = None
-        self._rag_load_generation = 0
-        self._rag_load_error: str | None = None
-        self._rag_loading = False
-        self._rag_lock = threading.Lock()
-        self._rag_question_entry: Gtk.Entry | None = None
-        self._rag_filter_chip: Gtk.Button | None = None
         self._agent_question_entry: Gtk.Entry | None = None
         self._agent_subview_host: Gtk.Box | None = None
         self._agent_subview_name = AGENT_SUBVIEW_SESSION
@@ -366,7 +354,6 @@ class Focus(Adw.Application):
         self._scan_pages()
         self._ensure_window()
         self._load_toc_from_disk_async()
-        self._kickoff_rag_background_load()
         if self.pages:
             self.current_index = 0
             self._load_current()
@@ -439,7 +426,6 @@ class Focus(Adw.Application):
 
         case_tools_menu = Gio.Menu()
         case_tools_menu.append("Extract Information", "app.show_extract")
-        case_tools_menu.append("RAG Audit", "app.show_rag_audit")
         case_tools_menu.append("Print Summary", "app.print_summary")
         menu_model.append_section("Case Tools", case_tools_menu)
 
@@ -676,17 +662,10 @@ class Focus(Adw.Application):
         ai_mode_strip.set_valign(Gtk.Align.CENTER)
         ai_mode_strip.set_hexpand(False)
 
-        qa_mode_button = self._build_ai_mode_button(
-            "Q&A",
-            AI_VIEW_QA,
-            "Ask questions about the record",
-        )
-        ai_mode_strip.append(qa_mode_button)
-
         agent_mode_button = self._build_ai_mode_button(
-            "Agent",
+            "Agent Q&A",
             AI_VIEW_AGENT_QA,
-            "Open an embedded PI agent for deeper record questions",
+            "Ask citation-grounded questions with the embedded PI Agent",
         )
         ai_mode_strip.append(agent_mode_button)
 
@@ -825,30 +804,6 @@ class Focus(Adw.Application):
         extract_range_btn.connect("clicked", self._on_extract_range_button_clicked)
         extract_controls.append(extract_range_btn)
 
-        qa_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        qa_view.set_hexpand(True)
-        qa_view.set_vexpand(True)
-        qa_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        qa_controls.set_hexpand(True)
-        qa_controls.set_valign(Gtk.Align.CENTER)
-
-        self._rag_question_entry = Gtk.Entry()
-        self._rag_question_entry.set_hexpand(True)
-        self._rag_question_entry.set_placeholder_text("Ask about the record")
-        self._rag_question_entry.connect("activate", self._on_rag_question_activate)
-        qa_controls.append(self._rag_question_entry)
-
-        self._rag_filter_chip = Gtk.Button()
-        self._rag_filter_chip.add_css_class("flat")
-        self._rag_filter_chip.add_css_class("no-bold")
-        self._rag_filter_chip.add_css_class("focus-filter-chip")
-        self._rag_filter_chip.set_halign(Gtk.Align.START)
-        self._rag_filter_chip.set_valign(Gtk.Align.START)
-        self._rag_filter_chip.set_can_focus(False)
-        self._rag_filter_chip.set_focus_on_click(False)
-        self._rag_filter_chip.set_visible(False)
-        self._rag_filter_chip.set_tooltip_text("Auto-detected retrieval filter applied successfully.")
-
         agent_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         agent_view.set_hexpand(True)
         agent_view.set_vexpand(True)
@@ -933,16 +888,6 @@ class Focus(Adw.Application):
         agent_view.append(self._agent_subview_host)
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
 
-        rag_audit_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        rag_audit_view.set_hexpand(True)
-        rag_audit_view.set_vexpand(True)
-        rag_audit_controls = self._build_wrapping_controls_box()
-        rag_audit_hint = Gtk.Label(label="Inspect the latest RAG payload.")
-        rag_audit_hint.add_css_class("dim-label")
-        rag_audit_hint.set_xalign(0.0)
-        rag_audit_hint.set_hexpand(True)
-        rag_audit_controls.insert(rag_audit_hint, -1)
-
         file_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         file_view.set_hexpand(True)
         file_view.set_vexpand(True)
@@ -992,11 +937,9 @@ class Focus(Adw.Application):
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
             self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_EXTRACT)
-            self._ai_controls_stack.add_named(qa_controls, AI_VIEW_QA)
             self._ai_controls_stack.add_named(agent_header_controls, AI_VIEW_AGENT_QA)
-            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_RAG_AUDIT)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
-            self._ai_controls_stack.set_visible_child_name(AI_VIEW_QA)
+            self._ai_controls_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
 
         self._summary_view = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self._summary_view.add_css_class("ai-output-view")
@@ -1030,26 +973,17 @@ class Focus(Adw.Application):
 
         summarize_scroller = self._build_ai_output_view(AI_VIEW_SUMMARIZE)
         extract_scroller = self._build_ai_output_view(AI_VIEW_EXTRACT)
-        qa_scroller = self._build_ai_output_view(AI_VIEW_QA)
-        rag_audit_scroller = self._build_ai_output_view(AI_VIEW_RAG_AUDIT)
 
         summarize_view.append(summarize_scroller)
         extract_view.append(extract_controls)
         extract_view.append(extract_scroller)
-        if self._rag_filter_chip:
-            qa_view.append(self._rag_filter_chip)
-        qa_view.append(qa_scroller)
-        rag_audit_view.append(rag_audit_controls)
-        rag_audit_view.append(rag_audit_scroller)
 
         self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
         self._ai_view_stack.add_titled(extract_view, AI_VIEW_EXTRACT, "Extract")
-        self._ai_view_stack.add_titled(qa_view, AI_VIEW_QA, "Q&A")
-        self._ai_view_stack.add_titled(agent_view, AI_VIEW_AGENT_QA, "Agent")
-        self._ai_view_stack.add_titled(rag_audit_view, AI_VIEW_RAG_AUDIT, "RAG Audit")
+        self._ai_view_stack.add_titled(agent_view, AI_VIEW_AGENT_QA, "Agent Q&A")
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
-        self._ai_view_stack.set_visible_child_name(AI_VIEW_QA)
-        self._sync_ai_view_toggles(AI_VIEW_QA)
+        self._ai_view_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
+        self._sync_ai_view_toggles(AI_VIEW_AGENT_QA)
 
         self._auto_load_summary_file()
 
@@ -1413,13 +1347,10 @@ class Focus(Adw.Application):
             if self._ai_view_stack
             else self._ai_active_view
         )
-        if active_view in {AI_VIEW_EXTRACT, AI_VIEW_RAG_AUDIT}:
+        if active_view == AI_VIEW_EXTRACT:
             return True
         if active_view == AI_VIEW_AGENT_QA and self._agent_subview_name == AGENT_SUBVIEW_SESSION:
             return self._agent_session_has_content()
-        if active_view == AI_VIEW_QA and self._rag_filter_chip:
-            if self._rag_filter_chip.get_visible():
-                return True
         _active_scroller, has_output = self._active_ai_output_scroller()
         return has_output
 
@@ -1619,7 +1550,7 @@ class Focus(Adw.Application):
             (self._ai_panel_toggle and self._ai_panel_toggle.get_active())
             or (self._ai_panel_revealer and self._ai_panel_revealer.get_child_revealed())
         )
-        self._ai_active_view = AI_VIEW_QA
+        self._ai_active_view = AI_VIEW_AGENT_QA
         self._ai_request_generation = 0
         self._ai_in_flight = False
         self._ai_cancel_event = None
@@ -1629,7 +1560,6 @@ class Focus(Adw.Application):
             self._apply_ai_output_links("", ai_state)
         self._agent_workspace_path = None
         self._agent_last_answer_text = ""
-        self._set_rag_filter_chip(None)
         self._sync_show_image_action()
 
     def _cancel_all_ai_streams(self) -> None:
@@ -1687,14 +1617,8 @@ class Focus(Adw.Application):
         state.ai_range_autofilled = self._ai_range_autofilled
         if self._extract_range_entry:
             state.extract_range_text = self._extract_range_entry.get_text()
-        if self._rag_question_entry:
-            state.rag_question_text = self._rag_question_entry.get_text()
         if self._agent_question_entry:
             state.agent_question_text = self._agent_question_entry.get_text()
-        if self._rag_filter_chip and self._rag_filter_chip.get_visible():
-            state.rag_filter_chip_text = self._rag_filter_chip.get_label() or ""
-        else:
-            state.rag_filter_chip_text = ""
         state.summary_loaded_path = self._summary_loaded_path
         state.summary_active_source = self._summary_active_source
 
@@ -2367,9 +2291,6 @@ class Focus(Adw.Application):
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
             "}"
-            "textview.ai-output-view.rag-audit-view { "
-            f"font-size: {DEFAULT_RAG_AUDIT_FONT_SIZE_PT}pt; "
-            "}"
             "label.focus-search-chip { "
             f"background-color: {search_chip_color}; "
             "}"
@@ -2873,12 +2794,10 @@ class Focus(Adw.Application):
         state = self._get_ai_output_state(view_name)
         text_view = Gtk.TextView(
             editable=False,
-            monospace=view_name == AI_VIEW_RAG_AUDIT,
+            monospace=False,
             wrap_mode=Gtk.WrapMode.WORD_CHAR,
         )
         text_view.add_css_class("ai-output-view")
-        if view_name == AI_VIEW_RAG_AUDIT:
-            text_view.add_css_class("rag-audit-view")
         text_view.set_hexpand(True)
         text_view.set_vexpand(True)
         text_view.set_top_margin(6)
@@ -3101,13 +3020,6 @@ class Focus(Adw.Application):
             scroller.queue_resize()
 
     def _apply_ai_output_links(self, text: str, state: AiOutputView) -> None:
-        for view_name, output_state in self._ai_outputs.items():
-            if output_state is not state:
-                continue
-            if view_name == AI_VIEW_RAG_AUDIT and state.buffer is not None:
-                state.buffer.set_text(text or "")
-                return
-            break
         self._apply_link_spans(text, state.buffer, state.link_tags, state.link_lookup, state.scroller)
 
     def _apply_summary_links(self, text: str) -> None:
@@ -4995,7 +4907,6 @@ class Focus(Adw.Application):
         for action_name, view_name in {
             "show_summarize": AI_VIEW_SUMMARIZE,
             "show_extract": AI_VIEW_EXTRACT,
-            "show_rag_audit": AI_VIEW_RAG_AUDIT,
         }.items():
             action = Gio.SimpleAction.new(action_name, None)
             action.connect(
@@ -5073,23 +4984,12 @@ class Focus(Adw.Application):
         self.add_action(show_image_action)
         self._show_image_action = show_image_action
 
-        focus_rag_question = Gio.SimpleAction.new("focus_rag_question", None)
-        focus_rag_question.connect("activate", lambda _a, _p: self._focus_rag_question_entry())
-        self.add_action(focus_rag_question)
-
         focus_agent_question = Gio.SimpleAction.new("focus_agent_question", None)
         focus_agent_question.connect(
             "activate",
             lambda _a, _p: self._focus_agent_question_entry(),
         )
         self.add_action(focus_agent_question)
-
-        submit_speech_rag_question = Gio.SimpleAction.new("submit_speech_rag_question", None)
-        submit_speech_rag_question.connect(
-            "activate",
-            lambda _a, _p: self._submit_speech_rag_question(),
-        )
-        self.add_action(submit_speech_rag_question)
 
         submit_speech_agent_question = Gio.SimpleAction.new("submit_speech_agent_question", None)
         submit_speech_agent_question.connect(
@@ -5185,7 +5085,7 @@ class Focus(Adw.Application):
             "app.insert_page_citation_range",
             ["<Primary><Alt>c"],
         )
-        self.set_accels_for_action("app.focus_rag_question", ["<Primary>q"])
+        self.set_accels_for_action("app.focus_agent_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
         self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>a"])
@@ -5263,7 +5163,7 @@ class Focus(Adw.Application):
             )
         )
         tools_group.append(
-            Gtk.ShortcutsShortcut(title="Focus RAG question box", accelerator="<Primary>Q")
+            Gtk.ShortcutsShortcut(title="Focus Agent question box", accelerator="<Primary>Q")
         )
         navigation_section.append(tools_group)
 
@@ -5598,12 +5498,9 @@ class Focus(Adw.Application):
             self._ai_settings.page_prompt = DEFAULT_SUMMARIZATION_PROMPT
         if not self._ai_settings.range_prompt.strip():
             self._ai_settings.range_prompt = DEFAULT_SUMMARIZATION_PROMPT
-        if not self._ai_settings.rag_prompt.strip():
-            self._ai_settings.rag_prompt = DEFAULT_RAG_PROMPT
         self._refresh_ai_profile_dropdowns()
         self._refresh_ai_quote_colors()
         self._apply_text_color(self._current_text_color)
-        self._kickoff_rag_background_load()
         if self.textview:
             self._load_current()
         self._transient_toast("AI settings updated.")
@@ -5639,7 +5536,6 @@ class Focus(Adw.Application):
         self._scan_pages()
         self._refresh_transcript_breakdown_action()
         self._load_toc_from_disk_async()
-        self._kickoff_rag_background_load()
         if self.pages:
             self.current_index = 0
             self._load_current()
@@ -5869,19 +5765,6 @@ class Focus(Adw.Application):
         self._page_number_entry.grab_focus()
         self._page_number_entry.select_region(0, -1)
 
-    def _focus_rag_question_entry(self) -> None:
-        self._ensure_ai_panel_visible()
-        self._set_ai_view(AI_VIEW_QA)
-        if not self._rag_question_entry:
-            return
-
-        def _focus() -> bool:
-            self._rag_question_entry.grab_focus()
-            self._rag_question_entry.select_region(0, -1)
-            return False
-
-        GLib.idle_add(_focus)
-
     def _set_grep_entry_text(self, text: str) -> None:
         if not self._grep_entry:
             return
@@ -6043,7 +5926,7 @@ class Focus(Adw.Application):
         new_visible = not bool(current_visible)
         self._set_ai_panel_visible(new_visible)
         if new_visible:
-            self._focus_rag_question_entry()
+            self._focus_agent_question_entry()
 
     def _on_ai_panel_toggled(self, button: Gtk.ToggleButton) -> None:
         if self._ai_panel_toggle_guard:
@@ -6188,7 +6071,7 @@ class Focus(Adw.Application):
             self._ai_view_toggle_guard = False
 
     def _on_ai_view_changed(self, stack: Adw.ViewStack, _pspec: GObject.ParamSpec) -> None:
-        name = stack.get_visible_child_name() or AI_VIEW_QA
+        name = stack.get_visible_child_name() or AI_VIEW_AGENT_QA
         self._set_ai_view(name)
 
     def _on_ai_mode_button_toggled(
@@ -6381,9 +6264,6 @@ class Focus(Adw.Application):
             profile_key=self._selected_ai_profile_key(TASK_PROFILE_EXTRACT),
         )
         self._extract_range_entry.set_text("")
-
-    def _on_rag_question_activate(self, _entry: Gtk.Entry) -> None:
-        self._submit_rag_question()
 
     def _on_agent_question_activate(self, _entry: Gtk.Entry) -> None:
         self._launch_agent_question()
@@ -6709,48 +6589,9 @@ class Focus(Adw.Application):
         self._sync_agent_session_widget_visibility()
         self._queue_embedded_ai_panel_height_update()
 
-    def _submit_rag_question(self) -> None:
-        if not self._rag_question_entry:
-            return
-        question = self._rag_question_entry.get_text().strip()
-        if not question:
-            self._ai_transient_toast("Enter a question to run RAG.")
-            return
-        self._start_rag_question(question)
-
-    def _submit_speech_rag_question(self) -> None:
-        settings = load_ai_settings()
-        raw_path = settings.speech_rag_source_file.strip()
-        if not raw_path:
-            self._ai_transient_toast("Set the speech-to-text question file in Settings.")
-            self._ensure_ai_panel_visible()
-            return
-        source_path = Path(raw_path).expanduser().resolve(strict=False)
-        if not source_path.exists() or not source_path.is_file():
-            self._ai_transient_toast(f"Speech question file not found: {source_path}")
-            self._ensure_ai_panel_visible()
-            return
-        try:
-            raw_question = source_path.read_text(encoding="utf-8", errors="ignore")
-        except OSError as exc:
-            self._ai_transient_toast(f"Could not read speech question file: {exc}")
-            self._ensure_ai_panel_visible()
-            return
-        question = _normalize_speech_rag_question_text(raw_question)
-        if not question:
-            self._ai_transient_toast("Speech question file is empty.")
-            self._ensure_ai_panel_visible()
-            return
-        self._ensure_ai_panel_visible()
-        self._set_ai_view(AI_VIEW_QA)
-        self._current_view_state().rag_question_text = question
-        if self._rag_question_entry:
-            self._rag_question_entry.set_text(question)
-        self._start_rag_question(question, deep=False)
-
     def _submit_speech_agent_question(self) -> None:
         settings = load_ai_settings()
-        raw_path = settings.speech_rag_source_file.strip()
+        raw_path = settings.speech_agent_source_file.strip()
         if not raw_path:
             self._ai_transient_toast("Set the speech-to-text question file in Settings.")
             self._ensure_ai_panel_visible()
@@ -6766,7 +6607,7 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Could not read speech question file: {exc}")
             self._ensure_ai_panel_visible()
             return
-        question = _normalize_speech_rag_question_text(raw_question)
+        question = _normalize_speech_agent_question_text(raw_question)
         if not question:
             self._ai_transient_toast("Speech question file is empty.")
             self._ensure_ai_panel_visible()
@@ -6777,41 +6618,6 @@ class Focus(Adw.Application):
         if self._agent_question_entry:
             self._agent_question_entry.set_text(question)
         self._launch_agent_question()
-
-    def _format_rag_filter_chip_text(self, filter_details: dict[str, str] | None) -> str | None:
-        if not filter_details:
-            return None
-        filter_type = str(filter_details.get("type") or "").strip()
-        if filter_type == "hearing":
-            hearing_date = str(filter_details.get("hearing_date") or "").strip()
-            if hearing_date:
-                return f"Hearing: {hearing_date}"
-            return None
-        if filter_type == "report":
-            report_label = str(filter_details.get("report_label") or "").strip()
-            if report_label:
-                return f"Report: {report_label}"
-            report_name = str(filter_details.get("report_name") or "").strip()
-            report_date = str(filter_details.get("report_date") or "").strip()
-            if report_name:
-                if report_date:
-                    return f"Report: {report_date} - {report_name}"
-                return f"Report: {report_name}"
-        return None
-
-    def _set_rag_filter_chip(self, text: str | None) -> None:
-        normalized = (text or "").strip()
-        state = self._current_view_state()
-        state.rag_filter_chip_text = normalized
-        if not self._rag_filter_chip:
-            return
-        self._rag_filter_chip.set_label(normalized)
-        self._rag_filter_chip.set_visible(bool(normalized))
-        self._queue_embedded_ai_panel_height_update()
-
-    def _set_rag_filter_chip_idle(self, text: str | None) -> bool:
-        self._set_rag_filter_chip(text)
-        return False
 
     def _find_summary_in_dir(
         self,
@@ -7158,677 +6964,6 @@ class Focus(Adw.Application):
         if not allow_auto:
             self._ensure_ai_panel_visible()
 
-    def _start_rag_question(
-        self,
-        question: str,
-        *,
-        deep: bool = False,
-        profile_key: str | None = None,
-    ) -> None:
-        state = self._current_view_state()
-        self._ai_settings = load_ai_settings()
-        settings = self._ai_settings
-        profile = settings.profile_by_key(profile_key)
-        profile_label = profile.short_name() if profile is not None else ""
-        question_mode = (
-            f"answer-{profile_key}" if profile_key else ("answer-2" if deep else "answer-1")
-        )
-        if deep:
-            credentials = settings.rag_deep_llm_credentials(profile_key)
-            error = self._llm_credentials_error(credentials, "RAG answer 2")
-            if error:
-                self._ensure_ai_panel_visible()
-                self._ai_transient_toast(error)
-                return
-        else:
-            credentials = settings.rag_llm_credentials(profile_key)
-            error_label = f"RAG answer with {profile_label}" if profile_label else "RAG answer"
-            error = self._llm_credentials_error(credentials, error_label)
-            if error:
-                self._ensure_ai_panel_visible()
-                self._ai_transient_toast(error)
-                return
-        rag_api_url = credentials.api_url
-        rag_api_key = credentials.api_key
-        rag_model = credentials.model_id
-        provider = _normalize_rag_provider(settings.rag_provider)
-        if provider == RAG_PROVIDER_ISAACUS:
-            if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
-                self._ai_transient_toast("Set the Isaacus API key and model in Settings.")
-                self._ensure_ai_panel_visible()
-                return
-        elif not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
-            self._ai_transient_toast("Set the Voyage API key and model in Settings.")
-            self._ensure_ai_panel_visible()
-            return
-        if not settings.rag_prompt.strip():
-            settings.rag_prompt = DEFAULT_RAG_PROMPT
-        if not rag_api_url:
-            self._ai_transient_toast("Set the RAG API URL in Settings.")
-            self._ensure_ai_panel_visible()
-            return
-        target_view = AI_VIEW_QA
-        self._stop_ai_stream_if_running()
-        state.ai_cancel_event = threading.Event()
-        state.ai_in_flight = True
-        state.ai_request_generation += 1
-        generation = state.ai_request_generation
-        self._ai_request_generation = generation
-        state.ai_active_view = target_view
-        self._ai_cancel_event = state.ai_cancel_event
-        self._ai_in_flight = True
-        self._ensure_ai_panel_visible()
-        self._set_ai_view(target_view)
-        self._reset_ai_output("", target=target_view)
-        self._set_rag_filter_chip(None)
-        self._update_ai_status("Loading RAG context…", spinning=True)
-
-        cancel_event = state.ai_cancel_event
-        question_text = question.strip()
-        question_label = f"question with {profile_label}" if profile_label else ("question 2" if deep else "question")
-        label = f"{question_label}: {question_text[:48]}{'…' if len(question_text) > 48 else ''}"
-
-        def worker() -> None:
-            vectorstore, case_details, error = self._ensure_rag_resources_ready(settings)
-            if error or vectorstore is None or case_details is None:
-                GLib.idle_add(
-                    self._on_ai_stream_error,
-                    error or "RAG data unavailable.",
-                    generation,
-                    target_view,
-                )
-                return
-            retrieval_started = time.perf_counter()
-            try:
-                chunks, retrieval_method, retrieval_filter = self._retrieve_rag_chunks(
-                    vectorstore,
-                    question_text,
-                    settings.rag_chunk_count,
-                )
-                context_text = self._format_rag_context(chunks)
-            except Exception as exc:  # noqa: BLE001
-                GLib.idle_add(
-                    self._on_ai_stream_error,
-                    f"RAG search failed: {exc}",
-                    generation,
-                    target_view,
-                )
-                return
-
-            retrieval_duration_ms = round((time.perf_counter() - retrieval_started) * 1000.0, 2)
-            chip_text = None
-            if retrieval_method == "similarity_search_with_relevance_scores(filter-succeeded)":
-                chip_text = self._format_rag_filter_chip_text(retrieval_filter)
-            GLib.idle_add(self._set_rag_filter_chip_idle, chip_text)
-            system_prompt = settings.rag_prompt or DEFAULT_RAG_PROMPT
-            user_payload = self._compose_rag_payload(case_details, context_text, question_text)
-            request_model_id = rag_model
-            disable_reasoning = credentials.disable_reasoning
-            priority_service_tier = credentials.priority_service_tier
-            llm_request = {
-                "model": request_model_id,
-                "stream": True,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_payload},
-                ],
-            }
-            _apply_disable_reasoning_to_body(
-                llm_request,
-                model_id=request_model_id,
-                disable_reasoning=disable_reasoning,
-            )
-            _apply_priority_service_tier_to_body(
-                llm_request,
-                api_url=rag_api_url,
-                priority_service_tier=priority_service_tier,
-            )
-            audit_record: dict[str, Any] = {
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                "view_id": "single",
-                "mode": question_mode,
-                "question": question_text,
-                "retrieval": {
-                    "method": retrieval_method,
-                    "metadata_filter": retrieval_filter,
-                    "requested_chunk_count": settings.rag_chunk_count,
-                    "actual_chunk_count": len(chunks),
-                    "duration_ms": retrieval_duration_ms,
-                    "chunks": chunks,
-                },
-                "llm_request": {
-                    "api_url": rag_api_url,
-                    "body": llm_request,
-                },
-            }
-            GLib.idle_add(
-                self._set_ai_output_text_idle,
-                self._format_rag_audit_text(audit_record),
-                AI_VIEW_RAG_AUDIT,
-                False,
-            )
-            if profile_label:
-                answer_status = f"Answering with {profile_label}…"
-            else:
-                answer_status = "Answering with model 2…" if deep else "Answering…"
-            GLib.idle_add(self._update_ai_status, answer_status, True)
-            self._stream_chat_worker(
-                settings,
-                user_payload,
-                label,
-                cancel_event,
-                generation,
-                system_prompt,
-                target_view,
-                model_id=request_model_id,
-                api_url=rag_api_url,
-                api_key=rag_api_key,
-                disable_reasoning=disable_reasoning,
-                priority_service_tier=priority_service_tier,
-                include_reasoning=False,
-            )
-
-        state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
-        state.ai_stream_thread.start()
-        self._ai_stream_thread = state.ai_stream_thread
-
-    def _kickoff_rag_background_load(self) -> None:
-        settings = self._ai_settings
-        provider = _normalize_rag_provider(settings.rag_provider)
-        missing_message: str | None = None
-        if provider == RAG_PROVIDER_ISAACUS:
-            if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
-                missing_message = "Isaacus API key and model are required for RAG."
-        elif not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
-            missing_message = "Voyage API key and model are required for RAG."
-        if missing_message:
-            with self._rag_lock:
-                self._rag_vectorstore = None
-                self._rag_case_details = None
-                self._rag_report_name_catalog = ()
-                self._rag_load_error = missing_message
-                self._rag_loading = False
-                self._rag_load_thread = None
-            return
-        self._rag_load_generation += 1
-        generation = self._rag_load_generation
-        with self._rag_lock:
-            self._rag_vectorstore = None
-            self._rag_case_details = None
-            self._rag_report_name_catalog = ()
-            self._rag_load_error = None
-            self._rag_loading = True
-        input_dir = self.input_dir
-        settings_snapshot = settings
-
-        def worker() -> None:
-            store, details, error = self._load_rag_resources(input_dir, settings_snapshot)
-            GLib.idle_add(self._on_rag_resources_loaded, generation, store, details, error)
-
-        self._rag_load_thread = threading.Thread(target=worker, daemon=True)
-        self._rag_load_thread.start()
-
-    def _on_rag_resources_loaded(
-        self,
-        generation: int,
-        vectorstore: Any | None,
-        case_details: str | None,
-        error: str | None,
-    ) -> bool:
-        if generation != self._rag_load_generation:
-            return False
-        with self._rag_lock:
-            if error:
-                self._rag_vectorstore = None
-                self._rag_case_details = None
-                self._rag_report_name_catalog = ()
-                self._rag_load_error = error
-            else:
-                self._rag_vectorstore = vectorstore
-                self._rag_case_details = case_details
-                self._rag_report_name_catalog = (
-                    self._load_rag_report_name_catalog(vectorstore) if vectorstore is not None else ()
-                )
-                self._rag_load_error = None
-            self._rag_loading = False
-            self._rag_load_thread = None
-        return False
-
-    def _ensure_rag_resources_ready(self, settings: AiSettings) -> tuple[Any | None, str | None, str | None]:
-        thread = self._rag_load_thread
-        if thread and thread.is_alive():
-            thread.join()
-        with self._rag_lock:
-            if self._rag_vectorstore is not None and self._rag_case_details is not None:
-                return self._rag_vectorstore, self._rag_case_details, None
-        store, details, error = self._load_rag_resources(self.input_dir, settings)
-        if error:
-            with self._rag_lock:
-                self._rag_load_error = error
-                self._rag_report_name_catalog = ()
-            return None, None, error
-        with self._rag_lock:
-            self._rag_vectorstore = store
-            self._rag_case_details = details
-            self._rag_report_name_catalog = self._load_rag_report_name_catalog(store) if store is not None else ()
-            self._rag_load_error = None
-            self._rag_loading = False
-        return store, details, None
-
-    def _load_rag_resources(
-        self,
-        input_dir: Path,
-        settings: AiSettings,
-    ) -> tuple[Any | None, str | None, str | None]:
-        layout = _resolve_record_layout(input_dir)
-        if layout.is_record_prep:
-            vector_dir = layout.rag_vector_dir or (input_dir / "rag" / "vector_database")
-            case_details_path = (
-                layout.rag_case_overview_path or (input_dir / "rag" / "case_overview.txt")
-            )
-        else:
-            embeddings_dir = input_dir / "Embeddings"
-            vector_dir = embeddings_dir / "vector_database"
-            case_details_path = _resolve_legacy_case_overview_path(embeddings_dir)
-            if case_details_path is None:
-                return (
-                    None,
-                    None,
-                    (
-                        "Case overview file not found. Expected "
-                        f"{embeddings_dir / 'case_overview' / 'case_overview.txt'} "
-                        "or case_details.txt."
-                    ),
-                )
-        if not vector_dir.exists() or not vector_dir.is_dir():
-            return None, None, f"Vector database not found at {vector_dir}."
-        if not case_details_path.exists():
-            return None, None, f"Case overview file not found at {case_details_path}."
-        provider = _normalize_rag_provider(settings.rag_provider)
-        try:
-            from langchain_chroma import Chroma  # type: ignore
-        except ImportError:
-            return None, None, "Install langchain and langchain-chroma to enable RAG questions."
-
-        try:
-            if provider == RAG_PROVIDER_ISAACUS:
-                if not settings.isaacus_api_key.strip() or not settings.isaacus_model.strip():
-                    return None, None, "Isaacus settings missing."
-                try:
-                    isaacus_module = importlib.import_module("isaacus")
-                    isaacus_client_class = getattr(isaacus_module, "Isaacus")
-                except Exception:
-                    return None, None, "Install Isaacus SDK to enable Isaacus RAG embeddings."
-                isaacus_client = isaacus_client_class(api_key=settings.isaacus_api_key)
-                embeddings: Any = IsaacusEmbeddings(
-                    client=isaacus_client,
-                    model=settings.isaacus_model,
-                )
-            else:
-                if not settings.voyage_api_key.strip() or not settings.voyage_model.strip():
-                    return None, None, "Voyage settings missing."
-                try:
-                    from langchain_voyageai import VoyageAIEmbeddings  # type: ignore
-                except ImportError:
-                    return None, None, "Install langchain-voyageai and voyageai to enable Voyage RAG embeddings."
-                embeddings = VoyageAIEmbeddings(
-                    voyage_api_key=settings.voyage_api_key,
-                    model=settings.voyage_model,
-                )
-            vectorstore = Chroma(persist_directory=str(vector_dir), embedding_function=embeddings)
-            case_details = case_details_path.read_text(encoding="utf-8", errors="ignore")
-        except Exception as exc:  # noqa: BLE001
-            return None, None, f"Failed to load RAG resources: {exc}"
-
-        return vectorstore, case_details, None
-
-    def _rag_chunk_from_doc(self, doc: Any, *, rank: int, score: float | None = None) -> dict[str, Any]:
-        metadata = getattr(doc, "metadata", {}) or {}
-        metadata_dict = metadata if isinstance(metadata, dict) else {}
-        source_value = metadata_dict.get("source") or metadata_dict.get("page")
-        source = str(source_value).strip() if source_value is not None else ""
-        text = str(getattr(doc, "page_content", None) or "")
-        chunk: dict[str, Any] = {
-            "rank": rank,
-            "score": score,
-            "source": source,
-            "metadata": self._json_safe_value(metadata_dict),
-            "content": text,
-        }
-        return chunk
-
-    def _load_rag_report_name_catalog(self, vectorstore: Any) -> tuple[dict[str, str], ...]:
-        try:
-            payload = vectorstore.get(include=["metadatas"])
-        except Exception:
-            return ()
-        metadatas = payload.get("metadatas") if isinstance(payload, dict) else None
-        if not isinstance(metadatas, list):
-            return ()
-        entries: dict[tuple[str, str, str], dict[str, str]] = {}
-        for metadata in metadatas:
-            if not isinstance(metadata, dict):
-                continue
-            report_name = str(metadata.get("report_name") or "").strip()
-            if not report_name:
-                continue
-            report_date = str(metadata.get("report_date") or "").strip()
-            report_label = str(metadata.get("report_label") or "").strip()
-            if not report_label:
-                report_label = (
-                    f"{report_date} - {report_name}" if report_date else report_name
-                )
-            report_id = str(metadata.get("report_id") or "").strip()
-            key = (report_id, report_date, report_name)
-            entries.setdefault(
-                key,
-                {
-                    "report_name": report_name,
-                    "report_date": report_date,
-                    "report_label": report_label,
-                    "report_id": report_id,
-                },
-            )
-        return tuple(
-            entries[key]
-            for key in sorted(
-                entries,
-                key=lambda item: (
-                    entries[item].get("report_label", ""),
-                    entries[item].get("report_id", ""),
-                ),
-            )
-        )
-
-    def _match_report_name_filter(self, question: str) -> dict[str, str] | None:
-        lowered = question.lower()
-        if not any(keyword in lowered for keyword in RAG_REPORT_QUERY_KEYWORDS):
-            return None
-        normalized_question = _canonicalize_report_phrase(question)
-        if not normalized_question:
-            return None
-        question_tokens = set(normalized_question.split())
-        question_date = _extract_rag_date_mention(question) or ""
-
-        matches: list[tuple[float, int, dict[str, str]]] = []
-        for report_entry in self._rag_report_name_catalog:
-            report_name = str(report_entry.get("report_name") or "").strip()
-            normalized_report_name = _canonicalize_report_phrase(report_name)
-            if not normalized_report_name:
-                continue
-            report_date = str(report_entry.get("report_date") or "").strip()
-            date_matches = bool(question_date and report_date == question_date)
-            if question_date and report_date and not date_matches:
-                continue
-            score_boost = 20.0 if date_matches else 0.0
-            if normalized_report_name in normalized_question:
-                matches.append((10.0 + score_boost, len(normalized_report_name), report_entry))
-                continue
-            alias_variants = {normalized_report_name}
-            if normalized_report_name.endswith(" report"):
-                alias_variants.add(normalized_report_name.removesuffix(" report").strip())
-            if normalized_report_name.endswith(" reports"):
-                alias_variants.add(normalized_report_name.removesuffix(" reports").strip())
-            if " status review " in f" {normalized_report_name} ":
-                alias_variants.add(normalized_report_name.replace("status review", "review").strip())
-            if "jurisdiction disposition" in normalized_report_name:
-                alias_variants.add("jurisdiction disposition report")
-            if any(alias and alias in normalized_question for alias in alias_variants):
-                matches.append((9.0 + score_boost, len(normalized_report_name), report_entry))
-                continue
-
-            meaningful_tokens = [
-                token
-                for token in normalized_report_name.split()
-                if token not in RAG_REPORT_NAME_STOPWORDS
-            ]
-            if not meaningful_tokens:
-                continue
-            overlap = sum(1 for token in meaningful_tokens if token in question_tokens)
-            if overlap == 0:
-                continue
-            if len(meaningful_tokens) == 1:
-                token = meaningful_tokens[0]
-                if token in RAG_REPORT_NAME_STRONG_TOKENS and "report" in question_tokens:
-                    matches.append((0.8 + score_boost, 1, report_entry))
-                continue
-            ratio = overlap / len(meaningful_tokens)
-            if overlap >= 2 and ratio >= 0.6:
-                matches.append((ratio + score_boost, overlap, report_entry))
-            elif overlap >= 3 and ratio >= 0.5:
-                matches.append((ratio + score_boost, overlap, report_entry))
-        if not matches:
-            if question_date:
-                date_matches = [
-                    entry
-                    for entry in self._rag_report_name_catalog
-                    if str(entry.get("report_date") or "").strip() == question_date
-                ]
-                date_match_keys = {
-                    (
-                        str(entry.get("report_id") or ""),
-                        str(entry.get("report_date") or ""),
-                        str(entry.get("report_name") or ""),
-                    )
-                    for entry in date_matches
-                }
-                if len(date_match_keys) == 1:
-                    return date_matches[0]
-            return None
-        matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        best_score, best_overlap, _best_entry = matches[0]
-        best_entries = [
-            entry
-            for score, overlap, entry in matches
-            if abs(score - best_score) < 1e-9 and overlap == best_overlap
-        ]
-        best_keys = {
-            (
-                str(entry.get("report_id") or ""),
-                str(entry.get("report_date") or ""),
-                str(entry.get("report_name") or ""),
-            )
-            for entry in best_entries
-        }
-        if len(best_keys) != 1:
-            return None
-        return best_entries[0]
-
-    def _infer_rag_metadata_filter(
-        self,
-        vectorstore: Any,
-        question: str,
-    ) -> tuple[dict[str, str] | None, dict[str, str] | None]:
-        if not self._rag_report_name_catalog and vectorstore is not None:
-            self._rag_report_name_catalog = self._load_rag_report_name_catalog(vectorstore)
-        report_entry = self._match_report_name_filter(question)
-        if report_entry:
-            report_id = str(report_entry.get("report_id") or "").strip()
-            report_name = str(report_entry.get("report_name") or "").strip()
-            report_date = str(report_entry.get("report_date") or "").strip()
-            report_label = str(report_entry.get("report_label") or "").strip()
-            metadata_filter: dict[str, str] = {"type": "report"}
-            if report_id:
-                metadata_filter["report_id"] = report_id
-            else:
-                metadata_filter["report_name"] = report_name
-                if report_date:
-                    metadata_filter["report_date"] = report_date
-            return (
-                metadata_filter,
-                {
-                    "type": "report",
-                    "report_name": report_name,
-                    "report_date": report_date,
-                    "report_label": report_label,
-                    "report_id": report_id,
-                },
-            )
-
-        hearing_date = _extract_hearing_date_filter(question)
-        if hearing_date:
-            return (
-                {"type": "hearing", "hearing_date": hearing_date},
-                {"type": "hearing", "hearing_date": hearing_date},
-            )
-        return None, None
-
-    def _build_chroma_metadata_filter(self, metadata_filter: dict[str, str]) -> dict[str, Any]:
-        normalized_items = [
-            {str(key): value}
-            for key, value in metadata_filter.items()
-            if str(key).strip() and value is not None and str(value).strip()
-        ]
-        if not normalized_items:
-            return {}
-        if len(normalized_items) == 1:
-            return normalized_items[0]
-        return {"$and": normalized_items}
-
-    def _retrieve_rag_chunks(
-        self,
-        vectorstore: Any,
-        question: str,
-        chunk_count: int,
-    ) -> tuple[list[dict[str, Any]], str, dict[str, str] | None]:
-        chunks: list[dict[str, Any]] = []
-        method = "similarity_search"
-        metadata_filter, filter_details = self._infer_rag_metadata_filter(vectorstore, question)
-        filter_query = (
-            self._build_chroma_metadata_filter(metadata_filter)
-            if metadata_filter
-            else None
-        )
-
-        if filter_query:
-            try:
-                chunks = []
-                results = vectorstore.similarity_search_with_relevance_scores(
-                    question,
-                    k=chunk_count,
-                    filter=filter_query,
-                )
-                if isinstance(results, list):
-                    for index, item in enumerate(results, start=1):
-                        if not isinstance(item, (tuple, list)) or not item:
-                            continue
-                        doc = item[0]
-                        raw_score = item[1] if len(item) > 1 else None
-                        score = None
-                        if raw_score is not None:
-                            try:
-                                score = float(raw_score)
-                            except (TypeError, ValueError):
-                                score = None
-                        chunks.append(self._rag_chunk_from_doc(doc, rank=index, score=score))
-                if chunks:
-                    return (
-                        chunks,
-                        "similarity_search_with_relevance_scores(filter-succeeded)",
-                        filter_details,
-                    )
-                method = "similarity_search_with_relevance_scores(filter-empty)->fallback"
-            except Exception as exc:
-                chunks = []
-                method = (
-                    "similarity_search_with_relevance_scores"
-                    f"(filter-error:{type(exc).__name__})->fallback"
-                )
-
-        try:
-            chunks = []
-            results = vectorstore.similarity_search_with_relevance_scores(question, k=chunk_count)
-            if isinstance(results, list):
-                for index, item in enumerate(results, start=1):
-                    if not isinstance(item, (tuple, list)) or not item:
-                        continue
-                    doc = item[0]
-                    raw_score = item[1] if len(item) > 1 else None
-                    score = None
-                    if raw_score is not None:
-                        try:
-                            score = float(raw_score)
-                        except (TypeError, ValueError):
-                            score = None
-                    chunks.append(self._rag_chunk_from_doc(doc, rank=index, score=score))
-            if chunks:
-                return chunks, "similarity_search_with_relevance_scores", filter_details
-            method = "similarity_search_with_relevance_scores(empty)-fallback"
-        except Exception:
-            chunks = []
-            method = "similarity_search(fallback-no-scores)"
-
-        chunks = []
-        docs = vectorstore.similarity_search(question, k=chunk_count)
-        if isinstance(docs, list):
-            for index, doc in enumerate(docs, start=1):
-                chunks.append(self._rag_chunk_from_doc(doc, rank=index))
-        return chunks, method, filter_details
-
-    def _format_rag_audit_text(self, record: dict[str, Any]) -> str:
-        llm_request = record.get("llm_request")
-        request_dict = llm_request if isinstance(llm_request, dict) else {}
-        body = request_dict.get("body")
-        body_dict = body if isinstance(body, dict) else {}
-        messages = body_dict.get("messages")
-        message_list = messages if isinstance(messages, list) else []
-        rendered_sections = ["LLM Request Sequence"]
-        for index, message in enumerate(message_list, start=1):
-            message_dict = message if isinstance(message, dict) else {}
-            role = str(message_dict.get("role") or "unknown").strip() or "unknown"
-            content = str(message_dict.get("content") or "")
-            rendered_sections.append(f"[{index}] {role}")
-            rendered_sections.append(content)
-        rendered_sections.extend(
-            [
-                "",
-                "Audit Metadata",
-                json.dumps(self._json_safe_value(record), indent=2, ensure_ascii=False),
-            ]
-        )
-        return "\n\n".join(rendered_sections)
-
-    def _format_rag_context(self, chunks: list[dict[str, Any]]) -> str:
-        rendered: list[str] = []
-        for chunk in chunks:
-            rank = int(chunk.get("rank") or 0)
-            source = str(chunk.get("source", "") or "").strip()
-            text = str(chunk.get("content", "") or "")
-            metadata = chunk.get("metadata")
-            metadata_dict = metadata if isinstance(metadata, dict) else {}
-            chunk_heading = f"{RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX} {rank}" if rank > 0 else RAG_PAYLOAD_CHUNK_SUBHEADING_PREFIX
-            context_lines = [chunk_heading]
-            if source:
-                context_lines.append(f"Source: {source}")
-            hearing_date = str(metadata_dict.get("hearing_date") or "").strip()
-            if hearing_date:
-                context_lines.append(f"Hearing Date: {hearing_date}")
-            report_name = str(metadata_dict.get("report_name") or "").strip()
-            if report_name:
-                context_lines.append(f"Report Name: {report_name}")
-            report_date = str(metadata_dict.get("report_date") or "").strip()
-            if report_date:
-                context_lines.append(f"Report Date: {report_date}")
-            report_label = str(metadata_dict.get("report_label") or "").strip()
-            if report_label:
-                context_lines.append(f"Report Label: {report_label}")
-            context_lines.append(text)
-            rendered.append("\n".join(context_lines))
-        return "\n\n".join(rendered)
-
-    def _compose_rag_payload(self, case_details: str, context: str, question: str) -> str:
-        normalized_case_details = case_details.strip()
-        normalized_context = context.strip() or "_No retrieved excerpts available._"
-        normalized_question = question.strip()
-        return (
-            f"{RAG_PAYLOAD_QUESTION_HEADING}\n"
-            f"{normalized_question}\n\n"
-            f"{RAG_PAYLOAD_CASE_DETAILS_HEADING}\n"
-            f"{normalized_case_details}\n\n"
-            f"{RAG_PAYLOAD_RETRIEVED_CHUNKS_HEADING}\n"
-            f"{normalized_context}"
-        )
-
     def _llm_credentials_error(self, credentials: LlmCredentials, label: str) -> str | None:
         if credentials.is_configured():
             return None
@@ -7968,8 +7103,6 @@ class Focus(Adw.Application):
         state.raw = new_raw
         self._apply_ai_output_links(state.raw, state)
         self._queue_embedded_ai_panel_height_update()
-        if target == AI_VIEW_QA:
-            self._scroll_ai_output_to_bottom(target)
         self._update_ai_status("Streaming…", spinning=True)
         return False
 
