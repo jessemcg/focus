@@ -79,9 +79,9 @@ question:
 The checked-in Agent selection uses the machine-local
 `local-llama/Qwen3.6-27B-UD-Q4_K_XL.gguf` model. Its OpenAI-compatible provider
 is registered in `~/.pi/agent/models.json`, so it does not require `/login`.
-Start **Qwen Focus Server** from the **Local AI Server Toggles** GNOME Quick
+Start **Llama.cpp Server** from the **Local AI Server Toggles** GNOME Quick
 Settings control before launching an Agent question. The server provides one
-32K slot and accepts Pi's per-request Qwen thinking control; Focus exposes
+64K slot and accepts Pi's per-request Qwen thinking control; Focus exposes
 **Off** and **Medium** for disabled and enabled thinking, respectively.
 
 PI also accepts documented provider environment variables. For example, an API
@@ -105,7 +105,7 @@ authorization because it runs PI as the same user.
 The Agent page in Settings lists the models PI reports as currently available
 and saves the selected project-wide model, reasoning effort, and Priority
 preference to `.pi/settings.json`. The local Qwen default uses an 8K output
-reserve and keeps 12K recent tokens when compacting its 32K context. The
+reserve and keeps 12K recent tokens when compacting its 64K context. The
 Priority switch is enabled only for Fireworks models listed in
 `.pi/fireworks-priority-models.json`; local models, Fast routers, and unknown
 models fail closed. New selections apply to newly launched Agent sessions; they
