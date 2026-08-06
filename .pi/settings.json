@@ -1,7 +1,12 @@
 {
-  "defaultProvider": "fireworks",
-  "defaultModel": "accounts/fireworks/routers/glm-5p2-fast",
+  "defaultProvider": "local-llama",
+  "defaultModel": "Qwen3.6-27B-UD-Q4_K_XL.gguf",
   "defaultThinkingLevel": "medium",
-  "fireworksPriorityServiceTier": true,
-  "enableSkillCommands": true
+  "fireworksPriorityServiceTier": false,
+  "enableSkillCommands": true,
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 8192,
+    "keepRecentTokens": 12000
+  }
 }

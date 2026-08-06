@@ -65,7 +65,8 @@ Focus uses only the
 Follow PI's official documentation to install it; Focus does not invoke the
 Codex CLI or provide another coding-agent backend.
 
-Authorize every provider you want to use before launching an Agent question:
+Authorize every remote provider you want to use before launching an Agent
+question:
 
 1. Start `pi` in a separate terminal.
 2. Enter `/login`.
@@ -74,6 +75,14 @@ Authorize every provider you want to use before launching an Agent question:
 5. Open Focus Settings, select **Agent**, refresh the **PI Model** row, and
    choose the **Reasoning Effort** and **Priority** preference for new Agent
    sessions.
+
+The checked-in Agent selection uses the machine-local
+`local-llama/Qwen3.6-27B-UD-Q4_K_XL.gguf` model. Its OpenAI-compatible provider
+is registered in `~/.pi/agent/models.json`, so it does not require `/login`.
+Start **Qwen Focus Server** from the **Local AI Server Toggles** GNOME Quick
+Settings control before launching an Agent question. The server provides one
+32K slot and accepts Pi's per-request Qwen thinking control; Focus exposes
+**Off** and **Medium** for disabled and enabled thinking, respectively.
 
 PI also accepts documented provider environment variables. For example, an API
 key can be exported in the shell before launching Focus:
@@ -93,14 +102,14 @@ including `~/.pi/agent/auth.json`. Do not put provider credentials in Focus's
 does not read or copy PI's credential file; the embedded terminal inherits
 authorization because it runs PI as the same user.
 
-The checked-in project default is
-`fireworks/accounts/fireworks/routers/glm-5p2-fast`. The Agent page in Settings
-lists the models PI reports as currently available and saves the selected
-project-wide model, reasoning effort, and Priority preference to
-`.pi/settings.json`. Priority starts on, but the switch is enabled only for
-Fireworks models listed in `.pi/fireworks-priority-models.json`; Fast routers
-and unknown models fail closed. New selections apply to newly launched Agent
-sessions; they do not restart an existing session.
+The Agent page in Settings lists the models PI reports as currently available
+and saves the selected project-wide model, reasoning effort, and Priority
+preference to `.pi/settings.json`. The local Qwen default uses an 8K output
+reserve and keeps 12K recent tokens when compacting its 32K context. The
+Priority switch is enabled only for Fireworks models listed in
+`.pi/fireworks-priority-models.json`; local models, Fast routers, and unknown
+models fail closed. New selections apply to newly launched Agent sessions; they
+do not restart an existing session or start its model server.
 
 For an eligible model, Focus's project PI extension adds
 `service_tier: "priority"` to each provider request. Fireworks bills those

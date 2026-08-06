@@ -33,13 +33,16 @@ class PromptHarness:
 def test_pi_project_settings_select_model_without_credentials() -> None:
     settings = json.loads((FOCUS_PI_PROJECT_DIR / "settings.json").read_text())
 
-    assert isinstance(settings.get("defaultProvider"), str)
-    assert settings["defaultProvider"].strip()
-    assert isinstance(settings.get("defaultModel"), str)
-    assert settings["defaultModel"].strip()
+    assert settings.get("defaultProvider") == "local-llama"
+    assert settings.get("defaultModel") == "Qwen3.6-27B-UD-Q4_K_XL.gguf"
     assert settings.get("defaultThinkingLevel") == "medium"
-    assert settings.get("fireworksPriorityServiceTier") is True
+    assert settings.get("fireworksPriorityServiceTier") is False
     assert settings.get("enableSkillCommands") is True
+    assert settings.get("compaction") == {
+        "enabled": True,
+        "reserveTokens": 8192,
+        "keepRecentTokens": 12000,
+    }
     assert not any("key" in name.casefold() for name in settings)
 
 
