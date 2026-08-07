@@ -602,7 +602,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
         speech_agent_source_row = Adw.EntryRow(
             title="Speech-to-text question file",
-            subtitle="Used by the submit_speech_agent_question D-Bus action.",
+        )
+        speech_agent_source_row.set_tooltip_text(
+            "Used by the submit_speech_agent_question D-Bus action."
         )
         speech_agent_source_row.set_hexpand(True)
         launch_group.add(speech_agent_source_row)
