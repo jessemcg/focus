@@ -31,12 +31,7 @@ Run helper commands with:
    series, warnings, and supported search capabilities without dumping full
    document or participant metadata. If its status is unavailable or invalid,
    explain that a citation-grounded answer cannot be produced safely.
-2. A supplied `<current-focus-citation>` means the user explicitly enabled Page
-   context for this one question. Resolve and inspect it when relevant to the
-   question. Its presence does not make it proof. When the tag is absent, treat
-   the question as case-wide and do not investigate the page merely displayed
-   in Focus.
-3. Decompose the question into distinctive names, dates, phrases, events,
+2. Decompose the question into distinctive names, dates, phrases, events,
    document types, aliases, and reasonable OCR/synonym variants. Search several
    variants in one read-only scan, initially returning at most eight matches:
 
@@ -50,41 +45,39 @@ Run helper commands with:
 
    Use optional `--document`, `--hearing-date`, `--witness`, and
    `--counsel-role` filters only when compact context or full-map inspection
-   shows that the map supports them. `--current-citation` is only a proximity-
-   ranking hint, not a filtering scope; use it only when explicit Page context
-   was supplied. The command scans source pages on demand and creates no index,
-   cache, or database.
-4. Treat ranked snippets and participant metadata only as navigation leads.
+   shows that the map supports them. The command scans source pages on demand
+   and creates no index, cache, or database.
+3. Treat ranked snippets and participant metadata only as navigation leads.
    For each relevant search match, pass its safe `resolved_text_path` directly
    to PI's `read` tool and inspect the full page plus necessary adjacent context.
    A search match's `citation_label` and `citation_key` are the source-map
    resolution for that exact returned page, so no redundant `lookup` is needed
    after reading it. A missing/false `text_exists` or blank
    `resolved_text_path` is unresolved and must not be guessed.
-5. Expand the result cap, aliases, stems, dates, or document scope when results
+4. Expand the result cap, aliases, stems, dates, or document scope when results
    are truncated, ambiguous, conflicting, or insufficient. Use PI's `grep`
    tool, which is backed by ripgrep, for unusual regex/OCR patterns. Before a
    negative finding, search aliases, stems, date variants, and the full relevant
    document or examination range.
-6. Run full `map --json` only when needed to inspect document ranges, discover
+5. Run full `map --json` only when needed to inspect document ranges, discover
    participant aliases, verify witness/examination or speaker attribution,
    investigate map warnings, plan scoped follow-up research, establish a
    procedural chronology, resolve conflicting results, or support a negative
    finding. Current source-map v2 bundles may provide hearing-scoped counsel,
    non-counsel participant, witness, and examination metadata. Older maps remain
    searchable but may not provide verified participant context.
-7. Verify who is speaking from actual appearances, participant evidence, and
+6. Verify who is speaking from actual appearances, participant evidence, and
    examination evidence. Keep organizations distinct from attorney aliases,
    and keep an unsworn participant distinct from a witness. A question is the
    examiner's speech and an answer is the mapped witness's testimony only within
    a verified examination. Q/A formatting alone does not establish testimony.
-8. Use `lookup --file "text_pages/0001.txt" --json` for pages discovered through
+7. Use `lookup --file "text_pages/0001.txt" --json` for pages discovered through
    `grep`, `find`, adjacent-page reading, or other direct file access. Use
-   `lookup --citation "CT 6" --json` to follow a record citation, including
-   explicit Page context. Pass lookup's `resolved_text_path` directly to `read`.
+   `lookup --citation "CT 6" --json` to follow a record citation identified in
+   the user's question. Pass lookup's `resolved_text_path` directly to `read`.
    Lookup remains required whenever a page did not come from a mapped search
    result or its mapping is unresolved.
-9. Inspect a paired page image only when visual appearance could change the
+8. Inspect a paired page image only when visual appearance could change the
    answer, such as checkboxes, signatures, initials, handwriting, stamps,
    crossed-out text, tables, field alignment, form identity, or ambiguous OCR.
    Treat `page_type` as a hint rather than a reason to inspect every image. When
@@ -94,7 +87,7 @@ Run helper commands with:
    is unclear, do not claim visual verification or guess. If OCR and the image
    conflict, treat the image as controlling only for visual properties and
    describe the discrepancy without overstating an unclear scan.
-10. Use `document --id "document-id" --json` when document boundaries, titles,
+9. Use `document --id "document-id" --json` when document boundaries, titles,
     dates, or citation ranges matter. Compare all relevant passages before
     answering. The overview and summaries are nonauthoritative leads and must be
     checked against source pages.

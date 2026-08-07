@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
-import focus.app as focus_app
 from focus.app import Focus
 from focus.core import (
     FOCUS_PI_PRIORITY_EXTENSION_FILE,
@@ -17,87 +15,6 @@ from focus.core import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-class PromptHarness:
-    def __init__(self, citation_label: str | None) -> None:
-        self.label = (
-            SimpleNamespace(citation_label=citation_label)
-            if citation_label is not None
-            else None
-        )
-
-    def _current_transcript_page_label(self):
-        return self.label
-
-
-class FakeToggleButton:
-    def __init__(self, active: bool = False) -> None:
-        self.active = active
-        self.sensitive = True
-        self.tooltip = ""
-        self.description = ""
-
-    def get_active(self) -> bool:
-        return self.active
-
-    def set_active(self, active: bool) -> None:
-        self.active = active
-
-    def set_sensitive(self, sensitive: bool) -> None:
-        self.sensitive = sensitive
-
-    def set_tooltip_text(self, tooltip: str) -> None:
-        self.tooltip = tooltip
-
-    def update_property(self, _properties, values) -> None:
-        self.description = values[0]
-
-
-class LaunchHarness(PromptHarness):
-    def __init__(self, *, scheduled: bool) -> None:
-        super().__init__("CT 67")
-        self._agent_terminal = object()
-        self._agent_question_entry = SimpleNamespace(
-            get_text=lambda: "What happened on this page?"
-        )
-        self._agent_page_context_button = FakeToggleButton(active=True)
-        self._agent_terminal_active = False
-        self._view_state = SimpleNamespace(agent_question_text="")
-        self.scheduled = scheduled
-        self.prompt = ""
-
-    def _stop_agent_terminal(self) -> None:
-        self._agent_terminal_active = False
-
-    def _stop_agent_answer_polling(self) -> None:
-        pass
-
-    def _clear_agent_answer(self) -> None:
-        pass
-
-    def _set_agent_subview(self, _name: str) -> None:
-        pass
-
-    def _current_view_state(self):
-        return self._view_state
-
-    def _compose_agent_prompt(self, question: str, *, include_current_page: bool = False):
-        return Focus._compose_agent_prompt(
-            self,
-            question,
-            include_current_page=include_current_page,
-        )
-
-    def _write_agent_prompt_file(self, prompt: str) -> Path:
-        self.prompt = prompt
-        return Path("/tmp/focus-agent-test-prompt.txt")
-
-    def _start_agent_terminal(self, _prompt_path: Path) -> None:
-        self._agent_terminal_active = self.scheduled
-
-    def _ai_transient_toast(self, _message: str) -> None:
-        pass
 
 
 def test_pi_project_settings_select_model_without_credentials() -> None:
@@ -127,7 +44,8 @@ def test_pi_system_prompt_has_focus_knowledge_work_contract() -> None:
     assert "private, disposable runtime workspace" in prompt
     assert "compact `context --json` response" in prompt
     assert "nonauthoritative orientation aid" in prompt
-    assert "question is case-wide" in prompt
+    assert "Questions are case-wide" in prompt
+    assert "current-focus-citation" not in prompt
     assert "safe `resolved_text_path`" in prompt
 
 
@@ -160,7 +78,8 @@ def test_pi_record_skill_has_expected_contract() -> None:
     assert 'lookup --file "text_pages/0001.txt" --json' in skill
     assert 'search \\' in skill
     assert '--witness' in skill
-    assert "not a filtering scope" in skill
+    assert "--current-citation" not in skill
+    assert "current-focus-citation" not in skill
     assert "no redundant `lookup` is needed" in skill
     assert "safe `resolved_text_path` directly" in skill
     assert "cache, or database" in skill
@@ -175,99 +94,13 @@ def test_pi_record_skill_has_expected_contract() -> None:
     assert "(RT 6, 34; CT 140, 190.)" in skill
 
 
-def test_agent_prompt_omits_resolved_current_page_by_default() -> None:
-    harness = PromptHarness("2RT 44")
-
-    prompt = Focus._compose_agent_prompt(harness, "  Who made the finding?  ")
+def test_agent_prompt_contains_only_the_users_question() -> None:
+    prompt = Focus._compose_agent_prompt("  Who made the finding at CT 67?  ")
 
     assert prompt == (
         f"/skill:{FOCUS_PI_SKILL_NAME} <question>\n"
-        "Who made the finding?\n"
+        "Who made the finding at CT 67?\n"
         "</question>"
     )
     assert "current-focus-citation" not in prompt
     assert str(PROJECT_ROOT) not in prompt
-
-
-def test_agent_prompt_includes_explicit_current_page() -> None:
-    harness = PromptHarness("2RT 44")
-
-    prompt = Focus._compose_agent_prompt(
-        harness,
-        "Who made the finding?",
-        include_current_page=True,
-    )
-
-    assert prompt.endswith(
-        "<current-focus-citation>\n"
-        "2RT 44\n"
-        "</current-focus-citation>"
-    )
-
-
-def test_agent_prompt_omits_unresolved_explicit_current_page() -> None:
-    harness = PromptHarness(None)
-
-    prompt = Focus._compose_agent_prompt(
-        harness,
-        "What happened?",
-        include_current_page=True,
-    )
-
-    assert prompt == (
-        f"/skill:{FOCUS_PI_SKILL_NAME} <question>\n"
-        "What happened?\n"
-        "</question>"
-    )
-    assert "file page" not in prompt
-
-
-def test_agent_page_context_disables_and_resets_when_page_becomes_unresolved() -> None:
-    harness = PromptHarness("CT 67")
-    harness._agent_page_context_button = FakeToggleButton(active=True)
-
-    Focus._sync_agent_page_context_button(harness)
-
-    assert harness._agent_page_context_button.sensitive is True
-    assert "CT 67" in harness._agent_page_context_button.tooltip
-    assert "CT 67" in harness._agent_page_context_button.description
-
-    harness.label = None
-    Focus._sync_agent_page_context_button(harness)
-
-    assert harness._agent_page_context_button.active is False
-    assert harness._agent_page_context_button.sensitive is False
-
-
-def test_agent_page_context_tracks_page_at_submission_time() -> None:
-    harness = PromptHarness("CT 67")
-    harness._agent_page_context_button = FakeToggleButton(active=True)
-    harness.label = SimpleNamespace(citation_label="RT 2737")
-
-    Focus._sync_agent_page_context_button(harness)
-    prompt = Focus._compose_agent_prompt(
-        harness,
-        "Who is speaking?",
-        include_current_page=harness._agent_page_context_button.get_active(),
-    )
-
-    assert harness._agent_page_context_button.active is True
-    assert "RT 2737" in harness._agent_page_context_button.tooltip
-    assert "<current-focus-citation>\nRT 2737" in prompt
-    assert "CT 67" not in prompt
-
-
-def test_agent_page_context_is_consumed_only_after_launch_is_scheduled(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(focus_app, "Vte", object())
-    scheduled = LaunchHarness(scheduled=True)
-    failed_preflight = LaunchHarness(scheduled=False)
-
-    Focus._launch_agent_question(scheduled)
-    Focus._launch_agent_question(failed_preflight)
-
-    assert "<current-focus-citation>\nCT 67" in scheduled.prompt
-    assert scheduled._agent_page_context_button.active is False
-    assert "<current-focus-citation>\nCT 67" in failed_preflight.prompt
-    assert failed_preflight._agent_page_context_button.active is True

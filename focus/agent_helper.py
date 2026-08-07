@@ -518,8 +518,6 @@ def command_search(args: argparse.Namespace) -> None:
     source_map = _load_source_map(root)
     queries = [value for value in args.query if _normalize_search_text(value)]
     candidates = _candidate_pages(source_map, args)
-    near_pages = _lookup_pages_for_citation(source_map, args.current_citation) if args.current_citation else []
-    near_number = int(near_pages[0].get("file_page") or 0) if near_pages else 0
     results: list[dict[str, Any]] = []
     for page in candidates:
         text_path = str(page.get("text_path") or "").strip()
@@ -551,8 +549,6 @@ def command_search(args: argparse.Namespace) -> None:
                 best_score, best_reason = score, reason
         if not best_score:
             continue
-        if near_number:
-            best_score += max(0.0, 12.0 - abs(page_number - near_number) * 0.5)
         first_terms = [_normalize_search_text(value).split()[0] for value in matched if _normalize_search_text(value).split()]
         compact = " ".join(raw_text.split())
         position = -1
@@ -585,9 +581,7 @@ def command_search(args: argparse.Namespace) -> None:
         "queries": queries, "scopes": {
             "document": args.document or [], "hearing_date": args.hearing_date or "",
             "witness": args.witness or "", "counsel_role": args.counsel_role or "",
-            "current_citation": args.current_citation or "",
         },
-        "ranking_hints": {"current_citation": args.current_citation or ""},
         "candidate_pages": len(candidates), "total_matches": total,
         "truncated": total > len(limited), "matches": limited,
     })
@@ -664,7 +658,6 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--hearing-date")
     search_parser.add_argument("--witness")
     search_parser.add_argument("--counsel-role")
-    search_parser.add_argument("--current-citation")
     search_parser.add_argument("--max-results", type=int, default=20, choices=range(1, 101))
     search_parser.add_argument("--json", action="store_true")
     search_parser.set_defaults(func=command_search)

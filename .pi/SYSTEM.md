@@ -15,10 +15,9 @@ question, map warnings, attribution, scoped follow-up research, or a negative
 finding requires it. Use the citation-aware helper's database-free on-demand
 search before reading actual mapped text pages.
 
-A `<current-focus-citation>` is present only when the user deliberately enabled
-Page context for this question. Use it as relevant page context, but verify it
-from the mapped source page. When the tag is absent, the question is case-wide;
-do not inspect the page that merely happens to be displayed in Focus.
+Questions are case-wide unless the user identifies a record citation, document,
+or other scope in the question. Do not infer context from the page that merely
+happens to be displayed in Focus.
 
 Treat the overview, summaries, search snippets, and participant metadata as
 leads that require source-page verification. Never use the overview to establish

@@ -9,7 +9,7 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 - Official transcript-page/citation lookup from RecordPrep metadata.
 - Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
 - Hearing, report, and minute-order summary views, with legacy organized-summary compatibility.
-- Agent Q&A in an embedded VTE terminal with a mirrored final answer and one-question Page context opt-in.
+- Agent Q&A in an embedded VTE terminal with a mirrored final answer.
 - Compact nonauthoritative case orientation and source-map capability checks before targeted research over the original `text_pages`.
 - Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, safe source paths, and record citations.
 - Hearing-scoped counsel, non-counsel participant, witness, and examination context when the bundle has source-map schema v2.
@@ -107,7 +107,7 @@ Obsolete embedding/vector-question credentials and settings are removed when con
 
 For every question, Focus creates a private disposable workspace, stages `.pi/SYSTEM.md`, the explicit `focus-answer-record-questions` Agent Skill, PI settings, and the Priority extension, and launches PI with read-oriented tools. The case bundle remains outside the workspace and is treated as read-only evidence.
 
-Agent questions are case-wide by default. Enable the flat **Page** toggle beside the question field to supply the currently displayed record citation to one page-specific question; the toggle resets after launch.
+Agent questions are case-wide by default. To direct the Agent to a particular page, identify its record citation in the question (for example, `CT 177`).
 
 The normal Agent workflow is:
 
@@ -118,7 +118,7 @@ The normal Agent workflow is:
 5. Inspect full `map --json` output only when document ranges, participant/witness/examination attribution, warnings, chronology, scoped follow-up work, or a negative finding requires it.
 6. Use `lookup` for pages reached by direct citation, grep/find, or adjacent-page reading rather than redundantly looking up mapped search matches.
 
-`--current-citation` is a proximity-ranking hint, not a filter, and is used only when Page context was deliberately enabled. The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source pages and use images only for genuinely visual ambiguities. The helper creates no index, cache, or database.
+The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source pages and use images only for genuinely visual ambiguities. The helper creates no index, cache, or database.
 
 Run the helper directly:
 

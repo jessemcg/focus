@@ -568,13 +568,11 @@ def test_search_scopes_by_witness_counsel_and_hearing_date(tmp_path) -> None:
         "mothers_counsel",
         "--hearing-date",
         "January 2, 2025",
-        "--current-citation",
-        "CT 1",
         "--json",
     )
 
     assert payload["candidate_pages"] == 1
-    assert payload["ranking_hints"]["current_citation"] == "CT 1"
+    assert "ranking_hints" not in payload
     assert payload["matches"][0]["hearing_id"] == "hearing:0001"
     assert payload["matches"][0]["score"] > 65
 
