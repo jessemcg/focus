@@ -185,14 +185,27 @@ def _run_helper(root: Path, *args: str) -> dict:
     return json.loads(completed.stdout)
 
 
-def _set_page_image_path(root: Path, file_name: str, image_path: str) -> None:
+def _set_page_path(
+    root: Path,
+    file_name: str,
+    key: str,
+    value: str,
+) -> None:
     source_map_path = root / "artifacts" / "source_map.json"
     source_map = json.loads(source_map_path.read_text(encoding="utf-8"))
     page = next(
         item for item in source_map["pages"] if item["file_name"] == file_name
     )
-    page["image_path"] = image_path
+    page[key] = value
     source_map_path.write_text(json.dumps(source_map), encoding="utf-8")
+
+
+def _set_page_image_path(root: Path, file_name: str, image_path: str) -> None:
+    _set_page_path(root, file_name, "image_path", image_path)
+
+
+def _set_page_text_path(root: Path, file_name: str, text_path: str) -> None:
+    _set_page_path(root, file_name, "text_path", text_path)
 
 
 def test_overview_returns_nonauthoritative_orientation_before_map(tmp_path) -> None:
@@ -249,6 +262,92 @@ def test_map_outputs_case_summary(tmp_path) -> None:
     assert payload["citation_series"][0]["citation_prefix"] == "CT"
 
 
+def test_context_combines_overview_with_compact_schema_v2_map_status(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(root, "context", "--json")
+
+    assert payload["overview"]["available"] is True
+    source_map = payload["source_map"]
+    assert source_map["status"] == "valid"
+    assert source_map["schema_version"] == 2
+    assert source_map["participant_index_schema_version"] == 2
+    assert source_map["counts"]["pages"] == 2
+    assert source_map["capabilities"] == {
+        "document_scope": True,
+        "hearing_date_scope": True,
+        "participant_context": True,
+        "witness_scope": True,
+        "counsel_role_scope": True,
+    }
+    assert "documents" not in source_map
+    assert "participant_index" not in source_map
+
+
+def test_context_reports_unavailable_and_invalid_overviews_independently(
+    tmp_path,
+) -> None:
+    root = _write_case_bundle(tmp_path)
+    overview_path = root / "artifacts/case_overview.md"
+    overview_path.unlink()
+
+    unavailable = _run_helper(root, "context", "--json")
+
+    assert unavailable["overview"]["status"] == "unavailable"
+    assert unavailable["source_map"]["status"] == "valid"
+
+    overview_path.write_text(
+        "# Case Overview\n\nUnversioned text.",
+        encoding="utf-8",
+    )
+    invalid = _run_helper(root, "context", "--json")
+
+    assert invalid["overview"]["status"] == "invalid"
+    assert invalid["source_map"]["status"] == "valid"
+
+
+def test_context_reports_missing_and_invalid_source_maps(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    source_map_path = root / "artifacts/source_map.json"
+    source_map_path.unlink()
+
+    missing = _run_helper(root, "context", "--json")
+
+    assert missing["source_map"]["status"] == "unavailable"
+    assert missing["source_map"]["available"] is False
+
+    source_map_path.write_text("{not valid json", encoding="utf-8")
+    invalid_json = _run_helper(root, "context", "--json")
+
+    assert invalid_json["source_map"]["status"] == "invalid"
+    assert invalid_json["source_map"]["available"] is False
+
+    source_map_path.write_text(json.dumps({"documents": {}}), encoding="utf-8")
+    malformed = _run_helper(root, "context", "--json")
+
+    assert malformed["source_map"]["status"] == "invalid"
+    assert malformed["source_map"]["available"] is False
+
+
+def test_context_reports_schema_v1_capabilities_and_warnings(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    source_map_path = root / "artifacts/source_map.json"
+    source_map = json.loads(source_map_path.read_text(encoding="utf-8"))
+    source_map["schema_version"] = 1
+    source_map.pop("participant_index")
+    source_map["warnings"] = ["Participant context unavailable."]
+    source_map_path.write_text(json.dumps(source_map), encoding="utf-8")
+
+    payload = _run_helper(root, "context", "--json")["source_map"]
+
+    assert payload["schema_version"] == 1
+    assert payload["participant_index_schema_version"] is None
+    assert payload["capabilities"]["document_scope"] is True
+    assert payload["capabilities"]["participant_context"] is False
+    assert payload["capabilities"]["witness_scope"] is False
+    assert payload["warnings"] == ["Participant context unavailable."]
+
+
 def test_lookup_resolves_citation_label(tmp_path) -> None:
     root = _write_case_bundle(tmp_path)
 
@@ -256,6 +355,10 @@ def test_lookup_resolves_citation_label(tmp_path) -> None:
 
     assert payload["matches"][0]["file_name"] == "0001.txt"
     assert payload["matches"][0]["citation_label"] == "CT 1"
+    assert payload["matches"][0]["resolved_text_path"] == str(
+        root / "text_pages" / "0001.txt"
+    )
+    assert payload["matches"][0]["text_exists"] is True
     assert payload["matches"][0]["image_path"] == "image_pages/0001.png"
     assert payload["matches"][0]["resolved_image_path"] == str(
         root / "image_pages" / "0001.png"
@@ -334,6 +437,71 @@ def test_lookup_unknown_file_returns_no_matches(tmp_path) -> None:
     assert payload["matches"] == []
 
 
+def test_lookup_reports_safe_missing_text_path(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    _set_page_text_path(root, "0001.txt", "text_pages/missing.txt")
+
+    payload = _run_helper(root, "lookup", "--citation", "CT 1", "--json")
+    search = _run_helper(root, "search", "--query", "mother", "--json")
+
+    assert payload["matches"][0]["resolved_text_path"] == str(
+        root / "text_pages/missing.txt"
+    )
+    assert payload["matches"][0]["text_exists"] is False
+    assert search["total_matches"] == 0
+
+
+def test_lookup_accepts_absolute_text_path_inside_case_root(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    text_path = root / "text_pages/0001.txt"
+    _set_page_text_path(root, "0001.txt", str(text_path))
+
+    payload = _run_helper(root, "lookup", "--citation", "CT 1", "--json")
+
+    assert payload["matches"][0]["resolved_text_path"] == str(text_path)
+    assert payload["matches"][0]["text_exists"] is True
+
+
+def test_lookup_and_search_reject_text_path_outside_case_root(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    outside_text = tmp_path / "outside.txt"
+    outside_text.write_text("maternal grandmother placement", encoding="utf-8")
+    _set_page_text_path(root, "0001.txt", "../outside.txt")
+
+    lookup = _run_helper(root, "lookup", "--citation", "CT 1", "--json")
+    search = _run_helper(
+        root,
+        "search",
+        "--query",
+        "maternal grandmother placement",
+        "--json",
+    )
+
+    assert lookup["matches"][0]["resolved_text_path"] == ""
+    assert lookup["matches"][0]["text_exists"] is False
+    assert search["total_matches"] == 0
+
+    _set_page_text_path(root, "0001.txt", str(outside_text))
+    absolute_lookup = _run_helper(
+        root,
+        "lookup",
+        "--citation",
+        "CT 1",
+        "--json",
+    )
+    absolute_search = _run_helper(
+        root,
+        "search",
+        "--query",
+        "maternal grandmother placement",
+        "--json",
+    )
+
+    assert absolute_lookup["matches"][0]["resolved_text_path"] == ""
+    assert absolute_lookup["matches"][0]["text_exists"] is False
+    assert absolute_search["total_matches"] == 0
+
+
 def test_document_resolves_document_id(tmp_path) -> None:
     root = _write_case_bundle(tmp_path)
 
@@ -363,6 +531,8 @@ def test_search_normalizes_ocr_hyphenation_and_returns_citation_context(tmp_path
     match = payload["matches"][0]
     assert match["citation_label"] == "CT 1"
     assert match["text_path"] == "text_pages/0001.txt"
+    assert match["resolved_text_path"] == str(root / "text_pages/0001.txt")
+    assert match["text_exists"] is True
     assert match["participants"][0]["name"] == "Mary Jones"
     assert match["witnesses"][0]["name"] == "Mother"
     assert match["reason"] == "exact-phrase"
@@ -404,6 +574,7 @@ def test_search_scopes_by_witness_counsel_and_hearing_date(tmp_path) -> None:
     )
 
     assert payload["candidate_pages"] == 1
+    assert payload["ranking_hints"]["current_citation"] == "CT 1"
     assert payload["matches"][0]["hearing_id"] == "hearing:0001"
     assert payload["matches"][0]["score"] > 65
 

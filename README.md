@@ -9,9 +9,9 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 - Official transcript-page/citation lookup from RecordPrep metadata.
 - Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
 - Hearing, report, and minute-order summary views, with legacy organized-summary compatibility.
-- Agent Q&A in an embedded VTE terminal with a mirrored final answer.
-- Concise nonauthoritative case orientation before source-map-aware Agent research over the original `text_pages`.
-- Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, and record citations.
+- Agent Q&A in an embedded VTE terminal with a mirrored final answer and one-question Page context opt-in.
+- Compact nonauthoritative case orientation and source-map capability checks before targeted research over the original `text_pages`.
+- Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, safe source paths, and record citations.
 - Hearing-scoped counsel, non-counsel participant, witness, and examination context when the bundle has source-map schema v2.
 - D-Bus actions for desktop automation and speech-submitted Agent questions.
 
@@ -107,32 +107,34 @@ Obsolete embedding/vector-question credentials and settings are removed when con
 
 For every question, Focus creates a private disposable workspace, stages `.pi/SYSTEM.md`, the explicit `focus-answer-record-questions` Agent Skill, PI settings, and the Priority extension, and launches PI with read-oriented tools. The case bundle remains outside the workspace and is treated as read-only evidence.
 
-The Agent workflow is:
+Agent questions are case-wide by default. Enable the flat **Page** toggle beside the question field to supply the currently displayed record citation to one page-specific question; the toggle resets after launch.
 
-1. Read the optional versioned case overview with `focus/agent_helper.py overview --json` for concise orientation.
-2. Read `source_map.json` with `focus/agent_helper.py map --json`.
-3. Inspect document ranges and hearing-scoped counsel, non-counsel participant, witness, and examination metadata.
-4. Run one on-demand helper scan with several query variants and optional date/document/witness/counsel/current-citation scopes.
-5. Read every relevant source page and adjacent context.
-6. Resolve and cite official labels such as `2RT 44` or `CT 140`.
-7. Broaden aliases and terms before reporting that a fact could not be located.
+The normal Agent workflow is:
 
-The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source pages and use images only for genuinely visual ambiguities. The helper creates no index, cache, or database.
+1. Run `focus/agent_helper.py context --json` once to read the optional versioned case overview and compact source-map status/capabilities.
+2. Run one on-demand helper scan with several query variants, initially capped at eight results.
+3. Read relevant full source pages directly through each match's safe `resolved_text_path`; the match already maps that exact page to its official citation.
+4. Expand terms, aliases, or the result cap when results are incomplete, ambiguous, or conflicting.
+5. Inspect full `map --json` output only when document ranges, participant/witness/examination attribution, warnings, chronology, scoped follow-up work, or a negative finding requires it.
+6. Use `lookup` for pages reached by direct citation, grep/find, or adjacent-page reading rather than redundantly looking up mapped search matches.
+
+`--current-citation` is a proximity-ranking hint, not a filter, and is used only when Page context was deliberately enabled. The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source pages and use images only for genuinely visual ambiguities. The helper creates no index, cache, or database.
 
 Run the helper directly:
 
 ```bash
 uv run python -m focus.agent_helper \
-  --case-root /path/to/case_bundle overview --json
-
-uv run python -m focus.agent_helper \
-  --case-root /path/to/case_bundle map --json
+  --case-root /path/to/case_bundle context --json
 
 uv run python -m focus.agent_helper \
   --case-root /path/to/case_bundle search \
   --query "maternal grandmother placement" \
   --query "placed with maternal grandmother" \
-  --hearing-date "January 2, 2025" --json
+  --max-results 8 --json
+
+# Optional detailed metadata for complex or scoped research:
+uv run python -m focus.agent_helper \
+  --case-root /path/to/case_bundle map --json
 ```
 
 ## Summaries
@@ -174,7 +176,7 @@ gdbus call --session \
 
 - `focus/app.py`: GTK application, transcript browsing, summaries, and Agent orchestration.
 - `focus/core.py`: shared config, record layout, citation, and rendering helpers.
-- `focus/agent_helper.py`: read-only map/lookup/document/search CLI for Agent sessions.
+- `focus/agent_helper.py`: read-only context/map/lookup/document/search CLI for Agent sessions.
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
 - `scripts/focus-agent-vte.sh`: disposable PI workspace launcher.

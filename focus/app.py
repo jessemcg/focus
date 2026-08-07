@@ -211,6 +211,7 @@ class Focus(Adw.Application):
         self._ai_in_flight = False
         self._ai_request_generation = 0
         self._agent_question_entry: Gtk.Entry | None = None
+        self._agent_page_context_button: Gtk.ToggleButton | None = None
         self._agent_subview_host: Gtk.Box | None = None
         self._agent_subview_name = AGENT_SUBVIEW_SESSION
         self._agent_answer_scroller: Gtk.ScrolledWindow | None = None
@@ -818,6 +819,16 @@ class Focus(Adw.Application):
         self._agent_question_entry.set_placeholder_text("Agent question")
         self._agent_question_entry.connect("activate", self._on_agent_question_activate)
         agent_header_controls.append(self._agent_question_entry)
+
+        self._agent_page_context_button = Gtk.ToggleButton(label="Page")
+        self._agent_page_context_button.add_css_class("flat")
+        self._agent_page_context_button.add_css_class("no-bold")
+        self._agent_page_context_button.set_valign(Gtk.Align.CENTER)
+        self._agent_page_context_button.set_sensitive(False)
+        self._agent_page_context_button.set_tooltip_text(
+            "No mapped current page is available."
+        )
+        agent_header_controls.append(self._agent_page_context_button)
 
         agent_subview_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         agent_subview_strip.add_css_class("focus-pill-group")
@@ -4690,6 +4701,7 @@ class Focus(Adw.Application):
         enabled = bool(self.pages)
         if self._current_page_citation_button:
             self._current_page_citation_button.set_sensitive(enabled)
+        self._sync_agent_page_context_button()
         if not self._page_citation_range_button:
             return
         self._page_citation_range_button.set_sensitive(enabled)
@@ -6347,19 +6359,51 @@ class Focus(Adw.Application):
             self._agent_answer_poll_id = None
         return keep_polling
 
-    def _compose_agent_prompt(self, question: str) -> str:
+    def _sync_agent_page_context_button(self) -> None:
+        button = self._agent_page_context_button
+        if button is None:
+            return
         current_label = self._current_transcript_page_label()
+        citation = (
+            current_label.citation_label
+            if current_label and current_label.citation_label
+            else ""
+        )
+        if not citation and button.get_active():
+            button.set_active(False)
+        button.set_sensitive(bool(citation))
+        if citation:
+            description = (
+                f"Include current page {citation} as context for the next "
+                "Agent question."
+            )
+        else:
+            description = "No mapped current page is available."
+        button.set_tooltip_text(description)
+        button.update_property(
+            [Gtk.AccessibleProperty.DESCRIPTION],
+            [description],
+        )
+
+    def _compose_agent_prompt(
+        self,
+        question: str,
+        *,
+        include_current_page: bool = False,
+    ) -> str:
         prompt = (
             f"/skill:{FOCUS_PI_SKILL_NAME} <question>\n"
             f"{question.strip()}\n"
             "</question>"
         )
-        if current_label and current_label.citation_label:
-            prompt += (
-                "\n\n<current-focus-citation>\n"
-                f"{current_label.citation_label}\n"
-                "</current-focus-citation>"
-            )
+        if include_current_page:
+            current_label = self._current_transcript_page_label()
+            if current_label and current_label.citation_label:
+                prompt += (
+                    "\n\n<current-focus-citation>\n"
+                    f"{current_label.citation_label}\n"
+                    "</current-focus-citation>"
+                )
         return prompt
 
     def _write_agent_prompt_file(self, prompt: str) -> Path:
@@ -6390,8 +6434,19 @@ class Focus(Adw.Application):
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._ai_settings = load_ai_settings()
         self._current_view_state().agent_question_text = question
-        prompt_path = self._write_agent_prompt_file(self._compose_agent_prompt(question))
+        include_current_page = bool(
+            self._agent_page_context_button
+            and self._agent_page_context_button.get_active()
+        )
+        prompt_path = self._write_agent_prompt_file(
+            self._compose_agent_prompt(
+                question,
+                include_current_page=include_current_page,
+            )
+        )
         self._start_agent_terminal(prompt_path)
+        if self._agent_terminal_active and self._agent_page_context_button:
+            self._agent_page_context_button.set_active(False)
 
     def _start_agent_terminal(self, prompt_path: Path) -> None:
         terminal = self._agent_terminal

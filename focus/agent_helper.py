@@ -35,7 +35,7 @@ def _case_overview_path(root: Path) -> Path | None:
     manifest_path = root / "manifest.json"
     try:
         manifest = _read_json(manifest_path)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         manifest = {}
     if isinstance(manifest, dict):
         files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
@@ -56,20 +56,24 @@ def _case_overview_path(root: Path) -> Path | None:
     return None
 
 
-def command_overview(args: argparse.Namespace) -> None:
-    root = args.case_root.resolve(strict=False)
+def _overview_payload(root: Path) -> dict[str, Any]:
     path = _case_overview_path(root)
     if path is None:
-        _emit_json(
-            {
-                "available": False,
-                "status": "unavailable",
-                "schema_version": None,
-                "content": "",
-            }
-        )
-        return
-    text = path.read_text(encoding="utf-8")
+        return {
+            "available": False,
+            "status": "unavailable",
+            "schema_version": None,
+            "content": "",
+        }
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {
+            "available": False,
+            "status": "invalid",
+            "schema_version": None,
+            "content": "",
+        }
     required = (
         "artifact: recordprep-case-overview",
         "schema_version: 1",
@@ -78,21 +82,117 @@ def command_overview(args: argparse.Namespace) -> None:
         "> Orientation aid only.",
     )
     if any(fragment not in text for fragment in required):
-        _emit_json(
-            {
-                "available": False,
-                "status": "invalid",
-                "schema_version": None,
-                "content": "",
-            }
-        )
-        return
+        return {
+            "available": False,
+            "status": "invalid",
+            "schema_version": None,
+            "content": "",
+        }
+    return {
+        "available": True,
+        "status": "nonauthoritative-orientation",
+        "schema_version": 1,
+        "content": text,
+    }
+
+
+def command_overview(args: argparse.Namespace) -> None:
+    root = args.case_root.resolve(strict=False)
+    _emit_json(_overview_payload(root))
+
+
+def _empty_source_map_context(status: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "status": status,
+        "schema_version": None,
+        "participant_index_schema_version": None,
+        "case_name": "",
+        "counts": {},
+        "citation_series": [],
+        "warnings": [],
+        "capabilities": {},
+    }
+
+
+def _source_map_context_payload(root: Path) -> dict[str, Any]:
+    path = root / "artifacts" / "source_map.json"
+    try:
+        source_map = _read_json(path)
+    except FileNotFoundError:
+        return _empty_source_map_context("unavailable")
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return _empty_source_map_context("invalid")
+    if not isinstance(source_map, dict):
+        return _empty_source_map_context("invalid")
+
+    raw_pages = source_map.get("pages")
+    raw_documents = source_map.get("documents", [])
+    raw_participant_index = source_map.get("participant_index")
+    if raw_participant_index is None:
+        raw_participant_index = {}
+    raw_counts = source_map.get("counts", {})
+    raw_citation_series = source_map.get("citation_series", [])
+    raw_warnings = source_map.get("warnings", [])
+    if (
+        not isinstance(raw_pages, list)
+        or not isinstance(raw_documents, list)
+        or not isinstance(raw_participant_index, dict)
+        or not isinstance(raw_counts, dict)
+        or not isinstance(raw_citation_series, list)
+        or not isinstance(raw_warnings, list)
+    ):
+        return _empty_source_map_context("invalid")
+    raw_hearings = raw_participant_index.get("hearings", [])
+    if not isinstance(raw_hearings, list):
+        return _empty_source_map_context("invalid")
+
+    documents = [item for item in raw_documents if isinstance(item, dict)]
+    participant_index = raw_participant_index
+    hearings = [item for item in raw_hearings if isinstance(item, dict)]
+    capabilities = {
+        "document_scope": bool(documents),
+        "hearing_date_scope": any(
+            document.get("type") == "hearing" and document.get("date")
+            for document in documents
+        ),
+        "participant_context": bool(hearings),
+        "witness_scope": any(
+            isinstance(hearing.get("witnesses", []), list)
+            and any(
+                isinstance(item, dict)
+                for item in hearing.get("witnesses", [])
+            )
+            for hearing in hearings
+        ),
+        "counsel_role_scope": any(
+            isinstance(hearing.get("counsel", []), list)
+            and any(
+                isinstance(item, dict)
+                for item in hearing.get("counsel", [])
+            )
+            for hearing in hearings
+        ),
+    }
+    return {
+        "available": True,
+        "status": "valid",
+        "schema_version": source_map.get("schema_version", 1),
+        "participant_index_schema_version": participant_index.get("schema_version"),
+        "case_name": source_map.get("case_name", ""),
+        "counts": raw_counts,
+        "citation_series": raw_citation_series,
+        "warnings": raw_warnings,
+        "capabilities": capabilities,
+    }
+
+
+def command_context(args: argparse.Namespace) -> None:
+    root = args.case_root.resolve(strict=False)
     _emit_json(
         {
-            "available": True,
-            "status": "nonauthoritative-orientation",
-            "schema_version": 1,
-            "content": text,
+            "overview": _overview_payload(root),
+            "source_map": _source_map_context_payload(root),
         }
     )
 
@@ -194,26 +294,35 @@ def _lookup_pages_for_file(
     return matches
 
 
-def _page_match_payload(root: Path, page: dict[str, Any]) -> dict[str, Any]:
-    payload = dict(page)
-    payload["resolved_image_path"] = ""
-    payload["image_exists"] = False
-
-    image_path = str(page.get("image_path") or "").strip()
-    if not image_path:
-        return payload
-
-    candidate = Path(image_path).expanduser()
+def _resolve_case_file(root: Path, value: object) -> tuple[str, bool]:
+    raw_path = str(value or "").strip()
+    if not raw_path:
+        return "", False
+    candidate = Path(raw_path).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     try:
         resolved = candidate.resolve(strict=False)
         resolved.relative_to(root)
     except (OSError, RuntimeError, ValueError):
-        return payload
+        return "", False
+    return str(resolved), resolved.is_file()
 
-    payload["resolved_image_path"] = str(resolved)
-    payload["image_exists"] = resolved.is_file()
+
+def _page_match_payload(root: Path, page: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(page)
+    resolved_text_path, text_exists = _resolve_case_file(
+        root,
+        page.get("text_path"),
+    )
+    resolved_image_path, image_exists = _resolve_case_file(
+        root,
+        page.get("image_path"),
+    )
+    payload["resolved_text_path"] = resolved_text_path
+    payload["text_exists"] = text_exists
+    payload["resolved_image_path"] = resolved_image_path
+    payload["image_exists"] = image_exists
     return payload
 
 
@@ -414,11 +523,15 @@ def command_search(args: argparse.Namespace) -> None:
     results: list[dict[str, Any]] = []
     for page in candidates:
         text_path = str(page.get("text_path") or "").strip()
-        candidate = root / text_path
+        resolved_text_path, text_exists = _resolve_case_file(root, text_path)
+        if not text_exists:
+            continue
         try:
-            candidate.resolve(strict=False).relative_to(root)
-            raw_text = candidate.read_text(encoding="utf-8", errors="ignore")
-        except (OSError, ValueError):
+            raw_text = Path(resolved_text_path).read_text(
+                encoding="utf-8",
+                errors="ignore",
+            )
+        except OSError:
             continue
         normalized_text = _normalize_search_text(raw_text)
         page_number = int(page.get("file_page") or 0)
@@ -458,7 +571,8 @@ def command_search(args: argparse.Namespace) -> None:
             "score": round(best_score, 3), "reason": best_reason,
             "matched_queries": matched, "citation_label": page.get("citation_label", ""),
             "citation_key": page.get("citation_key", ""), "file_page": page_number,
-            "text_path": text_path, "document_ids": page.get("document_ids", []),
+            "text_path": text_path, "resolved_text_path": resolved_text_path,
+            "text_exists": True, "document_ids": page.get("document_ids", []),
             "hearing_id": page.get("hearing_id", ""),
             "participants": page.get("participants", []),
             "witnesses": page.get("witnesses", []),
@@ -473,6 +587,7 @@ def command_search(args: argparse.Namespace) -> None:
             "witness": args.witness or "", "counsel_role": args.counsel_role or "",
             "current_citation": args.current_citation or "",
         },
+        "ranking_hints": {"current_citation": args.current_citation or ""},
         "candidate_pages": len(candidates), "total_matches": total,
         "truncated": total > len(limited), "matches": limited,
     })
@@ -506,6 +621,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Accepted for readability; output is always JSON.",
     )
     overview_parser.set_defaults(func=command_overview)
+
+    context_parser = subparsers.add_parser(
+        "context",
+        help="Read compact overview and source-map research context.",
+    )
+    context_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Accepted for readability; output is always JSON.",
+    )
+    context_parser.set_defaults(func=command_context)
 
     map_parser = subparsers.add_parser("map", help="Print source-map summary.")
     map_parser.add_argument(

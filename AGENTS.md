@@ -7,7 +7,7 @@
 - `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
-- `focus/agent_helper.py`: read-only case-overview, source-map lookup, and database-free lexical search CLI used by embedded PI Agent sessions.
+- `focus/agent_helper.py`: read-only compact research context, source-map lookup, and database-free lexical search CLI used by embedded PI Agent sessions.
 - `focus/ui/`: secondary Libadwaita windows such as settings and D-Bus command reference.
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
 - `.pi/SYSTEM.md`: replacement knowledge-work system prompt copied into each private embedded-Agent workspace.
@@ -23,6 +23,7 @@
 - `uv run focus`: launch the GTK viewer using the active case configuration.
 - `uv run focus /path/to/case_bundle`: launch Focus with a one-time input directory override.
 - `uv run focus refresh-current-case --quiet`: update Focus `config.json` from the currently selected case.
+- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle context --json`: read compact overview and source-map capability context.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle overview --json`: read the optional nonauthoritative case overview.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle map --json`: inspect the citation-aware source map.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle lookup --file text_pages/0001.txt --json`: resolve a searched text page to its record citation.
