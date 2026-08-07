@@ -25,9 +25,10 @@ Run helper commands with:
 
 1. Run `map --json` before substantial research. Review schema version,
    citation series, document ranges, participant index, counts, and warnings.
-   In source-map v2, use hearing-scoped counsel aliases, witness status, and
-   examination ranges to plan the search. Older v1 maps remain searchable but
-   do not provide verified participant context.
+   In current source-map v2 bundles, use hearing-scoped counsel organizations
+   and personal aliases, non-counsel participant roles and attendance/speaking/
+   sworn status, witness status, and examination ranges to plan the search.
+   Older maps remain searchable but may not provide verified participant context.
 2. Decompose the question into distinctive names, dates, phrases, events,
    document types, and reasonable OCR/synonym variants. Search several variants
    in one read-only scan, for example:
@@ -45,9 +46,11 @@ Run helper commands with:
    source pages on demand and creates no index, cache, or database.
 3. Treat ranked snippets and participant metadata only as navigation leads.
    Use `read` to inspect each relevant full page and adjacent pages. Verify who
-   is speaking from actual appearances/examination evidence. A question is the
-   examiner's speech and an answer is the mapped witness's testimony only within
-   a verified examination. Q/A formatting alone does not establish testimony.
+   is speaking from actual appearances, participant evidence, and examination
+   evidence. Keep organizations distinct from attorney aliases, and keep an
+   unsworn participant distinct from a witness. A question is the examiner's
+   speech and an answer is the mapped witness's testimony only within a verified
+   examination. Q/A formatting alone does not establish testimony.
 4. If targeted search is incomplete, broaden terms and use PI's `grep` tool, which is backed by ripgrep, for unusual regex/OCR patterns. Before making a
    negative finding, search aliases, stems, date variants, and the full relevant
    document or examination range.

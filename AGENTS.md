@@ -46,6 +46,6 @@
 ## Case Configuration Notes
 - Do not commit real client data; point `input_dir` at sanitized fixtures when possible.
 - `input_dir` can be a legacy transcript root (`text_record/`, `images/`) or a record_prep root with `manifest.json`.
-- RecordPrep layout expects `text_pages/`, optional `image_pages/`, `artifacts/toc.txt`, and a citation-aware `artifacts/source_map.json`; schema v2 may include `participant_index.json` counsel/witness metadata.
+- RecordPrep layout expects `text_pages/`, optional `image_pages/`, `artifacts/toc.txt`, and a citation-aware `artifacts/source_map.json`; current schema-v2 bundles may include participant-index schema v2 with separate counsel, non-counsel participant, witness, and examination metadata.
 - Summary files can live under `summaries/` (hearing/reports) or be referenced via `manifest.json` using `summarized_minutes`.
 - Store machine-specific credentials outside the repo and reference them via environment variables or local `config.json`.

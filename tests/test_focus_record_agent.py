@@ -51,6 +51,15 @@ def _write_case_bundle(tmp_path: Path) -> Path:
                 "citation_key": "CT:1",
                 "document_ids": ["hearing:0001"],
                 "hearing_id": "hearing:0001",
+                "participants": [{
+                    "id": "participant:grandmother",
+                    "role_id": "relative",
+                    "role_label": "Maternal grandmother",
+                    "name": "Mary Jones",
+                    "attendance_status": "present",
+                    "speaking_status": "spoke",
+                    "sworn_status": "unsworn",
+                }],
                 "witnesses": [{"id": "witness:mother", "name": "Mother"}],
                 "examinations": [{"type": "direct", "examiner_role_id": "mothers_counsel"}],
             },
@@ -82,7 +91,7 @@ def _write_case_bundle(tmp_path: Path) -> Path:
             }
         ],
         "participant_index": {
-            "schema_version": 1,
+            "schema_version": 2,
             "hearings": [{
                 "id": "hearing:0001",
                 "date": "January 2, 2025",
@@ -93,6 +102,18 @@ def _write_case_bundle(tmp_path: Path) -> Path:
                     "role_label": "Mother’s counsel",
                     "name": "Jane Smith",
                     "aliases": ["Ms. Smith"],
+                    "organization": "JCA",
+                    "appearance_status": "present",
+                }],
+                "participants": [{
+                    "id": "participant:grandmother",
+                    "role_id": "relative",
+                    "role_label": "Maternal grandmother",
+                    "name": "Mary Jones",
+                    "aliases": ["maternal grandmother"],
+                    "attendance_status": "present",
+                    "speaking_status": "spoke",
+                    "sworn_status": "unsworn",
                 }],
                 "witness_status": "verified",
                 "witnesses": [{
@@ -261,8 +282,25 @@ def test_search_normalizes_ocr_hyphenation_and_returns_citation_context(tmp_path
     match = payload["matches"][0]
     assert match["citation_label"] == "CT 1"
     assert match["text_path"] == "text_pages/0001.txt"
+    assert match["participants"][0]["name"] == "Mary Jones"
     assert match["witnesses"][0]["name"] == "Mother"
     assert match["reason"] == "exact-phrase"
+
+
+def test_search_uses_non_counsel_participant_metadata(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(
+        root,
+        "search",
+        "--query",
+        "Mary Jones",
+        "--json",
+    )
+
+    assert payload["total_matches"] == 1
+    assert payload["matches"][0]["reason"] == "participant-metadata"
+    assert payload["matches"][0]["participants"][0]["role_id"] == "relative"
 
 
 def test_search_scopes_by_witness_counsel_and_hearing_date(tmp_path) -> None:

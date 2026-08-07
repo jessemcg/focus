@@ -300,7 +300,11 @@ def _participant_aliases_for_page(source_map: dict[str, Any], page_number: int) 
                 continue
         except (TypeError, ValueError):
             continue
-        for person in [*hearing.get("counsel", []), *hearing.get("witnesses", [])]:
+        for person in [
+            *hearing.get("counsel", []),
+            *hearing.get("participants", []),
+            *hearing.get("witnesses", []),
+        ]:
             if not isinstance(person, dict):
                 continue
             aliases.extend(
@@ -388,7 +392,9 @@ def command_search(args: argparse.Namespace) -> None:
             "matched_queries": matched, "citation_label": page.get("citation_label", ""),
             "citation_key": page.get("citation_key", ""), "file_page": page_number,
             "text_path": text_path, "document_ids": page.get("document_ids", []),
-            "hearing_id": page.get("hearing_id", ""), "witnesses": page.get("witnesses", []),
+            "hearing_id": page.get("hearing_id", ""),
+            "participants": page.get("participants", []),
+            "witnesses": page.get("witnesses", []),
             "examinations": page.get("examinations", []), "snippet": snippet,
         })
     results.sort(key=lambda item: (-float(item["score"]), int(item["file_page"])))

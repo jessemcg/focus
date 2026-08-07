@@ -12,7 +12,7 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 - Agent Q&A in an embedded VTE terminal with a mirrored final answer.
 - Read-only, source-map-aware Agent research over the original `text_pages`.
 - Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, and record citations.
-- Hearing-scoped counsel, witness, and examination context when the bundle has source-map schema v2.
+- Hearing-scoped counsel, non-counsel participant, witness, and examination context when the bundle has source-map schema v2.
 - D-Bus actions for desktop automation and speech-submitted Agent questions.
 
 Focus does not load embeddings, retrieval chunks, Chroma, or any other vector database.
@@ -111,7 +111,7 @@ For every question, Focus creates a private disposable workspace, stages `.pi/SY
 The Agent workflow is:
 
 1. Read `source_map.json` with `focus/agent_helper.py map --json`.
-2. Inspect document ranges and hearing-scoped participant/witness metadata.
+2. Inspect document ranges and hearing-scoped counsel, non-counsel participant, witness, and examination metadata.
 3. Run one on-demand helper scan with several query variants and optional date/document/witness/counsel/current-citation scopes.
 4. Read every relevant source page and adjacent context.
 5. Resolve and cite official labels such as `2RT 44` or `CT 140`.
@@ -134,7 +134,7 @@ uv run python -m focus.agent_helper \
 
 ## Summaries
 
-Focus displays RecordPrep's source and organized hearing, report, and minute-order summaries. In new bundles, hearing summaries begin with deterministic `Counsel:` and `Testimony:` lines generated from the validated participant index. Summary prose is still nonauthoritative and must be checked against the record for Agent answers.
+Focus displays RecordPrep's source and organized hearing, report, and minute-order summaries. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose is still nonauthoritative and must be checked against the record for Agent answers.
 
 Focus's own page/range summary and extraction tools are independent of Agent Q&A and use the configured model profiles.
 
