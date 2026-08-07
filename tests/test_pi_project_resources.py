@@ -55,6 +55,8 @@ def test_pi_system_prompt_has_focus_knowledge_work_contract() -> None:
     assert "not a coding assistant" in prompt
     assert "FOCUS_AGENT_CASE_ROOT" in prompt
     assert "private, disposable runtime workspace" in prompt
+    assert "optional concise case overview" in prompt
+    assert "nonauthoritative orientation aid" in prompt
 
 
 def test_pi_priority_resources_are_present_and_fail_closed() -> None:
@@ -78,6 +80,9 @@ def test_pi_record_skill_has_expected_contract() -> None:
     skill = FOCUS_PI_SKILL_FILE.read_text(encoding="utf-8")
 
     assert skill.startswith(f"---\nname: {FOCUS_PI_SKILL_NAME}\n")
+    assert "Run `overview --json`" in skill
+    assert "It cannot establish a" in skill
+    assert "Run `map --json`" in skill
     assert "PI's `grep` tool, which is backed by ripgrep" in skill
     assert 'lookup --file "text_pages/0001.txt" --json' in skill
     assert 'search \\' in skill

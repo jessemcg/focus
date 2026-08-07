@@ -9,6 +9,38 @@ import sys
 HELPER = Path(__file__).resolve().parents[1] / "focus" / "agent_helper.py"
 
 
+CASE_OVERVIEW = """---
+artifact: recordprep-case-overview
+schema_version: 1
+status: nonauthoritative-orientation
+---
+
+# Case Overview
+
+> Orientation aid only. Verify every factual claim against mapped source pages before relying on or citing it.
+
+## Parties and Roles
+
+The synthetic record concerns a child and the child’s parents.
+
+## Procedural Posture
+
+The available material includes a hearing and a report.
+
+## Key Events
+
+- January 2, 2025: The first included hearing occurred.
+
+## Principal Issues
+
+The apparent issue concerns placement.
+
+## Record Scope
+
+The fixture contains two mapped source pages.
+"""
+
+
 def _write_case_bundle(tmp_path: Path) -> Path:
     root = tmp_path / "case_bundle"
     text_dir = root / "text_pages"
@@ -32,6 +64,7 @@ def _write_case_bundle(tmp_path: Path) -> Path:
         "root_dir": str(root),
         "paths": {
             "source_map": "artifacts/source_map.json",
+            "case_overview": "artifacts/case_overview.md",
             "text_pages": "text_pages",
             "report_boundaries": "artifacts/report_boundaries.json",
         },
@@ -130,6 +163,10 @@ def _write_case_bundle(tmp_path: Path) -> Path:
         },
         "warnings": [],
     }
+    (artifacts / "case_overview.md").write_text(
+        CASE_OVERVIEW,
+        encoding="utf-8",
+    )
     (artifacts / "source_map.json").write_text(
         json.dumps(source_map),
         encoding="utf-8",
@@ -158,12 +195,56 @@ def _set_page_image_path(root: Path, file_name: str, image_path: str) -> None:
     source_map_path.write_text(json.dumps(source_map), encoding="utf-8")
 
 
+def test_overview_returns_nonauthoritative_orientation_before_map(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(root, "overview", "--json")
+
+    assert payload["available"] is True
+    assert payload["status"] == "nonauthoritative-orientation"
+    assert payload["schema_version"] == 1
+    assert "# Case Overview" in payload["content"]
+    assert "Orientation aid only" in payload["content"]
+
+
+def test_overview_is_optional_for_older_bundles(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    (root / "artifacts/case_overview.md").unlink()
+
+    payload = _run_helper(root, "overview", "--json")
+
+    assert payload == {
+        "available": False,
+        "status": "unavailable",
+        "schema_version": None,
+        "content": "",
+    }
+
+
+def test_overview_rejects_unversioned_content(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    (root / "artifacts/case_overview.md").write_text(
+        "# Case Overview\n\nUnversioned text.",
+        encoding="utf-8",
+    )
+
+    payload = _run_helper(root, "overview", "--json")
+
+    assert payload == {
+        "available": False,
+        "status": "invalid",
+        "schema_version": None,
+        "content": "",
+    }
+
+
 def test_map_outputs_case_summary(tmp_path) -> None:
     root = _write_case_bundle(tmp_path)
 
     payload = _run_helper(root, "map", "--json")
 
     assert payload["case_name"] == "Test Case"
+    assert payload["paths"]["case_overview"] == "artifacts/case_overview.md"
     assert payload["counts"]["pages"] == 2
     assert payload["citation_series"][0]["citation_prefix"] == "CT"
 

@@ -23,13 +23,19 @@ Run helper commands with:
 
 ## Research workflow
 
-1. Run `map --json` before substantial research. Review schema version,
+1. Run `overview --json`. When `available` is true, read the concise case
+   overview first to orient to the parties, procedural posture, key dates,
+   apparent issues, and record scope. Treat it only as a nonauthoritative source
+   of names, dates, phrases, and possible search leads. It cannot establish a
+   fact, support a quotation, justify a negative finding, or supply a citation.
+   If it is unavailable or invalid, continue without it.
+2. Run `map --json` before substantial research. Review schema version,
    citation series, document ranges, participant index, counts, and warnings.
    In current source-map v2 bundles, use hearing-scoped counsel organizations
    and personal aliases, non-counsel participant roles and attendance/speaking/
    sworn status, witness status, and examination ranges to plan the search.
    Older maps remain searchable but may not provide verified participant context.
-2. Decompose the question into distinctive names, dates, phrases, events,
+3. Decompose the question into distinctive names, dates, phrases, events,
    document types, and reasonable OCR/synonym variants. Search several variants
    in one read-only scan, for example:
 
@@ -44,20 +50,20 @@ Run helper commands with:
    Use optional `--document`, `--witness`, `--counsel-role`, and
    `--current-citation` scopes only when the map supports them. The command scans
    source pages on demand and creates no index, cache, or database.
-3. Treat ranked snippets and participant metadata only as navigation leads.
+4. Treat ranked snippets and participant metadata only as navigation leads.
    Use `read` to inspect each relevant full page and adjacent pages. Verify who
    is speaking from actual appearances, participant evidence, and examination
    evidence. Keep organizations distinct from attorney aliases, and keep an
    unsworn participant distinct from a witness. A question is the examiner's
    speech and an answer is the mapped witness's testimony only within a verified
    examination. Q/A formatting alone does not establish testimony.
-4. If targeted search is incomplete, broaden terms and use PI's `grep` tool, which is backed by ripgrep, for unusual regex/OCR patterns. Before making a
+5. If targeted search is incomplete, broaden terms and use PI's `grep` tool, which is backed by ripgrep, for unusual regex/OCR patterns. Before making a
    negative finding, search aliases, stems, date variants, and the full relevant
    document or examination range.
-5. Resolve every page used in the answer with
+6. Resolve every page used in the answer with
    `lookup --file "text_pages/0001.txt" --json`. Use
    `lookup --citation "CT 6" --json` to follow a record citation.
-6. Inspect a paired page image only when visual appearance could change the
+7. Inspect a paired page image only when visual appearance could change the
    answer, such as checkboxes, signatures, initials, handwriting, stamps,
    crossed-out text, tables, field alignment, form identity, or ambiguous OCR.
    Treat `page_type` as a hint rather than a reason to inspect every image. When
@@ -68,11 +74,12 @@ Run helper commands with:
    evidence when sufficient and state any remaining limitation. If OCR and the
    image conflict, treat the image as controlling only for visual properties
    and describe the discrepancy without overstating an unclear scan.
-7. Use `document --id "document-id" --json` when document boundaries, titles,
+8. Use `document --id "document-id" --json` when document boundaries, titles,
    dates, or citation ranges matter.
-8. Compare all relevant passages before answering. Summaries are
-   nonauthoritative leads and must be checked against source pages. Do not rely
-   on a snippet, participant entry, or current Focus citation as proof by itself.
+9. Compare all relevant passages before answering. The overview and summaries
+   are nonauthoritative leads and must be checked against source pages. Do not
+   rely on an overview statement, snippet, participant entry, or current Focus
+   citation as proof by itself.
 
 If the source map is missing or invalid, explain that a citation-grounded answer
 cannot be produced safely. If a reasonable set of searches finds no support,

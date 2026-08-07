@@ -30,6 +30,73 @@ def _load_source_map(root: Path) -> dict[str, Any]:
     return data
 
 
+def _case_overview_path(root: Path) -> Path | None:
+    candidates: list[Path] = []
+    manifest_path = root / "manifest.json"
+    try:
+        manifest = _read_json(manifest_path)
+    except (OSError, json.JSONDecodeError):
+        manifest = {}
+    if isinstance(manifest, dict):
+        files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
+        configured = files.get("case_overview")
+        if isinstance(configured, str) and configured.strip():
+            candidates.append(root / configured)
+    candidates.append(root / "artifacts" / "case_overview.md")
+
+    resolved_root = root.resolve(strict=False)
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=False)
+            resolved.relative_to(resolved_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def command_overview(args: argparse.Namespace) -> None:
+    root = args.case_root.resolve(strict=False)
+    path = _case_overview_path(root)
+    if path is None:
+        _emit_json(
+            {
+                "available": False,
+                "status": "unavailable",
+                "schema_version": None,
+                "content": "",
+            }
+        )
+        return
+    text = path.read_text(encoding="utf-8")
+    required = (
+        "artifact: recordprep-case-overview",
+        "schema_version: 1",
+        "status: nonauthoritative-orientation",
+        "# Case Overview",
+        "> Orientation aid only.",
+    )
+    if any(fragment not in text for fragment in required):
+        _emit_json(
+            {
+                "available": False,
+                "status": "invalid",
+                "schema_version": None,
+                "content": "",
+            }
+        )
+        return
+    _emit_json(
+        {
+            "available": True,
+            "status": "nonauthoritative-orientation",
+            "schema_version": 1,
+            "content": text,
+        }
+    )
+
+
 def _normalize_citation_key(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", value.strip().upper())
     match = re.fullmatch(r"([A-Z]+)\s*[: ]\s*(\d+)", cleaned)
@@ -428,6 +495,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(os.environ.get("FOCUS_AGENT_CASE_ROOT", ".")).expanduser(),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    overview_parser = subparsers.add_parser(
+        "overview",
+        help="Read the optional nonauthoritative case-orientation overview.",
+    )
+    overview_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Accepted for readability; output is always JSON.",
+    )
+    overview_parser.set_defaults(func=command_overview)
 
     map_parser = subparsers.add_parser("map", help="Print source-map summary.")
     map_parser.add_argument(

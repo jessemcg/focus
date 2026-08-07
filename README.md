@@ -8,9 +8,9 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 - Fast ordinary grep with hit navigation and configurable highlighting.
 - Official transcript-page/citation lookup from RecordPrep metadata.
 - Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
-- Organized hearing, report, and minute-order summary views.
+- Hearing, report, and minute-order summary views, with legacy organized-summary compatibility.
 - Agent Q&A in an embedded VTE terminal with a mirrored final answer.
-- Read-only, source-map-aware Agent research over the original `text_pages`.
+- Concise nonauthoritative case orientation before source-map-aware Agent research over the original `text_pages`.
 - Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, and record citations.
 - Hearing-scoped counsel, non-counsel participant, witness, and examination context when the bundle has source-map schema v2.
 - D-Bus actions for desktop automation and speech-submitted Agent questions.
@@ -81,12 +81,11 @@ case_bundle/
     transcript_page_numbers.json
     transcript_page_number_series.md
     participant_index.json
+    case_overview.md
     source_map.json
   summaries/
     hearings_sum_<case>.txt
-    hearings_sum_<case>_organized.txt
     reports_sum_<case>.txt
-    reports_sum_<case>_organized.txt
     minutes_sum_<case>.txt
 ```
 
@@ -110,18 +109,22 @@ For every question, Focus creates a private disposable workspace, stages `.pi/SY
 
 The Agent workflow is:
 
-1. Read `source_map.json` with `focus/agent_helper.py map --json`.
-2. Inspect document ranges and hearing-scoped counsel, non-counsel participant, witness, and examination metadata.
-3. Run one on-demand helper scan with several query variants and optional date/document/witness/counsel/current-citation scopes.
-4. Read every relevant source page and adjacent context.
-5. Resolve and cite official labels such as `2RT 44` or `CT 140`.
-6. Broaden aliases and terms before reporting that a fact could not be located.
+1. Read the optional versioned case overview with `focus/agent_helper.py overview --json` for concise orientation.
+2. Read `source_map.json` with `focus/agent_helper.py map --json`.
+3. Inspect document ranges and hearing-scoped counsel, non-counsel participant, witness, and examination metadata.
+4. Run one on-demand helper scan with several query variants and optional date/document/witness/counsel/current-citation scopes.
+5. Read every relevant source page and adjacent context.
+6. Resolve and cite official labels such as `2RT 44` or `CT 140`.
+7. Broaden aliases and terms before reporting that a fact could not be located.
 
-Search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source pages and use images only for genuinely visual ambiguities. The helper creates no index, cache, or database.
+The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source pages and use images only for genuinely visual ambiguities. The helper creates no index, cache, or database.
 
 Run the helper directly:
 
 ```bash
+uv run python -m focus.agent_helper \
+  --case-root /path/to/case_bundle overview --json
+
 uv run python -m focus.agent_helper \
   --case-root /path/to/case_bundle map --json
 
@@ -134,7 +137,7 @@ uv run python -m focus.agent_helper \
 
 ## Summaries
 
-Focus displays RecordPrep's source and organized hearing, report, and minute-order summaries. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose is still nonauthoritative and must be checked against the record for Agent answers.
+Focus displays RecordPrep's source hearing, report, and minute-order summaries and remains compatible with organized summaries from older bundles. Current RecordPrep bundles no longer create separate organized derivatives. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose and the concise case overview are nonauthoritative and must be checked against the record for Agent answers.
 
 Focus's own page/range summary and extraction tools are independent of Agent Q&A and use the configured model profiles.
 
