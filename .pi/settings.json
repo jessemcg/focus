@@ -1,6 +1,6 @@
 {
-  "defaultProvider": "local-llama",
-  "defaultModel": "Qwen3.6-27B-UD-Q4_K_XL.gguf",
+  "defaultProvider": "fireworks",
+  "defaultModel": "accounts/fireworks/models/glm-5p2",
   "defaultThinkingLevel": "medium",
   "fireworksPriorityServiceTier": false,
   "enableSkillCommands": true,
