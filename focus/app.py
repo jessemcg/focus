@@ -1439,6 +1439,12 @@ class Focus(Adw.Application):
         return min(AI_OUTPUT_MIN_HEIGHT, max_height)
 
     @staticmethod
+    def _embedded_ai_panel_max_height(host_height: int) -> int:
+        if host_height <= 0:
+            return 0
+        return host_height // EMBEDDED_AI_PANEL_HEIGHT_DIVISOR
+
+    @staticmethod
     def _set_scroller_content_height_bounds(
         scroller: Gtk.ScrolledWindow,
         min_height: int,
@@ -1554,7 +1560,7 @@ class Focus(Adw.Application):
             return
 
         self._ai_view_stack.set_visible(True)
-        max_panel_height = max(0, host_height // EMBEDDED_AI_PANEL_HEIGHT_DIVISOR)
+        max_panel_height = self._embedded_ai_panel_max_height(host_height)
         chrome_height = self._embedded_ai_panel_chrome_height()
         body_spacing = (
             self._ai_panel_root.get_spacing()

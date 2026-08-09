@@ -422,14 +422,22 @@ def test_summary_emphasis_color_keeps_contrast_in_both_themes() -> None:
     assert Focus._rgba_luminance(dim) >= 0.519999
 
 
-def test_embedded_output_minimum_uses_available_panel_height() -> None:
+def test_embedded_output_minimum_is_readable_and_uses_available_height() -> None:
     harness = object()
 
-    assert Focus._embedded_ai_output_min_height(harness, 40) == 40
-    assert (
-        Focus._embedded_ai_output_min_height(harness, AI_OUTPUT_MIN_HEIGHT + 20)
-        == AI_OUTPUT_MIN_HEIGHT
-    )
+    assert Focus._embedded_ai_output_min_height(harness, 220) == 220
+    assert Focus._embedded_ai_output_min_height(harness, 400) == 260
+    assert AI_OUTPUT_MIN_HEIGHT == 260
+
+
+def test_embedded_panel_never_exceeds_half_the_window_height() -> None:
+    assert Focus._embedded_ai_panel_max_height(0) == 0
+
+    for host_height in (720, 1080, 1197):
+        panel_height = Focus._embedded_ai_panel_max_height(host_height)
+
+        assert panel_height == host_height // 2
+        assert panel_height * 2 <= host_height
 
 
 def test_scroller_bounds_clear_the_minimum_before_changing_the_maximum() -> None:
