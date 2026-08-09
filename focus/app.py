@@ -1442,7 +1442,11 @@ class Focus(Adw.Application):
     def _embedded_ai_panel_max_height(host_height: int) -> int:
         if host_height <= 0:
             return 0
-        return host_height // EMBEDDED_AI_PANEL_HEIGHT_DIVISOR
+        preferred_height = max(
+            EMBEDDED_AI_PANEL_MIN_HEIGHT,
+            host_height // EMBEDDED_AI_PANEL_HEIGHT_DIVISOR,
+        )
+        return min(host_height, preferred_height)
 
     @staticmethod
     def _set_scroller_content_height_bounds(
