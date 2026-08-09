@@ -266,7 +266,11 @@ AI_BLOCKQUOTE_LEFT_MARGIN = 24
 AI_BLOCKQUOTE_RIGHT_MARGIN = 12
 AI_BLOCKQUOTE_INDENT = 0
 AI_BLOCKQUOTE_SPACING_PX = 4
-CASE_TOOLS_ICON_CHOICES = ("preferences-system-symbolic", "applications-system-symbolic")
+CASE_TOOLS_ICON_CHOICES = (
+    "applications-utilities-symbolic",
+    "document-properties-symbolic",
+    "preferences-system-symbolic",
+)
 FOCUS_TERMINAL_DARK_FOREGROUND = "#f2f4f8"
 FOCUS_TERMINAL_DARK_BACKGROUND = "#3d3d3d"
 FOCUS_TERMINAL_DARK_SELECTION = "#3d536b"
@@ -2620,12 +2624,48 @@ button.focus-right-scroll-zone:active image.focus-right-scroll-icon {
 
 .ai-output-frame {
   background-color: __AI_PANEL_BG__;
-  border-radius: 16px;
+  border-radius: 12px;
   padding: 10px;
 }
 
 .ai-output-view {
   background: transparent;
+}
+
+button.focus-case-tools-toggle {
+  min-height: 30px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+box.focus-case-tools-nav image.focus-toggle-icon {
+  color: alpha(@window_fg_color, 0.70);
+}
+
+separator.focus-case-tools-separator {
+  margin: 5px 3px;
+}
+
+box.focus-case-tools-status-row {
+  min-height: 20px;
+}
+
+label.focus-case-tools-status {
+  color: alpha(@window_fg_color, 0.62);
+  font-size: 0.9rem;
+}
+
+box.focus-agent-composer {
+  min-height: 34px;
+}
+
+button.focus-agent-submit-button {
+  min-width: 64px;
+  font-weight: 600;
+}
+
+box.focus-agent-output-header {
+  margin-top: 2px;
 }
 
 .focus-agent-terminal-frame {
@@ -2700,6 +2740,10 @@ menubutton.focus-ai-view-active > button:active {
   color: @window_fg_color;
   background-image: none;
   box-shadow: none;
+}
+
+menubutton.focus-ai-view-active > button image {
+  color: @window_fg_color;
 }
 
 button.focus-citation-range-active,

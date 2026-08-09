@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 from focus.app import Focus
 from focus.core import (
     AGENT_SUBVIEW_ANSWER,
     AGENT_SUBVIEW_SESSION,
+    AI_OUTPUT_MIN_HEIGHT,
     AI_VIEW_AGENT_QA,
     AI_VIEW_EXTRACT,
     AI_VIEW_FILE,
@@ -45,6 +48,17 @@ class FakeVisibility:
 
     def get_visible(self) -> bool:
         return self.visible
+
+    def set_visible(self, visible: bool) -> None:
+        self.visible = visible
+
+
+class FakeEntry:
+    def __init__(self, text: str = "") -> None:
+        self.text = text
+
+    def get_text(self) -> str:
+        return self.text
 
 
 class FakeViewStack:
@@ -181,6 +195,33 @@ class ToggleHarness:
         self._ai_view_toggle_guard = False
 
 
+class AgentControlsHarness:
+    _agent_answer_has_content = Focus._agent_answer_has_content
+    _sync_agent_output_header_state = Focus._sync_agent_output_header_state
+    _refresh_agent_submit_state = Focus._refresh_agent_submit_state
+
+    def __init__(self) -> None:
+        self._agent_last_answer_text = ""
+        self._ai_outputs = {AI_VIEW_AGENT_QA: SimpleNamespace(raw="")}
+        self._agent_output_header = FakeVisibility()
+        self._agent_answer_button = FakeButton()
+        self._agent_session_button = FakeButton()
+        self._agent_submit_button = FakeButton()
+        self._agent_question_entry = FakeEntry()
+        self.has_session = False
+
+    def _agent_session_has_content(self) -> bool:
+        return self.has_session
+
+
+class PresentationHarness:
+    _case_tool_description = Focus._case_tool_description
+
+    def __init__(self) -> None:
+        self._ai_active_view = AI_VIEW_AGENT_QA
+        self._summary_active_source: str | None = None
+
+
 class SummaryActionHarness:
     _refresh_summary_actions_state = Focus._refresh_summary_actions_state
 
@@ -241,11 +282,17 @@ def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
     assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
     assert not harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
 
+    harness._sync_ai_view_toggles(AI_VIEW_EXTRACT)
+    assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
+    assert not harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
+
     harness._sync_ai_view_toggles(AI_VIEW_FILE)
     assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
 
     harness._summary_active_source = SUMMARY_SOURCE_HEARING
     harness._sync_ai_view_toggles(AI_VIEW_FILE)
+    assert harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].active
+    assert not harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].active
     assert (
         "focus-ai-view-active"
         in harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].css_classes
@@ -258,6 +305,8 @@ def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
 
     harness._summary_active_source = SUMMARY_SOURCE_REPORTS
     harness._sync_ai_view_toggles(AI_VIEW_FILE)
+    assert not harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].active
+    assert harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].active
     assert (
         "focus-ai-view-active"
         not in harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].css_classes
@@ -270,7 +319,58 @@ def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
 
     harness._sync_ai_view_toggles(AI_VIEW_AGENT_QA)
     assert harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
+    assert not harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].active
+    assert not harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].active
     assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
+
+
+def test_agent_output_controls_appear_only_for_available_output() -> None:
+    harness = AgentControlsHarness()
+
+    harness._sync_agent_output_header_state()
+    assert not harness._agent_output_header.visible
+    assert not harness._agent_answer_button.sensitive
+    assert not harness._agent_session_button.sensitive
+
+    harness.has_session = True
+    harness._sync_agent_output_header_state()
+    assert harness._agent_output_header.visible
+    assert not harness._agent_answer_button.sensitive
+    assert harness._agent_session_button.sensitive
+
+    harness.has_session = False
+    harness._ai_outputs[AI_VIEW_AGENT_QA].raw = "Linked final answer"
+    harness._sync_agent_output_header_state()
+    assert harness._agent_output_header.visible
+    assert harness._agent_answer_button.sensitive
+    assert not harness._agent_session_button.sensitive
+
+
+def test_agent_ask_button_tracks_question_text() -> None:
+    harness = AgentControlsHarness()
+
+    harness._refresh_agent_submit_state()
+    assert not harness._agent_submit_button.sensitive
+
+    harness._agent_question_entry.text = "  What did the court order?  "
+    harness._refresh_agent_submit_state()
+    assert harness._agent_submit_button.sensitive
+
+
+def test_case_tool_descriptions_follow_the_active_source() -> None:
+    harness = PresentationHarness()
+
+    assert "original record" in harness._case_tool_description()
+
+    harness._ai_active_view = AI_VIEW_FILE
+    harness._summary_active_source = SUMMARY_SOURCE_HEARING
+    assert "hearing summaries" in harness._case_tool_description()
+
+    harness._summary_active_source = SUMMARY_SOURCE_REPORTS
+    assert "report summaries" in harness._case_tool_description()
+
+    harness._summary_active_source = SUMMARY_SOURCE_MINUTES
+    assert "minute-order summaries" in harness._case_tool_description()
 
 
 def test_print_summary_action_tracks_printable_summary_state() -> None:
@@ -290,17 +390,15 @@ def test_print_summary_action_tracks_printable_summary_state() -> None:
 
 
 def test_empty_header_only_views_do_not_reserve_body_space() -> None:
-    for view_name in (AI_VIEW_AGENT_QA, AI_VIEW_SUMMARIZE, AI_VIEW_FILE):
+    for view_name in (
+        AI_VIEW_AGENT_QA,
+        AI_VIEW_SUMMARIZE,
+        AI_VIEW_EXTRACT,
+        AI_VIEW_FILE,
+    ):
         harness = BodyVisibilityHarness(view_name)
 
         assert not harness._active_ai_body_has_content()
-
-
-def test_views_with_body_controls_remain_expanded() -> None:
-    for view_name in (AI_VIEW_EXTRACT,):
-        harness = BodyVisibilityHarness(view_name)
-
-        assert harness._active_ai_body_has_content()
 
 
 def test_dynamic_case_tool_content_expands_the_body() -> None:
@@ -312,6 +410,26 @@ def test_dynamic_case_tool_content_expands_the_body() -> None:
     agent_harness._agent_subview_name = AGENT_SUBVIEW_SESSION
     agent_harness.has_agent_session = True
     assert agent_harness._active_ai_body_has_content()
+
+
+def test_summary_emphasis_color_keeps_contrast_in_both_themes() -> None:
+    bright = SimpleNamespace(red=0.8, green=0.95, blue=0.7)
+    Focus._adjust_summary_emphasis_for_theme(bright, dark=False)
+    assert Focus._rgba_luminance(bright) <= 0.580001
+
+    dim = SimpleNamespace(red=0.1, green=0.2, blue=0.1)
+    Focus._adjust_summary_emphasis_for_theme(dim, dark=True)
+    assert Focus._rgba_luminance(dim) >= 0.519999
+
+
+def test_embedded_output_minimum_uses_available_panel_height() -> None:
+    harness = object()
+
+    assert Focus._embedded_ai_output_min_height(harness, 40) == 40
+    assert (
+        Focus._embedded_ai_output_min_height(harness, AI_OUTPUT_MIN_HEIGHT + 20)
+        == AI_OUTPUT_MIN_HEIGHT
+    )
 
 
 def test_scroller_bounds_clear_the_minimum_before_changing_the_maximum() -> None:

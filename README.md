@@ -9,6 +9,7 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 - Official transcript-page/citation lookup from RecordPrep metadata.
 - Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
 - Hearing, report, and minute-order summary views, with legacy organized-summary compatibility.
+- An organized Case Tools workspace with contextual controls for Agent Q&A, summaries, extraction, and page-range summarization.
 - Agent Q&A in an embedded VTE terminal with a mirrored final answer.
 - Compact nonauthoritative case orientation and source-map capability checks before targeted research over the original `text_pages`.
 - Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, safe source paths, and record citations.
@@ -105,6 +106,8 @@ Obsolete embedding/vector-question credentials and settings are removed when con
 
 ## Agent questions
 
+Open **Case Tools** from the labeled header control and select **Agent Q&A**. The question composer provides an explicit **Ask** action and inline activity feedback. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
+
 For every question, Focus creates a private disposable workspace, stages `.pi/SYSTEM.md`, the explicit `focus-answer-record-questions` Agent Skill, PI settings, and the Priority extension, and launches PI with read-oriented tools. The case bundle remains outside the workspace and is treated as read-only evidence.
 
 Agent questions are case-wide by default. To direct the Agent to a particular page, identify its record citation in the question (for example, `CT 177`).
@@ -139,7 +142,7 @@ uv run python -m focus.agent_helper \
 
 ## Summaries
 
-Focus displays RecordPrep's source hearing, report, and minute-order summaries and remains compatible with organized summaries from older bundles. Current RecordPrep bundles no longer create separate organized derivatives. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose and the concise case overview are nonauthoritative and must be checked against the record for Agent answers.
+Focus displays RecordPrep's source hearing, report, and minute-order summaries and remains compatible with organized summaries from older bundles. **Hearings** and **Reports** stay directly available in the Case Tools navigation; **More** groups minute orders, summary printing, extraction, and page-range summarization. Current RecordPrep bundles no longer create separate organized derivatives. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose and the concise case overview are nonauthoritative and must be checked against the record for Agent answers.
 
 Focus's own page/range summary and extraction tools are independent of Agent Q&A and use the configured model profiles.
 

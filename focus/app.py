@@ -7,6 +7,19 @@ from .core import *  # noqa: F401,F403
 from .ui.commands import FocusCommandsWindow
 from .ui.settings import AiSettingsWindow
 
+
+CASE_TOOL_DESCRIPTIONS = {
+    AI_VIEW_AGENT_QA: "Ask citation-grounded questions across the original record.",
+    AI_VIEW_SUMMARIZE: "Summarize a page or citation range with the selected model profile.",
+    AI_VIEW_EXTRACT: "Extract structured information from the current page or a page range.",
+}
+SUMMARY_SOURCE_DESCRIPTIONS = {
+    SUMMARY_SOURCE_HEARING: "Browse prepared hearing summaries; verify material points in the record.",
+    SUMMARY_SOURCE_REPORTS: "Browse prepared report summaries; verify material points in the record.",
+    SUMMARY_SOURCE_MINUTES: "Browse prepared minute-order summaries; verify material points in the record.",
+}
+
+
 class Focus(Adw.Application):
     def __init__(self, *, input_override: Path | None = None) -> None:
         super().__init__(
@@ -17,6 +30,7 @@ class Focus(Adw.Application):
             style_manager = Adw.StyleManager.get_default()
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
             style_manager.connect("notify::color-scheme", self._on_color_scheme_changed)
+            style_manager.connect("notify::dark", self._on_color_scheme_changed)
         except Exception:
             pass
         self.connect("activate", self.on_activate)
@@ -149,7 +163,7 @@ class Focus(Adw.Application):
         self._summary_scroll_restore_attempts = 0
         self._summary_active_source: str | None = None
         self._summary_progress_label: Gtk.Label | None = None
-        self._summary_source_buttons: dict[str, Gtk.Button] = {}
+        self._summary_source_buttons: dict[str, Gtk.ToggleButton] = {}
         self._more_case_tools_button: Gtk.MenuButton | None = None
         self._summary_bookmark_action_button: Gtk.Button | None = None
         self._summary_return_bookmark_action_button: Gtk.Button | None = None
@@ -211,6 +225,8 @@ class Focus(Adw.Application):
         self._ai_in_flight = False
         self._ai_request_generation = 0
         self._agent_question_entry: Gtk.Entry | None = None
+        self._agent_submit_button: Gtk.Button | None = None
+        self._agent_output_header: Gtk.Widget | None = None
         self._agent_subview_host: Gtk.Box | None = None
         self._agent_subview_name = AGENT_SUBVIEW_SESSION
         self._agent_answer_scroller: Gtk.ScrolledWindow | None = None
@@ -265,6 +281,26 @@ class Focus(Adw.Application):
         icon.add_css_class("focus-toggle-icon")
         icon.set_valign(Gtk.Align.CENTER)
         return icon
+
+    def _build_labeled_icon(self, label: str, *icon_names: str) -> Gtk.Widget:
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        content.set_valign(Gtk.Align.CENTER)
+        if icon_names:
+            icon = self._build_header_icon(*icon_names)
+            icon.set_pixel_size(16)
+            content.append(icon)
+        content.append(Gtk.Label(label=label))
+        return content
+
+    @staticmethod
+    def _set_accessible_label(widget: Gtk.Widget, label: str) -> None:
+        try:
+            widget.update_property(
+                [Gtk.AccessibleProperty.LABEL],
+                [label],
+            )
+        except (AttributeError, TypeError):
+            pass
 
     def _scan_pages(self) -> None:
         self.page_to_path.clear()
@@ -400,13 +436,17 @@ class Focus(Adw.Application):
 
         self._ai_panel_toggle = Gtk.ToggleButton()
         self._ai_panel_toggle.add_css_class("flat")
+        self._ai_panel_toggle.add_css_class("no-bold")
         self._ai_panel_toggle.add_css_class("focus-view-toggle")
+        self._ai_panel_toggle.add_css_class("focus-case-tools-toggle")
         self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
-        self._ai_panel_toggle.set_child(self._build_header_icon(*CASE_TOOLS_ICON_CHOICES))
+        self._ai_panel_toggle.set_child(
+            self._build_labeled_icon("Case Tools", *CASE_TOOLS_ICON_CHOICES)
+        )
         self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
+        self._set_accessible_label(self._ai_panel_toggle, "Case Tools")
         self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
         self._set_ai_panel_visible(self._current_view_state().ai_panel_visible)
-        left_box.append(self._ai_panel_toggle)
 
         header.pack_start(left_box)
 
@@ -424,11 +464,6 @@ class Focus(Adw.Application):
         document_menu.append("Input Directory", "app.choose_input")
         menu_model.append_section(None, document_menu)
 
-        case_tools_menu = Gio.Menu()
-        case_tools_menu.append("Extract Information", "app.show_extract")
-        case_tools_menu.append("Print Summary", "app.print_summary")
-        menu_model.append_section("Case Tools", case_tools_menu)
-
         application_menu = Gio.Menu()
         application_menu.append("D-Bus Commands", "app.show_dbus_commands")
         application_menu.append("Settings", "app.open_ai_settings")
@@ -442,6 +477,7 @@ class Focus(Adw.Application):
 
         trailing_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trailing_header_box.set_valign(Gtk.Align.CENTER)
+        trailing_header_box.append(self._ai_panel_toggle)
         trailing_header_box.append(menu_button)
         header.pack_end(trailing_header_box)
 
@@ -630,18 +666,9 @@ class Focus(Adw.Application):
         ai_panel_root.add_css_class("ai-output-frame")
         self._ai_panel_root = ai_panel_root
 
-        ai_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        ai_header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         ai_header.set_hexpand(True)
-        ai_header.set_valign(Gtk.Align.CENTER)
         self._ai_panel_header = ai_header
-
-        ai_mode_cluster = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        ai_mode_cluster.set_valign(Gtk.Align.START)
-
-        self._ai_spinner = Gtk.Spinner(spinning=False)
-        self._ai_spinner.set_valign(Gtk.Align.CENTER)
-        self._ai_spinner.set_visible(False)
-        ai_mode_cluster.append(self._ai_spinner)
 
         self._ai_view_stack = Adw.ViewStack()
         try:
@@ -657,15 +684,17 @@ class Focus(Adw.Application):
         self._ai_view_stack.set_vexpand(True)
         self._ai_view_stack.connect("notify::visible-child-name", self._on_ai_view_changed)
 
-        ai_mode_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        ai_mode_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         ai_mode_strip.add_css_class("focus-pill-group")
+        ai_mode_strip.add_css_class("focus-case-tools-nav")
+        ai_mode_strip.set_halign(Gtk.Align.START)
         ai_mode_strip.set_valign(Gtk.Align.CENTER)
-        ai_mode_strip.set_hexpand(False)
 
         agent_mode_button = self._build_ai_mode_button(
             "Agent Q&A",
             AI_VIEW_AGENT_QA,
             "Ask citation-grounded questions with the embedded PI Agent",
+            ("dialog-question-symbolic", "system-search-symbolic"),
         )
         ai_mode_strip.append(agent_mode_button)
 
@@ -673,6 +702,7 @@ class Focus(Adw.Application):
             "Hearings",
             SUMMARY_SOURCE_HEARING,
             "Open hearing summaries",
+            ("x-office-calendar-symbolic", "document-open-symbolic"),
         )
         ai_mode_strip.append(hearings_button)
 
@@ -680,24 +710,58 @@ class Focus(Adw.Application):
             "Reports",
             SUMMARY_SOURCE_REPORTS,
             "Open report summaries",
+            ("text-x-generic-symbolic", "document-open-symbolic"),
         )
         ai_mode_strip.append(reports_button)
 
+        more_separator = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        more_separator.add_css_class("focus-case-tools-separator")
+        ai_mode_strip.append(more_separator)
+
         more_case_tools_menu = Gio.Menu()
-        more_case_tools_menu.append("Summarize", "app.show_summarize")
-        more_case_tools_menu.append("Minute Orders", "app.show_minutes_summary")
+        ai_tools_menu = Gio.Menu()
+        ai_tools_menu.append("Summarize Pages", "app.show_summarize")
+        ai_tools_menu.append("Extract Information", "app.show_extract")
+        more_case_tools_menu.append_section("AI Tools", ai_tools_menu)
+        summary_tools_menu = Gio.Menu()
+        summary_tools_menu.append("Minute Orders", "app.show_minutes_summary")
+        summary_tools_menu.append("Print Current Summary", "app.print_summary")
+        more_case_tools_menu.append_section("Summaries", summary_tools_menu)
 
         self._more_case_tools_button = Gtk.MenuButton()
-        self._more_case_tools_button.set_label("More")
+        self._more_case_tools_button.set_child(
+            self._build_labeled_icon(
+                "More",
+                "view-more-symbolic",
+                "open-menu-symbolic",
+            )
+        )
         self._more_case_tools_button.add_css_class("flat")
         self._more_case_tools_button.add_css_class("no-bold")
         self._more_case_tools_button.add_css_class("focus-pill-segment")
         self._more_case_tools_button.set_valign(Gtk.Align.CENTER)
         self._more_case_tools_button.set_tooltip_text("More case tools")
+        self._set_accessible_label(self._more_case_tools_button, "More case tools")
         self._more_case_tools_button.set_menu_model(more_case_tools_menu)
         ai_mode_strip.append(self._more_case_tools_button)
-        ai_mode_cluster.append(ai_mode_strip)
-        ai_header.append(ai_mode_cluster)
+        ai_header.append(ai_mode_strip)
+
+        status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        status_row.add_css_class("focus-case-tools-status-row")
+        status_row.set_hexpand(True)
+        self._ai_spinner = Gtk.Spinner(spinning=False)
+        self._ai_spinner.set_size_request(16, 16)
+        self._ai_spinner.set_valign(Gtk.Align.CENTER)
+        self._ai_spinner.set_visible(False)
+        status_row.append(self._ai_spinner)
+        self._ai_status_label = Gtk.Label(label="", xalign=0)
+        self._ai_status_label.add_css_class("focus-case-tools-status")
+        self._ai_status_label.set_hexpand(True)
+        self._ai_status_label.set_single_line_mode(True)
+        self._ai_status_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self._ai_status_label.set_accessible_role(Gtk.AccessibleRole.STATUS)
+        status_row.append(self._ai_status_label)
+        ai_header.append(status_row)
 
         self._ai_controls_stack = Gtk.Stack()
         self._ai_controls_stack.set_hexpand(True)
@@ -808,35 +872,53 @@ class Focus(Adw.Application):
         agent_view.set_hexpand(True)
         agent_view.set_vexpand(True)
         agent_header_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        agent_header_controls.add_css_class("focus-agent-composer")
         agent_header_controls.set_hexpand(True)
         agent_header_controls.set_valign(Gtk.Align.CENTER)
 
         self._agent_question_entry = Gtk.Entry()
         self._agent_question_entry.set_hexpand(True)
-        self._agent_question_entry.set_width_chars(18)
-        self._agent_question_entry.set_max_width_chars(30)
-        self._agent_question_entry.set_placeholder_text("Agent question")
+        self._agent_question_entry.set_width_chars(24)
+        self._agent_question_entry.set_placeholder_text("Ask a question about this record")
         self._agent_question_entry.connect("activate", self._on_agent_question_activate)
+        self._agent_question_entry.connect("changed", self._on_agent_question_changed)
         agent_header_controls.append(self._agent_question_entry)
+
+        self._agent_submit_button = Gtk.Button(label="Ask")
+        self._agent_submit_button.add_css_class("flat")
+        self._agent_submit_button.add_css_class("focus-agent-submit-button")
+        self._agent_submit_button.set_valign(Gtk.Align.CENTER)
+        self._agent_submit_button.set_sensitive(False)
+        self._agent_submit_button.set_tooltip_text("Ask the embedded Agent about the record")
+        self._agent_submit_button.connect("clicked", self._on_agent_question_submit_clicked)
+        agent_header_controls.append(self._agent_submit_button)
+
+        agent_output_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        agent_output_header.add_css_class("focus-agent-output-header")
+        agent_output_header.set_hexpand(True)
+        agent_output_header.set_visible(False)
 
         agent_subview_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         agent_subview_strip.add_css_class("focus-pill-group")
+        agent_subview_strip.set_hexpand(True)
         agent_subview_strip.set_valign(Gtk.Align.CENTER)
 
         self._agent_answer_button = self._build_agent_subview_button(
-            ":A",
-            AGENT_SUBVIEW_ANSWER,
             "Answer",
+            AGENT_SUBVIEW_ANSWER,
+            "Show the latest linked Agent final answer",
         )
         agent_subview_strip.append(self._agent_answer_button)
 
         self._agent_session_button = self._build_agent_subview_button(
-            ":S",
-            AGENT_SUBVIEW_SESSION,
             "Session",
+            AGENT_SUBVIEW_SESSION,
+            "Show the embedded Agent terminal session",
         )
         agent_subview_strip.append(self._agent_session_button)
-        agent_header_controls.append(agent_subview_strip)
+        agent_output_header.append(agent_subview_strip)
+        self._agent_output_header = agent_output_header
+        agent_view.append(agent_output_header)
 
         self._agent_subview_host = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._agent_subview_host.set_hexpand(True)
@@ -893,6 +975,16 @@ class Focus(Adw.Application):
         file_view.set_vexpand(True)
         summary_row = self._build_wrapping_controls_box()
 
+        self._summary_search_entry = Gtk.SearchEntry()
+        self._summary_search_entry.set_placeholder_text("Search this summary")
+        self._summary_search_entry.set_width_chars(18)
+        self._summary_search_entry.set_max_width_chars(32)
+        self._summary_search_entry.set_hexpand(True)
+        self._summary_search_entry.set_valign(Gtk.Align.CENTER)
+        self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
+        self._summary_search_entry.connect("activate", self._on_summary_search_activate)
+        summary_row.insert(self._summary_search_entry, -1)
+
         self._summary_progress_label = Gtk.Label(label="0%")
         self._summary_progress_label.add_css_class("dim-label")
         self._summary_progress_label.set_valign(Gtk.Align.CENTER)
@@ -900,7 +992,6 @@ class Focus(Adw.Application):
         self._summary_progress_label.set_width_chars(6)
         self._summary_progress_label.set_single_line_mode(True)
         self._summary_progress_label.set_ellipsize(Pango.EllipsizeMode.END)
-
         summary_row.insert(self._summary_progress_label, -1)
 
         self._summary_bookmark_action_button = Gtk.Button(label="Set Bookmark")
@@ -922,21 +1013,11 @@ class Focus(Adw.Application):
         )
         summary_row.insert(self._summary_return_bookmark_action_button, -1)
 
-        self._summary_search_entry = Gtk.SearchEntry()
-        self._summary_search_entry.set_placeholder_text("Search summary")
-        self._summary_search_entry.set_width_chars(24)
-        self._summary_search_entry.set_max_width_chars(40)
-        self._summary_search_entry.set_hexpand(True)
-        self._summary_search_entry.set_valign(Gtk.Align.CENTER)
-        self._summary_search_entry.connect("search-changed", self._on_summary_search_changed)
-        self._summary_search_entry.connect("activate", self._on_summary_search_activate)
-        summary_row.insert(self._summary_search_entry, -1)
-
         self._refresh_summary_actions_state()
 
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
-            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_EXTRACT)
+            self._ai_controls_stack.add_named(extract_controls, AI_VIEW_EXTRACT)
             self._ai_controls_stack.add_named(agent_header_controls, AI_VIEW_AGENT_QA)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
@@ -963,7 +1044,7 @@ class Focus(Adw.Application):
         self._summary_scroller.set_hexpand(True)
         self._summary_scroller.set_vexpand(True)
         self._summary_scroller.set_propagate_natural_height(True)
-        self._summary_scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
+        self._summary_scroller.set_min_content_height(EMBEDDED_AI_OUTPUT_MIN_HEIGHT)
         self._summary_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
         self._summary_scroller.set_child(self._summary_view)
         self._connect_summary_scroll_watch()
@@ -975,7 +1056,6 @@ class Focus(Adw.Application):
         extract_scroller = self._build_ai_output_view(AI_VIEW_EXTRACT)
 
         summarize_view.append(summarize_scroller)
-        extract_view.append(extract_controls)
         extract_view.append(extract_scroller)
 
         self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
@@ -984,6 +1064,7 @@ class Focus(Adw.Application):
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
         self._ai_view_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
         self._sync_ai_view_toggles(AI_VIEW_AGENT_QA)
+        self._update_ai_status("", spinning=False)
 
         self._auto_load_summary_file()
 
@@ -1289,13 +1370,13 @@ class Focus(Adw.Application):
             scroller.set_visible(True)
             scroller.set_size_request(-1, -1)
             scroller.set_propagate_natural_height(True)
-            scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
+            scroller.set_min_content_height(EMBEDDED_AI_OUTPUT_MIN_HEIGHT)
             scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
         if self._summary_scroller:
             self._summary_scroller.set_visible(True)
             self._summary_scroller.set_size_request(-1, -1)
             self._summary_scroller.set_propagate_natural_height(True)
-            self._summary_scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
+            self._summary_scroller.set_min_content_height(EMBEDDED_AI_OUTPUT_MIN_HEIGHT)
             self._summary_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
 
     def _reset_embedded_ai_panel_sizing(self) -> None:
@@ -1347,8 +1428,6 @@ class Focus(Adw.Application):
             if self._ai_view_stack
             else self._ai_active_view
         )
-        if active_view == AI_VIEW_EXTRACT:
-            return True
         if active_view == AI_VIEW_AGENT_QA and self._agent_subview_name == AGENT_SUBVIEW_SESSION:
             return self._agent_session_has_content()
         _active_scroller, has_output = self._active_ai_output_scroller()
@@ -1357,7 +1436,7 @@ class Focus(Adw.Application):
     def _embedded_ai_output_min_height(self, max_height: int) -> int:
         if max_height <= 0:
             return 0
-        return min(EMBEDDED_AI_OUTPUT_MIN_HEIGHT, max_height)
+        return min(AI_OUTPUT_MIN_HEIGHT, max_height)
 
     @staticmethod
     def _set_scroller_content_height_bounds(
@@ -2445,13 +2524,16 @@ class Focus(Adw.Application):
         label: str,
         view_name: str,
         tooltip: str,
+        icon_names: tuple[str, ...] = (),
     ) -> Gtk.ToggleButton:
-        button = Gtk.ToggleButton(label=label)
+        button = Gtk.ToggleButton()
+        button.set_child(self._build_labeled_icon(label, *icon_names))
         button.add_css_class("flat")
         button.add_css_class("no-bold")
         button.add_css_class("focus-pill-segment")
         button.set_valign(Gtk.Align.CENTER)
         button.set_tooltip_text(tooltip)
+        self._set_accessible_label(button, label)
         button.connect("toggled", self._on_ai_mode_button_toggled, view_name)
         self._ai_view_buttons[view_name] = button
         return button
@@ -2461,14 +2543,17 @@ class Focus(Adw.Application):
         label: str,
         source: str,
         tooltip: str,
-    ) -> Gtk.Button:
-        button = Gtk.Button(label=label)
+        icon_names: tuple[str, ...] = (),
+    ) -> Gtk.ToggleButton:
+        button = Gtk.ToggleButton()
+        button.set_child(self._build_labeled_icon(label, *icon_names))
         button.add_css_class("flat")
         button.add_css_class("no-bold")
         button.add_css_class("focus-pill-segment")
         button.set_valign(Gtk.Align.CENTER)
         button.set_tooltip_text(tooltip)
-        button.connect("clicked", lambda _button: self._open_case_tool_summary(source))
+        self._set_accessible_label(button, label)
+        button.connect("toggled", self._on_summary_mode_button_toggled, source)
         self._summary_source_buttons[source] = button
         return button
 
@@ -2490,18 +2575,35 @@ class Focus(Adw.Application):
     def _agent_session_has_content(self) -> bool:
         return bool(self._agent_terminal_active or Vte is None)
 
-    def _sync_agent_session_widget_visibility(self) -> None:
-        if not self._agent_session_widget:
-            return
-        show_session = (
-            self._agent_subview_name == AGENT_SUBVIEW_SESSION
-            and self._agent_session_has_content()
+    def _agent_answer_has_content(self) -> bool:
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        return bool(
+            self._agent_last_answer_text.strip()
+            or (state is not None and state.raw.strip())
         )
-        self._agent_session_widget.set_visible(show_session)
-        if show_session and self._agent_terminal_active:
-            self._agent_session_widget.set_size_request(-1, 260)
-        else:
-            self._agent_session_widget.set_size_request(-1, -1)
+
+    def _sync_agent_output_header_state(self) -> None:
+        has_answer = self._agent_answer_has_content()
+        has_session = self._agent_session_has_content()
+        if self._agent_output_header:
+            self._agent_output_header.set_visible(has_answer or has_session)
+        if self._agent_answer_button:
+            self._agent_answer_button.set_sensitive(has_answer)
+        if self._agent_session_button:
+            self._agent_session_button.set_sensitive(has_session)
+
+    def _sync_agent_session_widget_visibility(self) -> None:
+        if self._agent_session_widget:
+            show_session = (
+                self._agent_subview_name == AGENT_SUBVIEW_SESSION
+                and self._agent_session_has_content()
+            )
+            self._agent_session_widget.set_visible(show_session)
+            if show_session and self._agent_terminal_active:
+                self._agent_session_widget.set_size_request(-1, 260)
+            else:
+                self._agent_session_widget.set_size_request(-1, -1)
+        self._sync_agent_output_header_state()
 
     def _set_agent_subview(self, subview_name: str) -> None:
         target = (
@@ -2819,7 +2921,7 @@ class Focus(Adw.Application):
         scroller.set_hexpand(True)
         scroller.set_vexpand(True)
         scroller.set_propagate_natural_height(True)
-        scroller.set_min_content_height(AI_OUTPUT_MIN_HEIGHT)
+        scroller.set_min_content_height(EMBEDDED_AI_OUTPUT_MIN_HEIGHT)
         scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
         scroller.set_child(text_view)
         state.scroller = scroller
@@ -2841,25 +2943,56 @@ class Focus(Adw.Application):
             return [Focus._json_safe_value(item) for item in value]
         return str(value)
 
+    @staticmethod
+    def _rgba_luminance(color: Gdk.RGBA) -> float:
+        return (
+            (0.2126 * color.red)
+            + (0.7152 * color.green)
+            + (0.0722 * color.blue)
+        )
+
     def _resolve_ai_quote_color(self, view: Gtk.TextView | None) -> Gdk.RGBA:
+        dark = Adw.StyleManager.get_default().get_dark()
         fallback = Gdk.RGBA()
-        fallback.parse("#ffffff")
-        if not view:
-            return fallback
-        if hasattr(view, "get_color"):
-            base = view.get_color()
-        else:
-            context = view.get_style_context()
-            try:
-                base = context.get_color()
-            except TypeError:
-                base = context.get_color(Gtk.StateFlags.NORMAL)
+        fallback.parse("#f2f4f8" if dark else "#30343b")
+        base = fallback
+        if view:
+            if hasattr(view, "get_color"):
+                candidate = view.get_color()
+            else:
+                context = view.get_style_context()
+                try:
+                    candidate = context.get_color()
+                except TypeError:
+                    candidate = context.get_color(Gtk.StateFlags.NORMAL)
+            luminance = self._rgba_luminance(candidate)
+            if (dark and luminance >= 0.5) or (not dark and luminance < 0.5):
+                base = candidate
         quote = Gdk.RGBA()
         quote.red = base.red
         quote.green = base.green
         quote.blue = base.blue
         quote.alpha = DEFAULT_QUOTED_PHRASE_ALPHA
         return quote
+
+    @staticmethod
+    def _adjust_summary_emphasis_for_theme(
+        accent: Gdk.RGBA,
+        *,
+        dark: bool,
+    ) -> Gdk.RGBA:
+        luminance = Focus._rgba_luminance(accent)
+        if not dark and luminance > 0.58:
+            scale = 0.58 / luminance
+            accent.red *= scale
+            accent.green *= scale
+            accent.blue *= scale
+        elif dark and luminance < 0.52:
+            blend = min(1.0, (0.52 - luminance) / max(0.001, 1.0 - luminance))
+            accent.red += (1.0 - accent.red) * blend
+            accent.green += (1.0 - accent.green) * blend
+            accent.blue += (1.0 - accent.blue) * blend
+        return accent
 
     def _resolve_summary_emphasis_color(self) -> Gdk.RGBA:
         accent = Gdk.RGBA()
@@ -2870,7 +3003,10 @@ class Focus(Adw.Application):
         )
         if not accent.parse(configured):
             accent.parse(DEFAULT_SUMMARY_EMPHASIS_COLOR)
-        return accent
+        return self._adjust_summary_emphasis_for_theme(
+            accent,
+            dark=Adw.StyleManager.get_default().get_dark(),
+        )
 
     def _apply_summary_emphasis(
         self,
@@ -3039,7 +3175,11 @@ class Focus(Adw.Application):
                 self._apply_ai_output_links(state.raw, state)
 
     def _on_color_scheme_changed(self, *_args: object) -> None:
+        GLib.idle_add(self._refresh_ai_quote_colors_idle)
+
+    def _refresh_ai_quote_colors_idle(self) -> bool:
         self._refresh_ai_quote_colors()
+        return False
 
     def _on_ai_output_view_mapped(self, _view: Gtk.TextView, view_name: str) -> None:
         state = self._ai_outputs.get(view_name)
@@ -4043,6 +4183,8 @@ class Focus(Adw.Application):
     def _set_summary_active_source(self, source: str | None) -> None:
         self._summary_active_source = source
         self._sync_ai_view_toggles(self._ai_active_view)
+        if self._ai_active_view == AI_VIEW_FILE:
+            self._refresh_case_tools_status()
 
     def _infer_summary_source(self, path: Path) -> str:
         name = path.name.casefold()
@@ -5975,6 +6117,27 @@ class Focus(Adw.Application):
         elif source == SUMMARY_SOURCE_REPORTS:
             self._on_reports_summary_clicked(None)
 
+    def _case_tool_description(self, view_name: str | None = None) -> str:
+        target = view_name or self._ai_active_view
+        if target == AI_VIEW_FILE:
+            return SUMMARY_SOURCE_DESCRIPTIONS.get(
+                self._summary_active_source,
+                "Browse prepared case summaries; verify material points in the record.",
+            )
+        return CASE_TOOL_DESCRIPTIONS.get(
+            target,
+            "Choose a record tool.",
+        )
+
+    def _refresh_case_tools_status(self, *, preserve_busy: bool = True) -> None:
+        if (
+            preserve_busy
+            and self._ai_spinner is not None
+            and self._ai_spinner.get_spinning()
+        ):
+            return
+        self._update_ai_status("", spinning=False)
+
     def _set_ai_view(self, view_name: str) -> None:
         target = view_name
         if target not in self._ai_outputs and target != AI_VIEW_FILE:
@@ -6004,6 +6167,7 @@ class Focus(Adw.Application):
         ):
             self._ai_controls_stack.set_visible_child_name(target)
         self._sync_ai_view_toggles(target)
+        self._refresh_case_tools_status()
         if self._ai_panel_revealer and self._ai_panel_revealer.get_reveal_child():
             self._update_embedded_ai_panel_height(force=True)
         if target == AI_VIEW_FILE:
@@ -6051,6 +6215,7 @@ class Focus(Adw.Application):
                     button.remove_css_class("focus-ai-view-active")
             for source, button in self._summary_source_buttons.items():
                 active = target == AI_VIEW_FILE and source == self._summary_active_source
+                button.set_active(active)
                 if active:
                     button.add_css_class("focus-ai-view-active")
                 else:
@@ -6060,7 +6225,7 @@ class Focus(Adw.Application):
                     target == AI_VIEW_FILE
                     and self._summary_active_source in self._summary_source_buttons
                 )
-                more_active = target == AI_VIEW_SUMMARIZE or (
+                more_active = target in {AI_VIEW_SUMMARIZE, AI_VIEW_EXTRACT} or (
                     target == AI_VIEW_FILE and not exposed_summary_active
                 )
                 if more_active:
@@ -6086,6 +6251,23 @@ class Focus(Adw.Application):
                 self._sync_ai_view_toggles(view_name)
             return
         self._set_ai_view(view_name)
+
+    def _on_summary_mode_button_toggled(
+        self,
+        button: Gtk.ToggleButton,
+        source: str,
+    ) -> None:
+        if self._ai_view_toggle_guard:
+            return
+        if not button.get_active():
+            if (
+                self._ai_active_view == AI_VIEW_FILE
+                and self._summary_active_source == source
+            ):
+                self._sync_ai_view_toggles(AI_VIEW_FILE)
+            return
+        self._open_case_tool_summary(source)
+        self._sync_ai_view_toggles(self._ai_active_view)
 
     def _on_summarize_range_activate(self, _entry: Gtk.Entry) -> None:
         self._summarize_page_range()
@@ -6268,6 +6450,25 @@ class Focus(Adw.Application):
     def _on_agent_question_activate(self, _entry: Gtk.Entry) -> None:
         self._launch_agent_question()
 
+    def _on_agent_question_changed(self, _entry: Gtk.Entry) -> None:
+        if self._agent_question_entry:
+            self._current_view_state().agent_question_text = (
+                self._agent_question_entry.get_text()
+            )
+        self._refresh_agent_submit_state()
+
+    def _on_agent_question_submit_clicked(self, _button: Gtk.Button) -> None:
+        self._launch_agent_question()
+
+    def _refresh_agent_submit_state(self) -> None:
+        if not self._agent_submit_button:
+            return
+        has_question = bool(
+            self._agent_question_entry
+            and self._agent_question_entry.get_text().strip()
+        )
+        self._agent_submit_button.set_sensitive(has_question)
+
     def _focus_agent_question_entry(self) -> None:
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
@@ -6303,6 +6504,7 @@ class Focus(Adw.Application):
             state.raw = ""
             self._apply_ai_output_links("", state)
         self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = ""
+        self._sync_agent_output_header_state()
         self._queue_embedded_ai_panel_height_update()
 
     def _stop_agent_answer_polling(self) -> None:
@@ -6340,7 +6542,7 @@ class Focus(Adw.Application):
                 self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = answer
                 self._apply_ai_output_links(answer, state)
                 self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
-                self._update_ai_status("Agent final answer mirrored.", spinning=False)
+                self._update_ai_status("Final answer ready.", spinning=False)
                 self._queue_embedded_ai_panel_height_update()
         keep_polling = self._agent_terminal_active
         if not keep_polling:
@@ -6503,8 +6705,8 @@ class Focus(Adw.Application):
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._start_agent_answer_polling()
         self._update_ai_status(
-            f"Started embedded PI Agent with command: {command}",
-            spinning=False,
+            "Agent is researching the record…",
+            spinning=True,
         )
         terminal.grab_focus()
 
@@ -6524,6 +6726,7 @@ class Focus(Adw.Application):
             self._poll_agent_answer()
             self._sync_agent_session_widget_visibility()
             self._queue_embedded_ai_panel_height_update()
+            self._update_ai_status("Unable to start the Agent.", spinning=False)
             self._ai_transient_toast(f"Unable to start embedded Agent: {error.message}")
             return
         self._agent_terminal_pid = int(pid)
@@ -6543,7 +6746,12 @@ class Focus(Adw.Application):
         self._poll_agent_answer()
         self._sync_agent_session_widget_visibility()
         self._queue_embedded_ai_panel_height_update()
-        message = "Embedded Agent closed." if closing else "Embedded Agent session ended."
+        if self._agent_answer_has_content():
+            message = "Final answer ready."
+        elif closing:
+            message = "Agent session closed."
+        else:
+            message = "Agent session ended without a final answer."
         self._update_ai_status(message, spinning=False)
 
     def _on_agent_terminal_style_changed(self, *_args: object) -> None:
@@ -6582,6 +6790,7 @@ class Focus(Adw.Application):
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
         self._sync_agent_session_widget_visibility()
+        self._update_ai_status("", spinning=False)
         self._queue_embedded_ai_panel_height_update()
 
     def _submit_speech_agent_question(self) -> None:
@@ -7053,6 +7262,10 @@ class Focus(Adw.Application):
         state = self._current_view_state()
         state.ai_status_text = text
         state.ai_spinning = spinning
+        display_text = text.strip() or self._case_tool_description()
+        if self._ai_status_label:
+            self._ai_status_label.set_text(display_text)
+            self._ai_status_label.set_tooltip_text(display_text)
         if self._ai_spinner:
             self._ai_spinner.set_spinning(spinning)
             self._ai_spinner.set_visible(spinning)
