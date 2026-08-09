@@ -225,22 +225,25 @@ PAGE_TEXT_FG_COLOR = "#000000"
 DEFAULT_PAGE_FONT_FAMILY_CSS = '"Noto Serif", "Liberation Serif", "DejaVu Serif", serif'
 RECORD_FONT_FAMILY_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Noto Serif", '"Noto Serif", "Liberation Serif", "DejaVu Serif", serif'),
-    ("Georgia", 'Georgia, "Times New Roman", "Liberation Serif", serif'),
-    ("Merriweather", '"Merriweather", "Noto Serif", "Liberation Serif", serif'),
-    ("Source Sans 3", '"Source Sans 3", "Noto Sans", "Liberation Sans", sans-serif'),
+    ("Bitstream Charter", '"Bitstream Charter", Charter, serif'),
+    ("Linux Libertine O", '"Linux Libertine O", "Linux Libertine", serif'),
+    ("Caladea", 'Caladea, Cambria, "Liberation Serif", serif'),
+    ("Gentium Book Basic", '"Gentium Book Basic", Gentium, serif'),
+    ("DejaVu Serif", '"DejaVu Serif", "Liberation Serif", serif'),
+    ("Century Schoolbook", '"Century Schoolbook", "C059", "TeX Gyre Schola", serif'),
     (
         "TeX Gyre Schola",
         '"TeX Gyre Schola", "New Century Schoolbook", '
         '"Century Schoolbook L", "URW Schoolbook L", serif',
     ),
-    (
-        "Century Schoolbook",
-        '"Century Schoolbook", "New Century Schoolbook", '
-        '"Century Schoolbook L", "URW Schoolbook L", "TeX Gyre Schola", serif',
-    ),
+    ("Lato", 'Lato, Carlito, "Noto Sans", "Liberation Sans", sans-serif'),
 )
 DEFAULT_RECORD_FONT_FAMILY_NAME = RECORD_FONT_FAMILY_OPTIONS[0][0]
-LEGACY_RECORD_FONT_FAMILY_ALIASES: dict[str, str] = {}
+LEGACY_RECORD_FONT_FAMILY_ALIASES: dict[str, str] = {
+    "Georgia": "Caladea",
+    "Merriweather": "Bitstream Charter",
+    "Source Sans 3": "Lato",
+}
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
