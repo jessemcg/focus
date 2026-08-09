@@ -215,7 +215,6 @@ class Focus(Adw.Application):
         self._ai_range_autofilled = True
         self._ai_range_update_guard = False
         self._extract_range_entry: Gtk.Entry | None = None
-        self._ai_profile_dropdowns: dict[str, Gtk.DropDown] = {}
         self._ai_panel_toggle: Gtk.ToggleButton | None = None
         self._ai_panel_toggle_guard = False
         self._ai_stream_thread: threading.Thread | None = None
@@ -844,13 +843,6 @@ class Focus(Adw.Application):
         extract_btn.set_halign(Gtk.Align.START)
         extract_btn.connect("clicked", self._on_extract_page_clicked)
         extract_controls.append(extract_btn)
-
-        extract_controls.append(
-            self._build_ai_profile_dropdown(
-                TASK_PROFILE_EXTRACT,
-                "Model profile for information extraction.",
-            )
-        )
 
         self._extract_range_entry = Gtk.Entry()
         self._extract_range_entry.set_placeholder_text("Page Range")
@@ -2662,74 +2654,6 @@ class Focus(Adw.Application):
                 self._set_agent_subview(subview_name)
             return
         self._set_agent_subview(subview_name)
-
-    def _profile_dropdown_labels(
-        self,
-        *,
-        include_legacy: bool = True,
-        abbreviated: bool = False,
-    ) -> list[str]:
-        labels = [
-            profile.short_name() if abbreviated else profile.display_name()
-            for profile in self._ai_settings.model_profiles
-        ]
-        if include_legacy:
-            legacy_label = "Legacy" if abbreviated else UNSET_PROFILE_LABEL
-            return [legacy_label, *labels]
-        return labels
-
-    def _build_profile_dropdown_model(
-        self,
-        *,
-        include_legacy: bool = True,
-        abbreviated: bool = False,
-    ) -> Gtk.StringList:
-        return Gtk.StringList.new(
-            self._profile_dropdown_labels(
-                include_legacy=include_legacy,
-                abbreviated=abbreviated,
-            )
-        )
-
-    def _selected_profile_index(self, task_key: str, *, include_legacy: bool = True) -> int:
-        selected_key = self._ai_settings.task_profile_defaults.get(task_key)
-        if selected_key in MODEL_PROFILE_IDS:
-            index = MODEL_PROFILE_IDS.index(selected_key)
-            return index + 1 if include_legacy else index
-        return 0
-
-    def _profile_key_from_dropdown(
-        self,
-        dropdown: Gtk.DropDown | None,
-        *,
-        include_legacy: bool = True,
-    ) -> str | None:
-        if dropdown is None:
-            return None
-        selected = int(dropdown.get_selected())
-        if include_legacy:
-            selected -= 1
-        if 0 <= selected < len(MODEL_PROFILE_IDS):
-            return MODEL_PROFILE_IDS[selected]
-        return None
-
-    def _build_ai_profile_dropdown(self, task_key: str, tooltip: str) -> Gtk.DropDown:
-        dropdown = Gtk.DropDown(model=self._build_profile_dropdown_model(abbreviated=True))
-        dropdown.set_selected(self._selected_profile_index(task_key))
-        dropdown.set_tooltip_text(tooltip)
-        dropdown.set_valign(Gtk.Align.CENTER)
-        dropdown.set_hexpand(False)
-        self._ai_profile_dropdowns[task_key] = dropdown
-        return dropdown
-
-    def _selected_ai_profile_key(self, task_key: str) -> str | None:
-        return self._profile_key_from_dropdown(self._ai_profile_dropdowns.get(task_key))
-
-    def _refresh_ai_profile_dropdowns(self) -> None:
-        model = self._build_profile_dropdown_model(abbreviated=True)
-        for task_key, dropdown in self._ai_profile_dropdowns.items():
-            dropdown.set_model(model)
-            dropdown.set_selected(self._selected_profile_index(task_key))
 
     def _build_wrapping_controls_box(self) -> Gtk.FlowBox:
         box = Gtk.FlowBox()
@@ -5650,7 +5574,6 @@ class Focus(Adw.Application):
             self._ai_settings.page_prompt = DEFAULT_SUMMARIZATION_PROMPT
         if not self._ai_settings.range_prompt.strip():
             self._ai_settings.range_prompt = DEFAULT_SUMMARIZATION_PROMPT
-        self._refresh_ai_profile_dropdowns()
         self._refresh_ai_quote_colors()
         self._apply_text_color(self._current_text_color)
         if self.textview:
@@ -6417,7 +6340,6 @@ class Focus(Adw.Application):
             label=f"page {page:04d}",
             content=payload,
             prompt_kind="extract",
-            profile_key=self._selected_ai_profile_key(TASK_PROFILE_EXTRACT),
         )
 
     def _on_extract_range_activate(self, _entry: Gtk.Entry) -> None:
@@ -6453,7 +6375,6 @@ class Focus(Adw.Application):
             label=label,
             content=combined,
             prompt_kind="extract",
-            profile_key=self._selected_ai_profile_key(TASK_PROFILE_EXTRACT),
         )
         self._extract_range_entry.set_text("")
 
@@ -7191,7 +7112,6 @@ class Focus(Adw.Application):
         label: str,
         content: str,
         prompt_kind: str,
-        profile_key: str | None = None,
     ) -> None:
         state = self._current_view_state()
         self._ai_settings = load_ai_settings()
@@ -7199,7 +7119,7 @@ class Focus(Adw.Application):
         if prompt_kind == "extract":
             target_view = AI_VIEW_EXTRACT
             action_label = "Extracting"
-            credentials = settings.extract_llm_credentials(profile_key)
+            credentials = settings.extract_llm_credentials()
             error = self._llm_credentials_error(credentials, "extract")
             if error or not (settings.extract_prompt or DEFAULT_EXTRACT_PROMPT).strip():
                 self._ai_transient_toast(error or "Configure the extract prompt in Settings.")
@@ -7208,7 +7128,7 @@ class Focus(Adw.Application):
         elif prompt_kind == "range":
             target_view = AI_VIEW_SUMMARIZE
             action_label = "Summarizing"
-            credentials = settings.range_llm_credentials(profile_key)
+            credentials = settings.range_llm_credentials()
             error = self._llm_credentials_error(credentials, "range summary")
             if error or not (settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT).strip():
                 self._ai_transient_toast(error or "Configure the range summarization prompt in Settings.")

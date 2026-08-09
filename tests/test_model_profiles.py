@@ -13,6 +13,7 @@ from focus.core import (
     CONFIG_KEY_SEARCH_CHIP_COLOR,
     CONFIG_KEY_TASK_DEFAULT_PROFILES,
     MODEL_PROFILE_IDS,
+    TASK_PROFILE_EXTRACT,
     TASK_PROFILE_PAGE,
     TASK_PROFILE_RANGE,
     AiSettings,
@@ -95,15 +96,20 @@ def test_profile_credentials_override_legacy_values() -> None:
                 disable_reasoning=True,
             )
         ],
-        task_profile_defaults={TASK_PROFILE_PAGE: "profile1"},
+        task_profile_defaults={
+            TASK_PROFILE_PAGE: "profile1",
+            TASK_PROFILE_EXTRACT: "profile1",
+        },
     )
 
-    credentials = settings.page_llm_credentials()
+    page_credentials = settings.page_llm_credentials()
+    extract_credentials = settings.extract_llm_credentials()
 
-    assert credentials.api_url == "https://profile.example"
-    assert credentials.model_id == "profile-model"
-    assert credentials.api_key == "profile-key"
-    assert credentials.disable_reasoning is True
+    for credentials in (page_credentials, extract_credentials):
+        assert credentials.api_url == "https://profile.example"
+        assert credentials.model_id == "profile-model"
+        assert credentials.api_key == "profile-key"
+        assert credentials.disable_reasoning is True
 
 
 def test_model_profile_short_name_prefers_abbreviation() -> None:
