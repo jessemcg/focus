@@ -14,8 +14,38 @@ from focus.pi_runtime import (
 )
 
 
+PI_MODEL_DROPDOWN_WIDTH_CHARS = 64
+PI_MODEL_DROPDOWN_MAX_WIDTH_CHARS = 80
+
+
 def _format_pi_thinking_level(level: str) -> str:
     return "XHigh" if level == "xhigh" else level.title()
+
+
+def _setup_pi_model_list_item(
+    _factory: Gtk.SignalListItemFactory,
+    list_item: Gtk.ListItem,
+) -> None:
+    label = Gtk.Label(xalign=0)
+    label.set_width_chars(PI_MODEL_DROPDOWN_WIDTH_CHARS)
+    label.set_max_width_chars(PI_MODEL_DROPDOWN_MAX_WIDTH_CHARS)
+    label.set_wrap(True)
+    label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+    label.set_margin_top(6)
+    label.set_margin_bottom(6)
+    label.set_margin_start(12)
+    label.set_margin_end(12)
+    list_item.set_child(label)
+
+
+def _bind_pi_model_list_item(
+    _factory: Gtk.SignalListItemFactory,
+    list_item: Gtk.ListItem,
+) -> None:
+    item = list_item.get_item()
+    label = list_item.get_child()
+    if isinstance(item, Gtk.StringObject) and isinstance(label, Gtk.Label):
+        label.set_label(item.get_string())
 
 
 @dataclass
@@ -617,6 +647,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             ),
         )
         self.pi_model_row.set_model(Gtk.StringList.new(["Loading PI models..."]))
+        pi_model_list_factory = Gtk.SignalListItemFactory()
+        pi_model_list_factory.connect("setup", _setup_pi_model_list_item)
+        pi_model_list_factory.connect("bind", _bind_pi_model_list_item)
+        self.pi_model_row.set_list_factory(pi_model_list_factory)
         self.pi_model_row.set_sensitive(False)
         self.pi_model_row.connect(
             "notify::selected",
