@@ -1,16 +1,16 @@
 # Focus
 
-Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and page images, navigating official RT/CT citations, searching extracted text, viewing RecordPrep summaries, and asking citation-grounded questions through an embedded PI Agent.
+Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and page images, navigating official RT/CT citations, searching extracted text, viewing RecordPrep summaries, and asking record-grounded questions through an embedded PI Agent.
 
 ## Features
 
 - Page-by-page transcript reading with TOC navigation, page images, printing, and bookmarks.
-- Fast ordinary grep with hit navigation and configurable highlighting.
+- Fast Python-only record search with Unicode/OCR normalization, hit navigation, and configurable highlighting.
 - Official transcript-page/citation lookup from RecordPrep metadata.
 - Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
 - Hearing, report, and minute-order summary views, with legacy organized-summary compatibility.
 - An organized Case Tools workspace with contextual controls for Agent Q&A, summaries, extraction, and page-range summarization.
-- Agent Q&A in an embedded VTE terminal with a mirrored final answer.
+- Agent Q&A in an embedded VTE terminal with a mirrored final answer and short clickable record quotes.
 - Compact nonauthoritative case orientation and source-map capability checks before targeted research over the original `text_pages`.
 - Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, safe source paths, and record citations.
 - Hearing-scoped counsel, non-counsel participant, witness, and examination context when the bundle has source-map schema v2.
@@ -90,7 +90,7 @@ case_bundle/
     minutes_sum_<case>.txt
 ```
 
-Only `text_pages` is required for basic browsing. Citation-grounded Agent answers require `artifacts/source_map.json`. Source-map v1 remains searchable; participant-aware scopes and attribution require RecordPrep source-map v2.
+Only `text_pages` is required for basic browsing. Source-resolved Agent answers require `artifacts/source_map.json`. Source-map v1 remains searchable; participant-aware scopes and attribution require RecordPrep source-map v2.
 
 ## Configuration
 
@@ -110,18 +110,20 @@ Open **Case Tools** from the labeled header control and select **Agent Q&A**. Th
 
 For every question, Focus creates a private disposable workspace, stages `.pi/SYSTEM.md`, the explicit `focus-answer-record-questions` Agent Skill, PI settings, and the Priority extension, and launches PI with read-oriented tools. The case bundle remains outside the workspace and is treated as read-only evidence.
 
-Agent questions are case-wide by default. To direct the Agent to a particular page, identify its record citation in the question (for example, `CT 177`).
+Final answers use continuous, verbatim two-to-five-word quotes as clickable evidence links. Each substantive paragraph or list item should include a nearby quote, with multiple short anchors when materially different points rely on different passages. The Agent does not print record labels or other research metadata; it uses source-map citation data only internally to resolve and verify the correct text pages.
+
+Agent questions are case-wide by default. To direct the Agent to a particular page, identify its record citation in the question (for example, `CT 177`). The Agent may use that citation for lookup but omits it from the answer.
 
 The normal Agent workflow is:
 
 1. Run `focus/agent_helper.py context --json` once to read the optional versioned case overview and compact source-map status/capabilities.
 2. Run one on-demand helper scan with several query variants, initially capped at eight results.
-3. Read relevant full source pages directly through each match's safe `resolved_text_path`; the match already maps that exact page to its official citation.
+3. Read relevant full source text pages directly through each match's safe `resolved_text_path`; the match's internal metadata already source-resolves that exact page.
 4. Expand terms, aliases, or the result cap when results are incomplete, ambiguous, or conflicting.
 5. Inspect full `map --json` output only when document ranges, participant/witness/examination attribution, warnings, chronology, scoped follow-up work, or a negative finding requires it.
 6. Use `lookup` for pages reached by direct citation, grep/find, or adjacent-page reading rather than redundantly looking up mapped search matches.
 
-The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source pages and use images only for genuinely visual ambiguities. The helper creates no index, cache, or database.
+The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source text pages. Its workflow is text-only: it never opens page images, and it reports when handwriting, checkboxes, layout, signatures, or unresolved OCR cannot be determined from extracted text. Focus's ordinary image viewer remains available to the user. The helper creates no index, cache, or database.
 
 Run the helper directly:
 
@@ -194,7 +196,7 @@ uv run python -m compileall -q focus tests
 bash -n scripts/focus-agent-vte.sh
 ```
 
-For a manual smoke test, open a schema-v2 bundle, verify that Agent Q&A is the only record-question view, run a participant-scoped question, confirm the final answer cites actual record labels, and verify that no search index or database is created.
+For a manual smoke test, open a schema-v2 bundle, verify that Agent Q&A is the only record-question view, and run a participant-scoped question. Confirm that every substantive paragraph or list item has a clickable exact two-to-five-word quote, no record labels or research metadata appear, and no search index or database is created. Ask a visual-only question and confirm that the Agent reports the text limitation without opening an image.
 
 ## License
 

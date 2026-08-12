@@ -9,7 +9,7 @@ from .ui.settings import AiSettingsWindow
 
 
 CASE_TOOL_DESCRIPTIONS = {
-    AI_VIEW_AGENT_QA: "Ask citation-grounded questions across the original record.",
+    AI_VIEW_AGENT_QA: "Ask record-grounded questions across the original record.",
     AI_VIEW_SUMMARIZE: "Summarize a page or citation range with the selected model profile.",
     AI_VIEW_EXTRACT: "Extract structured information from the current page or a page range.",
 }
@@ -4548,47 +4548,26 @@ class Focus(Adw.Application):
         page_to_path: dict[int, Path],
     ) -> None:
         local_hits: dict[int, list[tuple[int, int]]] = {}
-        phrase_source = self._grep_phrase_raw or ""
-        phrase_prepared = preprocess_phrase(phrase_source)
-        candidate_pages = self._find_grep_candidate_pages(
-            regex.pattern,
-            pages,
-            page_to_path,
-            cancel_event,
-        )
-        if candidate_pages is None:
-            anchor_token = ""
-            word_tokens = re.findall(r"[A-Za-z0-9]{4,}", phrase_prepared)
-            if word_tokens:
-                anchor_token = max(word_tokens, key=len).lower()
-            candidate_pages = []
-            for page in pages:
-                if cancel_event.is_set():
-                    return
-                path = page_to_path.get(page)
-                if not path:
-                    continue
-                if not anchor_token:
-                    candidate_pages.append(page)
-                    continue
-                content = self._read_text_file(path)
-                normalized = normalize_text_for_search(content)
-                if anchor_token in normalized.lower():
-                    candidate_pages.append(page)
-
-        for page in candidate_pages:
+        for page in pages:
             if cancel_event.is_set():
                 return
             path = page_to_path.get(page)
             if not path:
                 continue
             content = self._read_text_file(path)
+
+            # Search normalized text first without building an offset map. This
+            # inexpensive pass rejects nonmatching pages while preserving every
+            # Unicode, punctuation, spacing, and line-break rule used by the
+            # authoritative Python regex.
+            normalized = normalize_text_for_search(content)
+            if not normalized or regex.search(normalized) is None:
+                continue
+
+            # Build the more expensive normalized-to-original map only for a
+            # page that actually matched, then locate and map every hit.
             normalized, norm_to_orig = normalize_text_for_search_with_map(content)
-            if not normalized:
-                continue
             matches = list(regex.finditer(normalized))
-            if not matches:
-                continue
             mapped_hits: list[tuple[int, int]] = []
             for match in matches:
                 mapped = self._map_normalized_span_to_original(
@@ -4610,69 +4589,6 @@ class Focus(Adw.Application):
             local_hits,
             matching_pages,
         )
-
-    def _find_grep_candidate_pages(
-        self,
-        pattern: str,
-        pages: list[int],
-        page_to_path: dict[int, Path],
-        cancel_event: threading.Event,
-    ) -> list[int] | None:
-        rg_path = shutil.which("rg")
-        if not rg_path:
-            return None
-        search_root = str(self.text_dir)
-        order = {page: idx for idx, page in enumerate(pages)}
-        cmd = [
-            rg_path,
-            "--pcre2",
-            "--multiline",
-            "--ignore-case",
-            "--files-with-matches",
-            "--no-messages",
-            "--glob",
-            "*.txt",
-            "--regexp",
-            pattern,
-            search_root,
-        ]
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-        except Exception:
-            return None
-        try:
-            while True:
-                if cancel_event.is_set():
-                    proc.terminate()
-                    return []
-                try:
-                    proc.wait(timeout=0.05)
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-            output = proc.stdout.read() if proc.stdout else ""
-        except Exception:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-            return None
-
-        allowed_pages = set(pages)
-        matched: set[int] = set()
-        for raw_line in output.splitlines():
-            stem = Path(raw_line.strip()).stem
-            if not stem.isdigit():
-                continue
-            page = int(stem)
-            if page in allowed_pages:
-                matched.add(page)
-        return sorted(matched, key=lambda page: order.get(page, 0))
 
     def _map_normalized_span_to_original(
         self,

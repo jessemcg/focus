@@ -24,7 +24,14 @@ def test_pi_project_settings_select_model_without_credentials() -> None:
     assert settings.get("defaultProvider")
     assert isinstance(settings.get("defaultModel"), str)
     assert settings.get("defaultModel")
-    assert settings.get("defaultThinkingLevel") == "medium"
+    assert settings.get("defaultThinkingLevel") in {
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    }
     assert settings.get("fireworksPriorityServiceTier") is False
     assert settings.get("enableSkillCommands") is True
     assert settings.get("compaction") == {
@@ -46,7 +53,13 @@ def test_pi_system_prompt_has_focus_knowledge_work_contract() -> None:
     assert "nonauthoritative orientation aid" in prompt
     assert "Questions are case-wide" in prompt
     assert "current-focus-citation" not in prompt
-    assert "safe `resolved_text_path`" in prompt
+    assert "resolved_text_path" in prompt
+    assert "Every substantive paragraph or list" in prompt
+    assert "verbatim two-to-five-word record quote" in prompt
+    assert "Never display that metadata in the final answer" in prompt
+    assert "do not use bold text" in prompt
+    assert "Never open or inspect page images" in prompt
+    assert "Cite record labels" not in prompt
 
 
 def test_pi_priority_resources_are_present_and_fail_closed() -> None:
@@ -85,13 +98,25 @@ def test_pi_record_skill_has_expected_contract() -> None:
     assert "cache, or database" in skill
     assert "Q/A formatting alone does not establish testimony" in skill
     assert "Do not use web research, RAG, vector" in skill
-    assert "Never expose local paths" in skill
-    assert "checkboxes, signatures, initials, handwriting" in skill
-    assert "`resolved_image_path` directly to PI's `read`" in skill
-    assert "current model does not support images" in skill
-    assert "sentinel key containing `:missing:`" in skill
-    assert "Never invent a record citation" in skill
-    assert "(RT 6, 34; CT 140, 190.)" in skill
+    assert "High-priority final-answer contract" in skill
+    assert "every substantive paragraph or list" in skill
+    assert "exactly **two to five" in skill
+    assert "continuous, verbatim phrase" in skill
+    assert "Prefer distinctive" in skill
+    assert "Place each quote next to the point it supports" in skill
+    assert "Do not use bold text in the final answer" in skill
+    assert "omit `citation_label`, `citation_range`, citation keys" in skill
+    assert "Citation metadata is internal research" in skill
+    assert "never print it in the final answer" in skill
+    assert "Never open or inspect page images" in skill
+    assert "cannot be determined" in skill
+    assert "available text" in skill
+    assert "separate two-to-five-word linked quote" in skill
+    assert "no prohibited citation or research metadata remains" in skill
+    assert "Group citations by exact label" not in skill
+    assert "resolved_image_path" not in skill
+    assert "current model does not support images" not in skill
+    assert "(RT 6, 34; CT 140, 190.)" not in skill
 
 
 def test_agent_prompt_contains_only_the_users_question() -> None:

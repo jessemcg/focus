@@ -1,7 +1,7 @@
 {
-  "defaultProvider": "fireworks",
-  "defaultModel": "accounts/fireworks/models/glm-5p2",
-  "defaultThinkingLevel": "medium",
+  "defaultProvider": "baseten",
+  "defaultModel": "deepseek-ai/DeepSeek-V4-Flash-0731",
+  "defaultThinkingLevel": "high",
   "fireworksPriorityServiceTier": false,
   "enableSkillCommands": true,
   "compaction": {

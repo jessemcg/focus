@@ -1,10 +1,7 @@
 import re
-import shutil
 import threading
-from types import SimpleNamespace
 
-import pytest
-
+import focus.app as focus_app
 from focus.app import Focus
 from focus.core import (
     MAX_BREAKS,
@@ -299,26 +296,53 @@ def test_append_page_citation_to_selected_text_does_not_duplicate_citation() -> 
     assert updated == "The child was detained. (RT 45.)"
 
 
-@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep is not installed")
-def test_ripgrep_candidate_filter_matches_phrase_across_blank_line(tmp_path) -> None:
+def test_python_worker_matches_smart_apostrophe_with_straight_query(
+    tmp_path,
+    monkeypatch,
+) -> None:
     page_path = tmp_path / "0055.txt"
-    page_path.write_text(
-        "MR. BLOCH: And for trial, Your Honor, my issue still\n\n"
-        "is placement, probably a two-hour estimate for me.\n",
-        encoding="utf-8",
+    source = (
+        "Mother Courtney allowed father to come back into the family’s life "
+        "and to help raise children Carter and Nova."
+    )
+    page_path.write_text(source, encoding="utf-8")
+    phrase = (
+        "mother Courtney allowed father to come back into the family's life "
+        "and to help raise children Carter and Nova"
     )
     regex = re.compile(
-        build_pattern(preprocess_phrase("issue still is placement"), MAX_BREAKS),
+        build_pattern(preprocess_phrase(phrase), MAX_BREAKS),
         re.IGNORECASE | re.DOTALL,
     )
-    app = SimpleNamespace(text_dir=tmp_path)
+    completed: dict[str, object] = {}
 
-    matches = Focus._find_grep_candidate_pages(
-        app,
-        regex.pattern,
+    def capture_result(_callback, generation, hits, matching_pages):
+        completed.update(
+            generation=generation,
+            hits=hits,
+            matching_pages=matching_pages,
+        )
+        return 1
+
+    monkeypatch.setattr(focus_app.GLib, "idle_add", capture_result)
+
+    class Harness:
+        _read_text_file = Focus._read_text_file
+        _map_normalized_span_to_original = Focus._map_normalized_span_to_original
+        _grep_search_worker = Focus._grep_search_worker
+
+        def _on_grep_search_finished(self, *_args):
+            return False
+
+    Harness()._grep_search_worker(
+        regex,
+        7,
+        threading.Event(),
         [55],
         {55: page_path},
-        threading.Event(),
     )
 
-    assert matches == [55]
+    assert completed["generation"] == 7
+    assert completed["matching_pages"] == [55]
+    start, end = completed["hits"][55][0]
+    assert source[start:end] == source.removesuffix(".")
