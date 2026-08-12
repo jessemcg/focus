@@ -33,6 +33,20 @@ def test_grep_pattern_matches_phrase_across_blank_line() -> None:
     assert match.group(0) == "issue still\n\nis placement"
 
 
+def test_grep_pattern_ignores_quotes_around_source_word() -> None:
+    phrase = "Jason and father resemble each other"
+    source = 'The report says “Jason” and father resemble each other closely.'
+    regex = re.compile(
+        build_pattern(preprocess_phrase(phrase), MAX_BREAKS),
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    match = regex.search(normalize_text_for_search_with_map(source)[0])
+
+    assert match is not None
+    assert match.group(0) == 'Jason" and father resemble each other'
+
+
 def test_multiline_match_maps_full_display_span() -> None:
     content = (
         "Just a few issues. My client, at first, did\n"

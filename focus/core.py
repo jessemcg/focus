@@ -2940,7 +2940,10 @@ def build_pattern(phrase: str, max_breaks: int = MAX_BREAKS) -> str:
         rf"(?:\d{{1,{MAX_INTERWORD_NUMERIC_DIGITS}}}[ \t]*)"
         rf"{{0,{MAX_INTERWORD_NUMERIC_INSERTS}}}"
     )
-    sep = sep_base + numeric_bridge
+    # Ignore quotation marks at word boundaries so an otherwise continuous
+    # phrase can match OCR text such as: "Jason" and father.
+    optional_quotes = r"['\"]*"
+    sep = optional_quotes + sep_base + numeric_bridge + optional_quotes
     return r"(?x)" + sep.join(words)
 
 
