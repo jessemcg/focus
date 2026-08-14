@@ -8,7 +8,6 @@ from focus.pi_runtime import (
     available_pi_models,
     clamp_pi_thinking_level,
     current_project_pi_model,
-    current_project_pi_priority_service_tier,
     current_project_pi_thinking_level,
     save_project_pi_runtime,
 )
@@ -103,23 +102,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._pi_model_applying = False
         self._pi_model_selection_changed = False
         self._pi_thinking_selection_changed = False
-        self._pi_priority_selection_changed = False
         self._pi_model_closed = False
         try:
             self._original_pi_model_key = current_project_pi_model()
             self._original_pi_thinking_level = current_project_pi_thinking_level()
-            self._original_pi_priority_service_tier = (
-                current_project_pi_priority_service_tier()
-            )
-            self._pi_priority_preference = (
-                self._original_pi_priority_service_tier
-            )
             self._pi_model_settings_error = ""
         except PiSettingsError as exc:
             self._original_pi_model_key = None
             self._original_pi_thinking_level = None
-            self._original_pi_priority_service_tier = True
-            self._pi_priority_preference = True
             self._pi_model_settings_error = str(exc)
 
         self.set_title("Settings")
@@ -687,26 +677,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         launch_group.add(self.pi_thinking_row)
 
-        self.pi_priority_row = Adw.SwitchRow(
-            title="Priority",
-            subtitle=(
-                self._pi_model_settings_error
-                or "Loading Priority availability for the selected model..."
-            ),
-        )
-        self.pi_priority_row.set_active(False)
-        self.pi_priority_row.set_sensitive(False)
-        self.pi_priority_row.connect(
-            "notify::active",
-            self._on_pi_priority_selected,
-        )
-        launch_group.add(self.pi_priority_row)
-
         pi_configuration_row = Adw.ActionRow(
             title="PI configuration",
             subtitle=(
-                "The selected provider, model, reasoning effort, and Priority preference "
-                "are saved in project .pi/settings.json; credentials remain in your "
+                "The selected provider, model, and reasoning effort are saved in "
+                "project .pi/settings.json; credentials remain in your "
                 "global PI configuration."
             ),
         )
@@ -810,53 +785,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         finally:
             self._pi_model_applying = False
 
-    def _populate_pi_priority_row(self) -> None:
-        model = self._selected_pi_model()
-        self._pi_model_applying = True
-        try:
-            self.pi_priority_row.set_active(False)
-            self.pi_priority_row.set_sensitive(False)
-            if model is None:
-                self.pi_priority_row.set_subtitle(
-                    "Select an available PI model to check Priority support."
-                )
-                return
-            if model.settings_key not in self._pi_available_model_keys:
-                self.pi_priority_row.set_subtitle(
-                    "Priority availability cannot be verified; the saved preference "
-                    "is preserved."
-                )
-                return
-            if not model.supports_priority_service_tier:
-                if (
-                    model.provider == "fireworks"
-                    and model.model_id.startswith("accounts/fireworks/routers/")
-                ):
-                    subtitle = "Fireworks Fast router models do not support Priority."
-                elif model.provider == "fireworks":
-                    subtitle = (
-                        "Fireworks does not currently list Priority for this model."
-                    )
-                else:
-                    subtitle = (
-                        "Priority is available only for selected Fireworks models."
-                    )
-                self.pi_priority_row.set_subtitle(subtitle)
-                return
-            self.pi_priority_row.set_active(self._pi_priority_preference)
-            self.pi_priority_row.set_sensitive(True)
-            if self._pi_priority_preference:
-                self.pi_priority_row.set_subtitle(
-                    "New Agent sessions use Fireworks Priority billing. PI may show "
-                    "a lower Standard-rate cost estimate."
-                )
-            else:
-                self.pi_priority_row.set_subtitle(
-                    "New Agent sessions use the Fireworks Standard service tier."
-                )
-        finally:
-            self._pi_model_applying = False
-
     def _update_pi_model_subtitle(self) -> None:
         model = self._selected_pi_model()
         if model is None:
@@ -881,7 +809,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._update_pi_model_subtitle()
         preferred = self._selected_pi_thinking_level()
         self._populate_pi_thinking_row(preferred)
-        self._populate_pi_priority_row()
 
     def _on_pi_thinking_selected(
         self,
@@ -901,28 +828,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             f"{_format_pi_thinking_level(thinking_level)} reasoning."
         )
 
-    def _on_pi_priority_selected(
-        self,
-        _row: Adw.SwitchRow,
-        _parameter: object,
-    ) -> None:
-        if self._pi_model_applying:
-            return
-        self._pi_priority_preference = bool(self.pi_priority_row.get_active())
-        self._pi_priority_selection_changed = (
-            self._pi_priority_preference
-            != self._original_pi_priority_service_tier
-        )
-        if self._pi_priority_preference:
-            self.pi_priority_row.set_subtitle(
-                "New Agent sessions use Fireworks Priority billing. PI may show "
-                "a lower Standard-rate cost estimate."
-            )
-        else:
-            self.pi_priority_row.set_subtitle(
-                "New Agent sessions use the Fireworks Standard service tier."
-            )
-
     def _on_refresh_pi_models(self, _button: Gtk.Button) -> None:
         self._load_pi_models()
 
@@ -935,23 +840,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 self._original_pi_thinking_level = (
                     current_project_pi_thinking_level()
                 )
-                self._original_pi_priority_service_tier = (
-                    current_project_pi_priority_service_tier()
-                )
-                self._pi_priority_preference = (
-                    self._original_pi_priority_service_tier
-                )
                 self._pi_model_settings_error = ""
             except PiSettingsError as exc:
                 self.pi_model_row.set_subtitle(str(exc))
                 self.pi_model_row.set_sensitive(False)
                 self.pi_thinking_row.set_subtitle(str(exc))
                 self.pi_thinking_row.set_sensitive(False)
-                self._pi_model_applying = True
-                self.pi_priority_row.set_active(False)
-                self._pi_model_applying = False
-                self.pi_priority_row.set_subtitle(str(exc))
-                self.pi_priority_row.set_sensitive(False)
                 self.pi_model_refresh_button.set_sensitive(True)
                 return
 
@@ -1018,13 +912,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self.pi_thinking_row.set_subtitle(
             "Loading reasoning levels for the selected model..."
         )
-        self._pi_model_applying = True
-        self.pi_priority_row.set_active(False)
-        self._pi_model_applying = False
-        self.pi_priority_row.set_sensitive(False)
-        self.pi_priority_row.set_subtitle(
-            "Loading Priority availability for the selected model..."
-        )
         self.pi_model_refresh_button.set_sensitive(False)
 
         def worker() -> None:
@@ -1083,8 +970,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self.pi_model_row.set_subtitle(error)
             self._populate_pi_thinking_row(desired_thinking)
             self.pi_thinking_row.set_subtitle(error)
-            self._populate_pi_priority_row()
-            self.pi_priority_row.set_subtitle(error)
             return False
 
         available_keys = {model.settings_key for model in models}
@@ -1132,7 +1017,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         else:
             self._update_pi_model_subtitle()
         self._populate_pi_thinking_row(desired_thinking)
-        self._populate_pi_priority_row()
         return False
 
     def _on_prompt_row_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
@@ -1360,13 +1244,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if (
             self._pi_model_selection_changed
             or self._pi_thinking_selection_changed
-            or self._pi_priority_selection_changed
         ) and selected_pi_model is not None and selected_pi_thinking:
             try:
                 save_project_pi_runtime(
                     selected_pi_model,
                     selected_pi_thinking,
-                    self._pi_priority_preference,
                 )
                 pi_runtime_saved = True
             except PiSettingsError as exc:
@@ -1376,12 +1258,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if pi_runtime_saved and selected_pi_model is not None:
             self._original_pi_model_key = selected_pi_model.settings_key
             self._original_pi_thinking_level = selected_pi_thinking
-            self._original_pi_priority_service_tier = (
-                self._pi_priority_preference
-            )
             self._pi_model_selection_changed = False
             self._pi_thinking_selection_changed = False
-            self._pi_priority_selection_changed = False
         self.app.update_font_sizes(
             font_size_pt=record_font_size,
             ai_font_size_pt=ai_font_size,
@@ -1391,8 +1269,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self.app.on_ai_settings_saved(settings)
         if pi_runtime_saved:
             self._show_status_toast(
-                "Saved. The PI model, reasoning effort, and Priority preference "
-                "apply to new Agent sessions."
+                "Saved. The PI model and reasoning effort apply to new Agent sessions."
             )
         elif settings.is_configured():
             self._show_status_toast("Saved. Summaries and Agent questions are enabled.")

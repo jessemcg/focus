@@ -41,7 +41,7 @@ In **Settings → Agent**:
 
 1. Confirm the PI command.
 2. Refresh and select the PI model.
-3. Choose reasoning effort and Priority preference when available.
+3. Choose the reasoning effort.
 4. Confirm the speech-to-text question file. Its default is `/dev/shm/speech.txt`.
 
 New selections apply to newly launched Agent sessions. Focus rejects command-line flags that would override the checked-in project policy.
@@ -108,7 +108,7 @@ Obsolete embedding/vector-question credentials and settings are removed when con
 
 Open **Case Tools** from the labeled header control and select **Agent Q&A**. The question composer provides an explicit **Ask** action and inline activity feedback. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
 
-For every question, Focus creates a private disposable workspace, stages `.pi/SYSTEM.md`, the explicit `focus-answer-record-questions` Agent Skill, PI settings, and the Priority extension, and launches PI with read-oriented tools. The case bundle remains outside the workspace and is treated as read-only evidence.
+For every question, Focus creates a private disposable workspace, stages `.pi/SYSTEM.md`, the explicit `focus-answer-record-questions` Agent Skill, and PI settings, then launches PI with read-oriented tools. The case bundle remains outside the workspace and is treated as read-only evidence.
 
 Final answers use continuous, verbatim two-to-five-word quotes as clickable evidence links. Each substantive paragraph or list item should include a nearby quote, with multiple short anchors when materially different points rely on different passages. The Agent does not print record labels or other research metadata; it uses source-map citation data only internally to resolve and verify the correct text pages.
 
@@ -185,7 +185,7 @@ gdbus call --session \
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
 - `scripts/focus-agent-vte.sh`: disposable PI workspace launcher.
-- `.pi/`: checked-in PI system prompt, explicit Agent Skill, settings, and Priority resources.
+- `.pi/`: checked-in PI system prompt, explicit Agent Skill, and settings.
 - `tests/`: pytest coverage.
 
 ## Tests

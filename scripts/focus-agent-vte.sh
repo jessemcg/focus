@@ -64,18 +64,6 @@ if [[ ! -f "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" ]]; t
   exit 2
 fi
 
-if [[ ! -f "$pi_project_dir/fireworks-priority-models.json" ]]; then
-  printf 'Focus PI Priority manifest not found: %s\n' \
-    "$pi_project_dir/fireworks-priority-models.json" >&2
-  exit 2
-fi
-
-if [[ ! -f "$pi_project_dir/extensions/fireworks-priority.js" ]]; then
-  printf 'Focus PI Priority extension not found: %s\n' \
-    "$pi_project_dir/extensions/fireworks-priority.js" >&2
-  exit 2
-fi
-
 if [[ -z "${agent_command[0]:-}" ]] || ! command -v "${agent_command[0]}" >/dev/null 2>&1; then
   printf 'Focus Agent executable not found: %s\n' "${agent_command[0]:-}" >&2
   exit 127
@@ -95,7 +83,6 @@ prompt="$(cat "$prompt_file")"
   --no-themes \
   --no-context-files \
   --system-prompt "$workspace/.pi/SYSTEM.md" \
-  --extension "$workspace/.pi/extensions/fireworks-priority.js" \
   --skill "$workspace/.pi/skills/focus-answer-record-questions/SKILL.md" \
   --tools read,bash,grep,find,ls \
   "$prompt"

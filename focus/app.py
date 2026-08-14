@@ -6489,11 +6489,9 @@ class Focus(Adw.Application):
             not pi_settings.is_file()
             or not FOCUS_PI_SYSTEM_PROMPT_FILE.is_file()
             or not FOCUS_PI_SKILL_FILE.is_file()
-            or not FOCUS_PI_PRIORITY_MANIFEST_FILE.is_file()
-            or not FOCUS_PI_PRIORITY_EXTENSION_FILE.is_file()
         ):
             self._ai_transient_toast(
-                "Focus PI system prompt, settings, skill, or Priority resources are missing."
+                "Focus PI system prompt, settings, or skill is missing."
             )
             return
 
