@@ -69,6 +69,20 @@ if [[ -z "${agent_command[0]:-}" ]] || ! command -v "${agent_command[0]}" >/dev/
   exit 127
 fi
 
+# PiPlanner run-review capture: a trusted capture-only extension loaded
+# explicitly as the sole exception to --no-extensions isolation. It registers
+# no tools. Without it, the embedded Agent still launches, uncaptured.
+capture_extension="${PI_PLANNER_REVIEW_CAPTURE_EXTENSION:-${XDG_DATA_HOME:-${HOME:-}/.local/share}/pi-planner/package/src/run-review-capture.ts}"
+capture_args=()
+if [[ -f "$capture_extension" ]]; then
+  capture_args=(--extension "$capture_extension")
+  export PI_PLANNER_REVIEW_CAPTURE_APP=focus
+  export PI_PLANNER_REVIEW_CAPTURE_WORKFLOW=record-question
+  export PI_PLANNER_REVIEW_CAPTURE_PROJECT_ROOT="$(cd -- "$(dirname -- "$pi_project_dir")" && pwd)"
+else
+  printf 'Focus Agent review capture unavailable: %s\n' "$capture_extension" >&2
+fi
+
 mkdir -p "$workspace/tmp"
 mkdir -p "$workspace/.pi"
 cp -a "$pi_project_dir/." "$workspace/.pi/"
@@ -78,6 +92,7 @@ prompt="$(cat "$prompt_file")"
 "${agent_command[@]}" \
   --approve \
   --no-extensions \
+  ${capture_args[@]+"${capture_args[@]}"} \
   --no-skills \
   --no-prompt-templates \
   --no-themes \
