@@ -1,5 +1,7 @@
 # Focus
 
+<img src="focus.png" alt="Focus icon" width="128" align="left">
+
 Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and page images, navigating official RT/CT citations, searching extracted text, viewing RecordPrep summaries, and asking record-grounded questions through an embedded PI Agent.
 
 ## Features
