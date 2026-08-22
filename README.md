@@ -186,7 +186,7 @@ gdbus call --session \
 - `focus/agent_helper.py`: read-only context/map/lookup/document/search CLI for Agent sessions.
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
-- `scripts/focus-agent-vte.sh`: disposable PI workspace launcher. It runs Pi with `--no-extensions` isolation; the only exception is the trusted, capture-only PiPlanner extension loaded explicitly from `${XDG_DATA_HOME:-~/.local/share}/pi-planner/package/src/run-review-capture.ts` (override with `PI_PLANNER_REVIEW_CAPTURE_EXTENSION`) when present. It registers no tools, exports `PI_PLANNER_REVIEW_CAPTURE_APP=focus`, `PI_PLANNER_REVIEW_CAPTURE_WORKFLOW=record-question`, and the Focus repository root, and snapshots completed embedded runs for `/review-run` audits. If it is absent, the Agent still launches normally with a concise stderr warning.
+- `scripts/focus-agent-vte.sh`: disposable PI workspace launcher. It runs Pi with `--no-extensions` isolation and no extension exceptions, stages `.pi/` into a temporary workspace, passes the system prompt and record-question skill explicitly, and restricts the Agent to the read-only `read,bash,grep,find,ls` tool allowlist.
 - `.pi/`: checked-in PI system prompt, explicit Agent Skill, and settings.
 - `tests/`: pytest coverage.
 

@@ -31,11 +31,6 @@ set -euo pipefail
   if [[ -f .pi/skills/focus-answer-record-questions/SKILL.md ]]; then
     printf 'skill=staged\\n'
   fi
-  if [[ "${FOCUS_TEST_EMIT_CAPTURE_ENV:-}" == "1" ]]; then
-    printf 'capture_app=%s\\n' "${PI_PLANNER_REVIEW_CAPTURE_APP:-}"
-    printf 'capture_workflow=%s\\n' "${PI_PLANNER_REVIEW_CAPTURE_WORKFLOW:-}"
-    printf 'capture_root=%s\\n' "${PI_PLANNER_REVIEW_CAPTURE_PROJECT_ROOT:-}"
-  fi
 } > "$FOCUS_TEST_OUTPUT"
 """,
         encoding="utf-8",
@@ -78,9 +73,6 @@ def _run_wrapper(
     env.update(
         {
             "XDG_CACHE_HOME": str(tmp_path / "cache"),
-            # Guarantee the default PiPlanner capture path is absent so tests
-            # never depend on the host machine's installation state.
-            "XDG_DATA_HOME": str(tmp_path / "data-home"),
             "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
             "FOCUS_AGENT_CASE_ROOT": str(case_root),
             "FOCUS_AGENT_WORKSPACE": str(workspace),
@@ -129,44 +121,12 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "system=staged",
         "skill=staged",
     ]
+    # --no-extensions isolation is absolute: no extension is loaded, and no
+    # capture warning is emitted.
+    assert "arg=--extension" not in output
+    assert "capture" not in completed.stderr.lower()
     assert not workspace.exists()
     assert not prompt_path.exists()
-
-
-def test_pi_wrapper_warns_and_launches_when_capture_extension_absent(
-    tmp_path,
-) -> None:
-    output, _workspace, _prompt_path, completed = _run_wrapper(tmp_path)
-
-    assert completed.returncode == 0
-    assert "Focus Agent review capture unavailable" in completed.stderr
-    assert "arg=--no-extensions" in output
-    assert "arg=--extension" not in output
-
-
-def test_pi_wrapper_adds_review_capture_when_present(tmp_path) -> None:
-    capture = tmp_path / "run-review-capture.ts"
-    capture.write_text("// capture only\n", encoding="utf-8")
-    output, _workspace, _prompt_path, completed = _run_wrapper(
-        tmp_path,
-        extra_env={
-            "PI_PLANNER_REVIEW_CAPTURE_EXTENSION": str(capture),
-            "FOCUS_TEST_EMIT_CAPTURE_ENV": "1",
-        },
-    )
-
-    assert completed.returncode == 0
-    assert "arg=--no-extensions" in output
-    extension_index = output.index("arg=--extension")
-    assert output[extension_index + 1] == f"arg={capture}"
-    # The capture extension loads directly after --no-extensions and before
-    # the remaining isolation flags.
-    assert output.index("arg=--no-extensions") + 1 == extension_index
-    assert "arg=--tools" in output
-    assert "arg=read,bash,grep,find,ls" in output
-    assert "capture_app=focus" in output
-    assert "capture_workflow=record-question" in output
-    assert f"capture_root={tmp_path}" in output
 
 
 def test_pi_wrapper_rejects_missing_system_prompt(tmp_path) -> None:
@@ -181,7 +141,6 @@ def test_pi_wrapper_rejects_missing_system_prompt(tmp_path) -> None:
     env.update(
         {
             "XDG_CACHE_HOME": str(tmp_path / "cache"),
-            "XDG_DATA_HOME": str(tmp_path / "data-home"),
             "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
             "FOCUS_AGENT_CASE_ROOT": str(case_root),
             "FOCUS_PI_PROJECT_DIR": str(pi_project_dir),
@@ -205,7 +164,6 @@ def test_pi_wrapper_rejects_missing_project_resources(tmp_path) -> None:
     env.update(
         {
             "XDG_CACHE_HOME": str(tmp_path / "cache"),
-            "XDG_DATA_HOME": str(tmp_path / "data-home"),
             "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
             "FOCUS_AGENT_CASE_ROOT": str(case_root),
             "FOCUS_PI_PROJECT_DIR": str(tmp_path / "missing"),

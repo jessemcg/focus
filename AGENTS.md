@@ -12,7 +12,7 @@
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
 - `.pi/SYSTEM.md`: replacement knowledge-work system prompt copied into each private embedded-Agent workspace.
 - `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions.
-- `scripts/focus-agent-vte.sh`: launches the embedded Agent with `--no-extensions` isolation. The single trusted exception is the capture-only PiPlanner extension (`${XDG_DATA_HOME:-~/.local/share}/pi-planner/package/src/run-review-capture.ts`, override `PI_PLANNER_REVIEW_CAPTURE_EXTENSION`), which registers no tools, exports `PI_PLANNER_REVIEW_CAPTURE_APP=focus`, `PI_PLANNER_REVIEW_CAPTURE_WORKFLOW=record-question`, and the repository root, and snapshots completed runs for PiPlanner `/review-run` audits. If it is missing, the Agent must still launch normally with a concise warning; never hard-fail launch on capture.
+- `scripts/focus-agent-vte.sh`: launches the embedded Agent with `--no-extensions` isolation and no extension exceptions. It copies the `.pi/` project resources into a disposable workspace, passes the staged system prompt and record-question skill explicitly, and restricts the Agent to the read-only tool allowlist `read,bash,grep,find,ls`.
 - `config.json`: user-specific settings (input_dir, font sizes, API credentials, prompts); do not commit secrets.
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.
 - `prompts/`: change notes and UI prompt history.
