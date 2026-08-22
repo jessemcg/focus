@@ -110,22 +110,19 @@ Obsolete embedding/vector-question credentials and settings are removed when con
 
 Open **Case Tools** from the labeled header control and select **Agent Q&A**. The question composer provides an explicit **Ask** action and inline activity feedback. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
 
-For every question, Focus creates a private disposable workspace, stages `.pi/SYSTEM.md`, the explicit `focus-answer-record-questions` Agent Skill, and PI settings, then launches PI with read-oriented tools. The case bundle remains outside the workspace and is treated as read-only evidence.
+For every question, Focus creates a private disposable workspace, stages its short system prompt, canonical record-question skill, settings, and sole trusted Focus extension, then launches PI with `--no-session`. Global and project extension discovery stays disabled, no case-content JSONL is written to PI's global session directory, and credentials remain in PI's global auth store.
 
-Final answers use continuous, verbatim two-to-five-word quotes as clickable evidence links. Each substantive paragraph or list item should include a nearby quote, with multiple short anchors when materially different points rely on different passages. The Agent does not print record labels or other research metadata; it uses source-map citation data only internally to resolve and verify the correct text pages.
+The checked-in default is Fireworks DeepSeek V4 Pro 0813 at low reasoning. Focus disables auto-compaction for these one-question sessions, keeps transient provider retry enabled, and caps each model response at 8,192 output tokens.
 
-Agent questions are case-wide by default. To direct the Agent to a particular page, identify its record citation in the question (for example, `CT 177`). The Agent may use that citation for lookup but omits it from the answer.
+The Agent has only guarded `read`, the shell-free structured `focus_record` tool, and terminating `submit_focus_answer`. Record reads are confined to the active bundle's `text_pages/`; images remain forbidden, and corpus-wide grep is not available to the Agent. The structured tool provides navigation-only context, compact ranked search (six results by default), citation/page lookup, document inspection, and one targeted map section. Search diversifies results across individual query variants, reports each match's query indexes and source-document label, and favors date-matched contemporaneous event materials over later historical summaries for causal queries. Research receives a synthesis warning after two searches or eight page reads and hard stops at six searches, 24 page reads, and one map inspection.
 
-The normal Agent workflow is:
+The preferred workflow is one context call that exposes the nonauthoritative overview for search planning, one discriminative search covering every question subpart, parallel full reads of the best pages and necessary adjacent context, then immediate submission of the first substantively useful answer. Event-cause searches include an overview-provided event date and prefer contemporaneous orders, detention materials, petitions, hearings, and jurisdiction/disposition materials. A historical allegation alone does not prove why a later action occurred; a follow-up search is reserved for that missing causal link or another material unanswered subpart, ambiguity, conflict, attribution, negative findings, and requested chronology. Overview prose is never answer evidence and must not be mentioned or quoted.
 
-1. Run `focus/agent_helper.py context --json` once to read the optional versioned case overview and compact source-map status/capabilities.
-2. Run one on-demand helper scan with several query variants, initially capped at eight results.
-3. Read relevant full source text pages directly through each match's safe `resolved_text_path`; the match's internal metadata already source-resolves that exact page.
-4. Expand terms, aliases, or the result cap when results are incomplete, ambiguous, or conflicting.
-5. Inspect full `map --json` output only when document ranges, participant/witness/examination attribution, warnings, chronology, scoped follow-up work, or a negative finding requires it.
-6. Use `lookup` for pages reached by direct citation, grep/find, or adjacent-page reading rather than redundantly looking up mapped search matches.
+`submit_focus_answer` atomically writes an app-owned mode-600 runtime artifact and terminates without another model turn. If the model omits the tool, Focus captures one final plain assistant message as a best-effort fallback; `toolUse` narration is never treated as final. Output-limit and interrupted answers with usable text remain visible as partial answers. Formatting diagnostics are category-only and never reject, alter, suppress, or rerun an answer.
 
-The case overview supplies parties, procedural posture, key events, principal issues, and record scope, but it is an orientation aid only. Overview statements, search snippets, participant entries, and summaries are navigation leads, not proof. The Agent must verify material claims from source text pages. Its workflow is text-only: it never opens page images, and it reports when handwriting, checkboxes, layout, signatures, or unresolved OCR cannot be determined from extracted text. Focus's ordinary image viewer remains available to the user. The helper creates no index, cache, or database.
+Short continuous two-to-five-word record quotes, punctuation outside quotes, no record labels, and no bold remain preferred because they improve clickable links. They are not acceptance gates: a useful answer with a long quote, metadata, bold text, or imperfect paragraph support is displayed unchanged.
+
+The case overview, map metadata, snippets, participant entries, and summaries remain navigation leads rather than proof. The Agent verifies material claims from source text pages. If handwriting, checkboxes, layout, signatures, or unresolved OCR cannot be established from extracted text, it states that limitation instead of opening an image or guessing.
 
 Run the helper directly:
 
@@ -135,13 +132,18 @@ uv run python -m focus.agent_helper \
 
 uv run python -m focus.agent_helper \
   --case-root /path/to/case_bundle search \
-  --query "maternal grandmother placement" \
-  --query "placed with maternal grandmother" \
-  --max-results 8 --json
+  --query "named father section 342 petition" \
+  --query "named father caretaker absence incapacity" \
+  --max-results 6 --json
 
-# Optional detailed metadata for complex or scoped research:
+# Exceptional follow-up when returned full pages leave a subpart unanswered:
 uv run python -m focus.agent_helper \
-  --case-root /path/to/case_bundle map --json
+  --case-root /path/to/case_bundle search \
+  --query "placement order reason" --json
+
+# Optional targeted metadata for complex or scoped research:
+uv run python -m focus.agent_helper \
+  --case-root /path/to/case_bundle map --section documents --json
 ```
 
 ## Summaries
@@ -183,11 +185,12 @@ gdbus call --session \
 
 - `focus/app.py`: GTK application, transcript browsing, summaries, and Agent orchestration.
 - `focus/core.py`: shared config, record layout, citation, and rendering helpers.
-- `focus/agent_helper.py`: read-only context/map/lookup/document/search CLI for Agent sessions.
+- `focus/agent_helper.py`: compact context, targeted map, lookup, document, and ranked search CLI for Agent sessions.
+- `focus/agent_answer.py`: answer-artifact transport checks and non-blocking category linter.
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
-- `scripts/focus-agent-vte.sh`: disposable PI workspace launcher. It runs Pi with `--no-extensions` isolation and no extension exceptions, stages `.pi/` into a temporary workspace, passes the system prompt and record-question skill explicitly, and restricts the Agent to the read-only `read,bash,grep,find,ls` tool allowlist.
-- `.pi/`: checked-in PI system prompt, explicit Agent Skill, and settings.
+- `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, exactly one explicit Focus extension, no persisted session, and the strict `read,focus_record,submit_focus_answer` tool allowlist.
+- `.pi/`: checked-in PI system prompt, canonical Agent Skill, settings, and Focus record/answer extension.
 - `tests/`: pytest coverage.
 
 ## Tests
@@ -198,7 +201,7 @@ uv run python -m compileall -q focus tests
 bash -n scripts/focus-agent-vte.sh
 ```
 
-For a manual smoke test, open a schema-v2 bundle, verify that Agent Q&A is the only record-question view, and run a participant-scoped question. Confirm that every substantive paragraph or list item has a clickable exact two-to-five-word quote, no record labels or research metadata appear, and no search index or database is created. Ask a visual-only question and confirm that the Agent reports the text limitation without opening an image.
+For a sanitized manual smoke test, confirm Pro 0813 / low, then ask an affirmative identity/reason question, a negative-finding question, an attribution question, and a text-insufficient visual question. Confirm the first useful answer appears without a formatting retry; representative short quotes resolve, while longer or imperfect quotes do not suppress the answer. Verify best-effort and partial statuses are unobtrusive, no compaction occurs, and no Focus JSONL appears in PI's global session directory.
 
 ## License
 

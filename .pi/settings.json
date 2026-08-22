@@ -4,8 +4,9 @@
   "defaultThinkingLevel": "low",
   "enableSkillCommands": true,
   "compaction": {
-    "enabled": true,
-    "reserveTokens": 8192,
-    "keepRecentTokens": 12000
+    "enabled": false
+  },
+  "retry": {
+    "enabled": true
   }
 }

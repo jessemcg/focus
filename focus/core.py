@@ -136,6 +136,10 @@ DEFAULT_PI_AGENT_COMMAND = "pi"
 FOCUS_RECORD_AGENT_HELPER = PROJECT_DIR / "focus" / "agent_helper.py"
 FOCUS_PI_PROJECT_DIR = PROJECT_DIR / ".pi"
 FOCUS_PI_SYSTEM_PROMPT_FILE = FOCUS_PI_PROJECT_DIR / "SYSTEM.md"
+FOCUS_PI_EXTENSION_FILE = (
+    FOCUS_PI_PROJECT_DIR / "extensions" / "focus-record-agent.ts"
+)
+FOCUS_AGENT_ANSWER_PROTOCOL_FILE = PROJECT_DIR / "focus" / "agent_answer.py"
 FOCUS_PI_SKILL_NAME = "focus-answer-record-questions"
 FOCUS_PI_SKILL_FILE = (
     FOCUS_PI_PROJECT_DIR / "skills" / FOCUS_PI_SKILL_NAME / "SKILL.md"
@@ -528,7 +532,6 @@ AI_VIEW_EXTRACT = "extract"
 AI_VIEW_AGENT_QA = "agent-qa"
 AGENT_SUBVIEW_ANSWER = "answer"
 AGENT_SUBVIEW_SESSION = "session"
-PI_SESSION_LOG_GLOB = "*.jsonl"
 
 
 def _model_looks_kimi(model_id: str) -> bool:
@@ -3588,109 +3591,6 @@ def append_page_citation_to_selected_text(
     if stripped_text.endswith(citation):
         return stripped_text
     return f"{stripped_text} {citation}"
-
-
-def _agent_text_from_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for item in content:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") not in {"output_text", "text"}:
-            continue
-        text = item.get("text")
-        if isinstance(text, str):
-            parts.append(text)
-    return "".join(parts).strip()
-
-
-def extract_latest_pi_final_answer_from_jsonl(path: Path) -> str:
-    latest = ""
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return ""
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, dict) or payload.get("type") != "message":
-            continue
-        message = payload.get("message")
-        if not isinstance(message, dict) or message.get("role") != "assistant":
-            continue
-        if message.get("stopReason") == "toolUse":
-            continue
-        text = _agent_text_from_content(message.get("content"))
-        if text:
-            latest = text
-    return latest
-
-
-def pi_session_log_matches_cwd(path: Path, cwd: Path) -> bool:
-    wanted = str(cwd)
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(payload, dict) or payload.get("type") != "session":
-                    continue
-                return payload.get("cwd") == wanted
-    except OSError:
-        return False
-    return False
-
-
-def find_latest_pi_session_log_for_cwd(session_dir: Path, cwd: Path) -> Path | None:
-    if not session_dir.is_dir():
-        return None
-    try:
-        candidates = sorted(
-            session_dir.glob(PI_SESSION_LOG_GLOB),
-            key=lambda item: item.stat().st_mtime,
-            reverse=True,
-        )
-    except OSError:
-        return None
-    for candidate in candidates:
-        if candidate.is_file() and pi_session_log_matches_cwd(candidate, cwd):
-            return candidate
-    return None
-
-
-def pi_agent_config_dir() -> Path:
-    return Path(
-        os.environ.get("PI_CODING_AGENT_DIR", Path.home() / ".pi" / "agent")
-    ).expanduser()
-
-
-def pi_session_dir_for_cwd(cwd: Path, agent_dir: Path | None = None) -> Path:
-    configured_session_dir = str(os.environ.get("PI_CODING_AGENT_SESSION_DIR", "") or "").strip()
-    resolved_agent_dir = (agent_dir or pi_agent_config_dir()).expanduser()
-    if not configured_session_dir:
-        settings_path = resolved_agent_dir / "settings.json"
-        try:
-            settings_payload = json.loads(settings_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            settings_payload = {}
-        if isinstance(settings_payload, dict):
-            configured_session_dir = str(settings_payload.get("sessionDir", "") or "").strip()
-    if configured_session_dir:
-        return Path(configured_session_dir).expanduser().resolve(strict=False)
-    resolved_cwd = str(cwd.expanduser().resolve(strict=False))
-    safe_path = "--" + re.sub(r"[/\\\\:]", "-", resolved_cwd.lstrip("/\\")) + "--"
-    return resolved_agent_dir / "sessions" / safe_path
 
 
 def _iter_rounded_grid_table_blocks(text: str) -> Iterable[tuple[int, int]]:

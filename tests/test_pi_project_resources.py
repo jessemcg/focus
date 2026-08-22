@@ -13,91 +13,86 @@ from focus.core import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EXTENSION = FOCUS_PI_PROJECT_DIR / "extensions" / "focus-record-agent.ts"
 
 
-def test_pi_project_settings_select_model_without_credentials() -> None:
+def test_pi_project_settings_preserve_pro_low_and_disable_compaction() -> None:
     settings = json.loads((FOCUS_PI_PROJECT_DIR / "settings.json").read_text())
 
-    assert isinstance(settings.get("defaultProvider"), str)
-    assert settings.get("defaultProvider")
-    assert isinstance(settings.get("defaultModel"), str)
-    assert settings.get("defaultModel")
-    assert settings.get("defaultThinkingLevel") in {
-        "off",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-    }
-    assert "fireworksPriorityServiceTier" not in settings
-    assert settings.get("enableSkillCommands") is True
-    assert settings.get("compaction") == {
-        "enabled": True,
-        "reserveTokens": 8192,
-        "keepRecentTokens": 12000,
-    }
+    assert settings["defaultProvider"] == "fireworks"
+    assert settings["defaultModel"] == "accounts/fireworks/models/deepseek-v4-pro-0813"
+    assert settings["defaultThinkingLevel"] == "low"
+    assert settings["compaction"] == {"enabled": False}
+    assert settings["retry"] == {"enabled": True}
+    assert settings["enableSkillCommands"] is True
     assert not any("key" in name.casefold() for name in settings)
 
 
-def test_pi_system_prompt_has_focus_knowledge_work_contract() -> None:
+def test_pi_system_prompt_is_short_and_delegates_to_canonical_skill() -> None:
     prompt = FOCUS_PI_SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
 
     assert "read-only appellate-record investigator" in prompt
     assert "not a coding assistant" in prompt
     assert "FOCUS_AGENT_CASE_ROOT" in prompt
-    assert "private, disposable runtime workspace" in prompt
-    assert "compact `context --json` response" in prompt
-    assert "nonauthoritative orientation aid" in prompt
-    assert "Questions are case-wide" in prompt
-    assert "current-focus-citation" not in prompt
-    assert "resolved_text_path" in prompt
-    assert "Every substantive paragraph or list" in prompt
-    assert "verbatim two-to-five-word record quote" in prompt
-    assert "Never display that metadata in the final answer" in prompt
-    assert "do not use bold text" in prompt
-    assert "Never open or inspect page images" in prompt
-    assert "Cite record labels" not in prompt
+    assert "explicitly loaded `focus-answer-record-questions` skill" in prompt
+    assert "Never modify the case bundle" in prompt
+    assert "page images" in prompt
+    assert "two-to-five-word" not in prompt
+    assert "resolved_text_path" not in prompt
 
 
-def test_pi_record_skill_has_expected_contract() -> None:
+def test_pi_record_skill_has_bounded_stop_first_workflow_and_soft_style() -> None:
     skill = FOCUS_PI_SKILL_FILE.read_text(encoding="utf-8")
 
     assert skill.startswith(f"---\nname: {FOCUS_PI_SKILL_NAME}\n")
-    assert "Run `context --json` once" in skill
-    assert "It cannot establish a" in skill
-    assert "Run full `map --json` only when needed" in skill
-    assert "initially returning at most eight matches" in skill
-    assert "which is backed by ripgrep" in skill
-    assert 'lookup --file "text_pages/0001.txt" --json' in skill
-    assert 'search \\' in skill
-    assert '--witness' in skill
-    assert "--current-citation" not in skill
-    assert "current-focus-citation" not in skill
-    assert "no redundant `lookup` is needed" in skill
-    assert "safe `resolved_text_path` directly" in skill
-    assert "cache, or database" in skill
+    assert "action `context` once" in skill
+    assert "only for orientation and search planning" in skill
+    assert "one `focus_record` action `search`" in skill
+    assert "Cover every distinct part" in skill
+    assert "full date in at least one event-cause query" in skill
+    assert "diversified by query" in skill
+    assert "prefer contemporaneous orders" in skill
+    assert "historical allegation or later summary alone" in skill
+    assert "Run at most one follow-up `search`" in skill
+    assert "no corpus-wide grep tool" in skill
+    assert "Never mention, quote, or rely on the overview" in skill
+    assert "submit_focus_answer" in skill
+    assert "first substantively useful answer" in skill
+    assert "Do not spend another search or model turn merely to polish" in skill
+    assert "two-to-five-word record quote" in skill
+    assert "not an acceptance gate" in skill
+    assert "Substantive usefulness" in skill
     assert "Q/A formatting alone does not establish testimony" in skill
-    assert "Do not use web research, RAG, vector" in skill
-    assert "High-priority final-answer contract" in skill
-    assert "every substantive paragraph or list" in skill
-    assert "exactly **two to five" in skill
-    assert "continuous, verbatim phrase" in skill
-    assert "Prefer distinctive" in skill
-    assert "Place each quote next to the point it supports" in skill
-    assert "Do not use bold text in the final answer" in skill
-    assert "omit `citation_label`, `citation_range`, citation keys" in skill
-    assert "Citation metadata is internal research" in skill
-    assert "never print it in the final answer" in skill
-    assert "Never open or inspect page images" in skill
-    assert "cannot be determined" in skill
-    assert "available text" in skill
-    assert "separate two-to-five-word linked quote" in skill
-    assert "no prohibited citation or research metadata remains" in skill
-    assert "Group citations by exact label" not in skill
-    assert "resolved_image_path" not in skill
-    assert "current model does not support images" not in skill
-    assert "(RT 6, 34; CT 140, 190.)" not in skill
+    assert "Never modify case files" in skill
+    assert "page images" in skill
+    assert "agent_helper.py" not in skill
+    assert "```bash" not in skill
+
+
+def test_focus_extension_is_shell_free_budgeted_and_terminating() -> None:
+    source = EXTENSION.read_text(encoding="utf-8")
+
+    assert 'name: "focus_record"' in source
+    assert 'name: "submit_focus_answer"' in source
+    assert '"context", "search", "lookup"' in source
+    assert "query_groups" not in source
+    assert 'args.push("research")' not in source
+    assert "pi.exec(python, args" in source
+    assert "child_process" not in source
+    assert "exec(" not in source.replace("pi.exec(", "")
+    assert "OUTPUT_TOKEN_CAP = 8192" in source
+    assert "SEARCH_HARD_LIMIT = 6" in source
+    assert "PAGE_HARD_LIMIT = 24" in source
+    assert 'event.toolName === "grep"' not in source
+    assert "MAP_HARD_LIMIT = 1" in source
+    assert "terminate: true" in source
+    assert 'if (stopReason === "toolUse") return;' in source
+    assert 'capture: "assistant_fallback"' in source
+    assert 'pi.on("agent_settled"' in source
+    assert "sendUserMessage" not in source
+    assert "sendMessage" not in source
+    assert "writeFile(temporary" in source
+    assert "mode: 0o600" in source
 
 
 def test_agent_prompt_contains_only_the_users_question() -> None:

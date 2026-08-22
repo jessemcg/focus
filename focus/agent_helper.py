@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -115,17 +116,39 @@ def _empty_source_map_context(status: str) -> dict[str, Any]:
     }
 
 
-def _source_map_context_payload(root: Path) -> dict[str, Any]:
-    path = root / "artifacts" / "source_map.json"
-    try:
-        source_map = _read_json(path)
-    except FileNotFoundError:
-        return _empty_source_map_context("unavailable")
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return _empty_source_map_context("invalid")
-    if not isinstance(source_map, dict):
-        return _empty_source_map_context("invalid")
+def _compact_citation_series(items: list[Any]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        start = raw.get("start_page") or raw.get("first_page") or raw.get("range_start")
+        end = raw.get("end_page") or raw.get("last_page") or raw.get("range_end")
+        page_range = raw.get("range") or raw.get("citation_range")
+        if not page_range and (start is not None or end is not None):
+            page_range = {"start": start, "end": end}
+        collision = (
+            raw.get("collision_status")
+            if "collision_status" in raw
+            else raw.get("has_collisions", raw.get("collision", False))
+        )
+        count = raw.get("count") or raw.get("page_count")
+        if count is None:
+            pages = raw.get("pages")
+            count = len(pages) if isinstance(pages, list) else 0
+        compact.append(
+            {
+                "id": raw.get("series_id") or raw.get("sequence_id") or raw.get("id") or "",
+                "type": raw.get("record_type") or raw.get("type") or "",
+                "prefix": raw.get("citation_prefix") or raw.get("prefix") or "",
+                "range": page_range or "",
+                "count": count,
+                "collision": collision,
+            }
+        )
+    return compact
 
+
+def _source_map_context_from_data(source_map: dict[str, Any]) -> dict[str, Any]:
     raw_pages = source_map.get("pages")
     raw_documents = source_map.get("documents", [])
     raw_participant_index = source_map.get("participant_index")
@@ -181,10 +204,23 @@ def _source_map_context_payload(root: Path) -> dict[str, Any]:
         "participant_index_schema_version": participant_index.get("schema_version"),
         "case_name": source_map.get("case_name", ""),
         "counts": raw_counts,
-        "citation_series": raw_citation_series,
+        "citation_series": _compact_citation_series(raw_citation_series),
         "warnings": raw_warnings,
         "capabilities": capabilities,
     }
+
+
+def _source_map_context_payload(root: Path) -> dict[str, Any]:
+    path = root / "artifacts" / "source_map.json"
+    try:
+        source_map = _read_json(path)
+    except FileNotFoundError:
+        return _empty_source_map_context("unavailable")
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return _empty_source_map_context("invalid")
+    if not isinstance(source_map, dict):
+        return _empty_source_map_context("invalid")
+    return _source_map_context_from_data(source_map)
 
 
 def command_context(args: argparse.Namespace) -> None:
@@ -358,19 +394,35 @@ def _document_by_id(
 def command_map(args: argparse.Namespace) -> None:
     root = args.case_root.resolve(strict=False)
     source_map = _load_source_map(root)
-    _emit_json(
-        {
-            "schema_version": source_map.get("schema_version", 1),
-            "case_name": source_map.get("case_name", ""),
-            "root_dir": source_map.get("root_dir", ""),
-            "counts": source_map.get("counts", {}),
-            "paths": source_map.get("paths", {}),
-            "citation_series": source_map.get("citation_series", []),
-            "documents": source_map.get("documents", []),
-            "participant_index": source_map.get("participant_index", {}),
-            "warnings": source_map.get("warnings", []),
-        }
-    )
+    base = {
+        "schema_version": source_map.get("schema_version", 1),
+        "case_name": source_map.get("case_name", ""),
+        "counts": source_map.get("counts", {}),
+    }
+    if args.section == "documents":
+        base["documents"] = source_map.get("documents", [])
+    elif args.section == "participants":
+        base["participant_index"] = source_map.get("participant_index", {})
+    elif args.section == "citation_series":
+        base["citation_series"] = _compact_citation_series(
+            source_map.get("citation_series", [])
+            if isinstance(source_map.get("citation_series"), list)
+            else []
+        )
+    elif args.section == "warnings":
+        base["warnings"] = source_map.get("warnings", [])
+    else:
+        base.update(
+            {
+                "root_dir": source_map.get("root_dir", ""),
+                "paths": source_map.get("paths", {}),
+                "citation_series": source_map.get("citation_series", []),
+                "documents": source_map.get("documents", []),
+                "participant_index": source_map.get("participant_index", {}),
+                "warnings": source_map.get("warnings", []),
+            }
+        )
+    _emit_json(base)
 
 
 def command_lookup(args: argparse.Namespace) -> None:
@@ -492,33 +544,281 @@ def _participant_aliases_for_page(source_map: dict[str, Any], page_number: int) 
     return aliases
 
 
-def _search_score(normalized_text: str, normalized_query: str, metadata: str) -> tuple[float, str]:
-    if not normalized_query:
-        return 0.0, ""
-    if normalized_query in normalized_text:
-        return 100.0 + min(20.0, len(normalized_query) / 10), "exact-phrase"
+def _minimum_term_span(normalized_text: str, terms: list[str]) -> int | None:
+    occurrences: list[tuple[int, int]] = []
+    for term_index, term in enumerate(terms):
+        occurrences.extend(
+            (match.start(), term_index)
+            for match in re.finditer(re.escape(term), normalized_text)
+        )
+    occurrences.sort()
+    if not occurrences:
+        return None
+    required = len({term_index for _, term_index in occurrences})
+    counts: dict[int, int] = {}
+    covered = 0
+    left = 0
+    best: int | None = None
+    for right, (right_position, right_term) in enumerate(occurrences):
+        counts[right_term] = counts.get(right_term, 0) + 1
+        if counts[right_term] == 1:
+            covered += 1
+        while covered == required and left <= right:
+            left_position, left_term = occurrences[left]
+            span = right_position - left_position
+            best = span if best is None else min(best, span)
+            counts[left_term] -= 1
+            if counts[left_term] == 0:
+                covered -= 1
+            left += 1
+    return best
+
+
+def _query_match_metrics(
+    normalized_text: str,
+    normalized_query: str,
+    metadata: str,
+) -> dict[str, Any]:
     terms = [term for term in normalized_query.split() if len(term) > 1]
-    if not terms:
-        return 0.0, ""
+    if not normalized_query or not terms:
+        return {"reason": "", "exact_count": 0, "coverage": 0.0, "proximity": None}
+    exact_count = normalized_text.count(normalized_query)
     positions = [normalized_text.find(term) for term in terms]
     present = [position for position in positions if position >= 0]
-    metadata_hits = sum(term in metadata for term in terms)
+    coverage = len(present) / len(terms)
+    proximity = _minimum_term_span(
+        normalized_text,
+        [term for term, position in zip(terms, positions, strict=True) if position >= 0],
+    )
+    if exact_count:
+        return {
+            "reason": "exact-phrase",
+            "exact_count": exact_count,
+            "coverage": 1.0,
+            "proximity": len(normalized_query),
+        }
     if len(present) == len(terms):
-        span = max(present) - min(present) if len(present) > 1 else 0
-        return 65.0 + 20.0 / (1.0 + span / 100.0) + metadata_hits * 2, "all-terms"
-    if present:
-        return 15.0 * len(present) / len(terms) + metadata_hits * 3, "partial-terms"
-    if metadata_hits:
-        return 10.0 + metadata_hits * 3, "participant-metadata"
-    return 0.0, ""
+        return {
+            "reason": "all-terms",
+            "exact_count": 0,
+            "coverage": 1.0,
+            "proximity": proximity,
+        }
+    if all(term in metadata for term in terms):
+        return {
+            "reason": "participant-metadata",
+            "exact_count": 0,
+            "coverage": 1.0,
+            "proximity": None,
+        }
+    minimum_partial_terms = 2 if len(terms) > 1 else 1
+    if len(present) >= minimum_partial_terms and coverage >= 0.5:
+        return {
+            "reason": "partial-terms",
+            "exact_count": 0,
+            "coverage": coverage,
+            "proximity": proximity,
+        }
+    return {"reason": "", "exact_count": 0, "coverage": coverage, "proximity": proximity}
 
 
-def command_search(args: argparse.Namespace) -> None:
+def _centered_search_snippet(raw_text: str, query: str, length: int = 240) -> str:
+    compact = " ".join(raw_text.split())
+    normalized_query = _normalize_search_text(query)
+    causal_anchor = (
+        _CAUSAL_EVIDENCE_RE.search(compact)
+        if _CAUSAL_QUERY_RE.search(query)
+        else None
+    )
+    position = causal_anchor.start() if causal_anchor else compact.casefold().find(query.casefold())
+    if position < 0:
+        for term in normalized_query.split():
+            position = compact.casefold().find(term.casefold())
+            if position >= 0:
+                break
+    if position < 0:
+        position = 0
+    half = length // 2
+    start = max(0, position - half)
+    end = min(len(compact), start + length)
+    start = max(0, end - length)
+    snippet = compact[start:end]
+    if start:
+        snippet = "…" + snippet
+    if end < len(compact):
+        snippet += "…"
+    return snippet
+
+
+def _query_group_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    queries = [
+        value
+        for value in (getattr(args, "query", None) or [])
+        if _normalize_search_text(value)
+    ]
+    if not queries:
+        raise ValueError("At least one search query is required.")
+    return {"purpose": "general", "queries": queries[:8]}
+
+
+_MONTH_PATTERN = (
+    r"january|february|march|april|may|june|july|august|"
+    r"september|october|november|december"
+)
+_CAUSAL_QUERY_RE = re.compile(
+    r"\b(?:why|reason|basis|remove|removed|removal|detain|detained|detention|"
+    r"petition|allegation|order|finding|sustain|sustained)\b",
+    re.IGNORECASE,
+)
+_PRIMARY_EVENT_RE = re.compile(
+    r"\b(?:detention|addendum|jurisdiction|disposition|petition|minute order|"
+    r"hearing|removal order)\b",
+    re.IGNORECASE,
+)
+_LATER_HISTORY_RE = re.compile(
+    r"\b(?:status review|366\.26|adoption|permanency|legal history)\b",
+    re.IGNORECASE,
+)
+_CAUSAL_EVIDENCE_RE = re.compile(
+    r"\b(?:reason for (?:detention|removal)|removal reason|"
+    r"need for continued detention|unable and unwilling|unable to care|"
+    r"cannot take care|failed to follow through|caretaker absence|incapacity)\b",
+    re.IGNORECASE,
+)
+
+
+def _query_date(query: str) -> datetime | None:
+    normalized = " ".join(query.replace(",", " ").split())
+    named = re.search(
+        rf"\b({_MONTH_PATTERN})\s+(\d{{1,2}})\s+(\d{{4}})\b",
+        normalized,
+        re.IGNORECASE,
+    )
+    if named:
+        try:
+            return datetime.strptime(
+                f"{named.group(1).title()} {named.group(2)} {named.group(3)}",
+                "%B %d %Y",
+            )
+        except ValueError:
+            return None
+    iso = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", normalized)
+    if iso:
+        try:
+            return datetime(int(iso.group(1)), int(iso.group(2)), int(iso.group(3)))
+        except ValueError:
+            return None
+    return None
+
+
+def _document_context_for_page(
+    source_map: dict[str, Any],
+    page: dict[str, Any],
+) -> list[dict[str, Any]]:
+    documents = {
+        str(item.get("id") or ""): item
+        for item in source_map.get("documents", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    context: list[dict[str, Any]] = []
+    for document_id in page.get("document_ids", []):
+        document = documents.get(str(document_id))
+        if document is None:
+            continue
+        context.append(
+            {
+                "id": document_id,
+                "type": str(document.get("type") or ""),
+                "label": str(document.get("label") or ""),
+                "date": str(document.get("date") or document.get("report_date") or ""),
+                "name": str(document.get("report_name") or ""),
+            }
+        )
+    return context
+
+
+def _document_rank(
+    query: str,
+    document_context: list[dict[str, Any]],
+) -> tuple[int, int, int]:
+    target_date = _query_date(query)
+    causal = bool(_CAUSAL_QUERY_RE.search(query))
+    labels = " ".join(
+        f"{item['type']} {item['label']} {item['name']}"
+        for item in document_context
+    )
+    source_priority = 1
+    if causal and _PRIMARY_EVENT_RE.search(labels):
+        source_priority = 0
+    elif causal and _LATER_HISTORY_RE.search(labels):
+        source_priority = 3
+
+    if target_date is None:
+        return (0, 0, source_priority)
+    distances: list[int] = []
+    for item in document_context:
+        raw_date = item["date"]
+        try:
+            parsed = datetime.strptime(raw_date, "%B %d, %Y")
+        except ValueError:
+            continue
+        distances.append(abs((parsed - target_date).days))
+    if not distances:
+        return (4, 1_000_000, source_priority)
+    distance = min(distances)
+    if distance <= 14:
+        bucket = 0
+    elif distance <= 90:
+        bucket = 1
+    elif distance <= 366:
+        bucket = 2
+    else:
+        bucket = 3
+    return (bucket, distance, source_priority)
+
+
+def _query_page_rank(
+    query: str,
+    metrics: dict[str, Any],
+    document_context: list[dict[str, Any]],
+    normalized_text: str,
+    page_number: int,
+) -> tuple[Any, ...]:
+    reason_priority = {
+        "exact-phrase": 0,
+        "all-terms": 1,
+        "participant-metadata": 2,
+        "partial-terms": 3,
+    }.get(str(metrics["reason"]), 4)
+    date_bucket, date_distance, source_priority = _document_rank(
+        query,
+        document_context,
+    )
+    causal_evidence_priority = 0
+    if _CAUSAL_QUERY_RE.search(query) and not _CAUSAL_EVIDENCE_RE.search(
+        normalized_text
+    ):
+        causal_evidence_priority = 1
+    return (
+        date_bucket,
+        source_priority,
+        reason_priority,
+        causal_evidence_priority,
+        -int(metrics["exact_count"]),
+        -float(metrics["coverage"]),
+        int(metrics["proximity"] or 1_000_000),
+        date_distance,
+        page_number,
+    )
+
+
+def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
     root = args.case_root.resolve(strict=False)
     source_map = _load_source_map(root)
-    queries = [value for value in args.query if _normalize_search_text(value)]
+    query_group = _query_group_from_args(args)
+    queries = query_group["queries"]
     candidates = _candidate_pages(source_map, args)
-    results: list[dict[str, Any]] = []
+    candidates_with_matches: list[dict[str, Any]] = []
     for page in candidates:
         text_path = str(page.get("text_path") or "").strip()
         resolved_text_path, text_exists = _resolve_case_file(root, text_path)
@@ -534,57 +834,171 @@ def command_search(args: argparse.Namespace) -> None:
         normalized_text = _normalize_search_text(raw_text)
         page_number = int(page.get("file_page") or 0)
         aliases = _participant_aliases_for_page(source_map, page_number)
-        metadata = _normalize_search_text(" ".join([
-            str(page.get("citation_label") or ""), str(page.get("page_type") or ""),
-            *[str(value) for value in page.get("document_ids", [])], *aliases,
-        ]))
-        best_score = 0.0
-        best_reason = ""
-        matched: list[str] = []
-        for query in queries:
-            score, reason = _search_score(normalized_text, _normalize_search_text(query), metadata)
-            if score > 0:
-                matched.append(query)
-            if score > best_score:
-                best_score, best_reason = score, reason
-        if not best_score:
+        metadata = _normalize_search_text(
+            " ".join(
+                [
+                    str(page.get("citation_label") or ""),
+                    str(page.get("page_type") or ""),
+                    *[str(value) for value in page.get("document_ids", [])],
+                    *aliases,
+                ]
+            )
+        )
+        query_metrics: dict[int, dict[str, Any]] = {}
+        for index, query in enumerate(queries, start=1):
+            metrics = _query_match_metrics(
+                normalized_text,
+                _normalize_search_text(query),
+                metadata,
+            )
+            if metrics["reason"]:
+                query_metrics[index] = metrics
+        if not query_metrics:
             continue
-        first_terms = [_normalize_search_text(value).split()[0] for value in matched if _normalize_search_text(value).split()]
-        compact = " ".join(raw_text.split())
-        position = -1
-        for term in first_terms:
-            position = compact.casefold().find(term.casefold())
-            if position >= 0:
+        candidates_with_matches.append(
+            {
+                "page": page,
+                "page_number": page_number,
+                "resolved_text_path": resolved_text_path,
+                "raw_text": raw_text,
+                "normalized_text": normalized_text,
+                "documents": _document_context_for_page(source_map, page),
+                "query_metrics": query_metrics,
+            }
+        )
+
+    ranked_by_query: dict[int, list[dict[str, Any]]] = {}
+    query_summaries: list[dict[str, Any]] = []
+    for index, query in enumerate(queries, start=1):
+        available = [
+            item for item in candidates_with_matches if index in item["query_metrics"]
+        ]
+        strong = [
+            item
+            for item in available
+            if item["query_metrics"][index]["reason"]
+            in {"exact-phrase", "all-terms", "participant-metadata"}
+        ]
+        selected = available
+        selected.sort(
+            key=lambda item: _query_page_rank(
+                query,
+                item["query_metrics"][index],
+                item["documents"],
+                item["normalized_text"],
+                item["page_number"],
+            )
+        )
+        ranked_by_query[index] = selected
+        query_summaries.append(
+            {
+                "index": index,
+                "query": query,
+                "total_matches": len(selected),
+                "strong_matches": len(strong),
+            }
+        )
+
+    max_results = int(args.max_results)
+    diversified: list[tuple[dict[str, Any], int]] = []
+    seen_pages: set[int] = set()
+    cursors = {index: 0 for index in ranked_by_query}
+    while len(diversified) < max_results:
+        added = False
+        for index in ranked_by_query:
+            ranked = ranked_by_query[index]
+            cursor = cursors[index]
+            while cursor < len(ranked) and ranked[cursor]["page_number"] in seen_pages:
+                cursor += 1
+            cursors[index] = cursor
+            if cursor >= len(ranked):
+                continue
+            item = ranked[cursor]
+            cursors[index] += 1
+            diversified.append((item, index))
+            seen_pages.add(item["page_number"])
+            added = True
+            if len(diversified) >= max_results:
                 break
-        if position < 0:
-            position = 0
-        snippet = compact[max(0, position - 220): position + 500]
-        if position > 220:
-            snippet = "…" + snippet
-        if position + 500 < len(compact):
-            snippet += "…"
-        results.append({
-            "score": round(best_score, 3), "reason": best_reason,
-            "matched_queries": matched, "citation_label": page.get("citation_label", ""),
-            "citation_key": page.get("citation_key", ""), "file_page": page_number,
-            "text_path": text_path, "resolved_text_path": resolved_text_path,
-            "text_exists": True, "document_ids": page.get("document_ids", []),
-            "hearing_id": page.get("hearing_id", ""),
-            "participants": page.get("participants", []),
-            "witnesses": page.get("witnesses", []),
-            "examinations": page.get("examinations", []), "snippet": snippet,
-        })
-    results.sort(key=lambda item: (-float(item["score"]), int(item["file_page"])))
-    total = len(results)
-    limited = results[: args.max_results]
-    _emit_json({
-        "queries": queries, "scopes": {
-            "document": args.document or [], "hearing_date": args.hearing_date or "",
-            "witness": args.witness or "", "counsel_role": args.counsel_role or "",
-        },
-        "candidate_pages": len(candidates), "total_matches": total,
-        "truncated": total > len(limited), "matches": limited,
-    })
+        if not added:
+            break
+
+    compact_matches: list[dict[str, Any]] = []
+    for rank, (item, primary_index) in enumerate(diversified, start=1):
+        page = item["page"]
+        metrics = item["query_metrics"][primary_index]
+        query_indexes = [
+            index
+            for index, query_metrics in item["query_metrics"].items()
+            if query_metrics["reason"]
+            in {"exact-phrase", "all-terms", "participant-metadata"}
+        ]
+        if primary_index not in query_indexes:
+            query_indexes.append(primary_index)
+            query_indexes.sort()
+        match: dict[str, Any] = {
+            "rank": rank,
+            "reason": metrics["reason"],
+            "query_indexes": query_indexes,
+            "citation_label": page.get("citation_label", ""),
+            "citation_key": page.get("citation_key", ""),
+            "file_page": item["page_number"],
+            "resolved_text_path": item["resolved_text_path"],
+            "text_exists": True,
+            "snippet": _centered_search_snippet(
+                item["raw_text"],
+                queries[primary_index - 1],
+            ),
+        }
+        if item["documents"]:
+            match["documents"] = [
+                {
+                    key: document[key]
+                    for key in ("id", "type", "label")
+                    if document[key]
+                }
+                for document in item["documents"][:2]
+            ]
+        hearing_id = page.get("hearing_id", "")
+        if hearing_id:
+            match["hearing_id"] = hearing_id
+        if args.include_attribution_detail:
+            match["participants"] = page.get("participants", [])
+            match["witnesses"] = page.get("witnesses", [])
+            match["examinations"] = page.get("examinations", [])
+        compact_matches.append(match)
+
+    total_unique = len(
+        {
+            item["page_number"]
+            for ranked in ranked_by_query.values()
+            for item in ranked
+        }
+    )
+    scopes = {
+        key: value
+        for key, value in {
+            "document": args.document or [],
+            "hearing_date": args.hearing_date or "",
+            "witness": args.witness or "",
+            "counsel_role": args.counsel_role or "",
+        }.items()
+        if value
+    }
+    payload: dict[str, Any] = {
+        "queries": query_summaries,
+        "candidate_pages": len(candidates),
+        "total_matches": total_unique,
+        "truncated": total_unique > len(compact_matches),
+        "matches": compact_matches,
+    }
+    if scopes:
+        payload["scopes"] = scopes
+    return payload
+
+
+def command_search(args: argparse.Namespace) -> None:
+    _emit_json(_search_payload(args))
 
 
 def command_document(args: argparse.Namespace) -> None:
@@ -629,6 +1043,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     map_parser = subparsers.add_parser("map", help="Print source-map summary.")
     map_parser.add_argument(
+        "--section",
+        choices=("documents", "participants", "citation_series", "warnings"),
+        help="Return only one targeted map section plus compact map identity.",
+    )
+    map_parser.add_argument(
         "--json",
         action="store_true",
         help="Accepted for readability; output is always JSON.",
@@ -658,7 +1077,12 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--hearing-date")
     search_parser.add_argument("--witness")
     search_parser.add_argument("--counsel-role")
-    search_parser.add_argument("--max-results", type=int, default=20, choices=range(1, 101))
+    search_parser.add_argument("--max-results", type=int, default=6, choices=range(1, 101))
+    search_parser.add_argument(
+        "--include-attribution-detail",
+        action="store_true",
+        help="Include participant, witness, and examination arrays in matches.",
+    )
     search_parser.add_argument("--json", action="store_true")
     search_parser.set_defaults(func=command_search)
 

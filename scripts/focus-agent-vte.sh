@@ -4,6 +4,10 @@ set -euo pipefail
 prompt_file="${FOCUS_AGENT_PROMPT_FILE:-}"
 case_root="${FOCUS_AGENT_CASE_ROOT:-$PWD}"
 pi_project_dir="${FOCUS_PI_PROJECT_DIR:-}"
+answer_artifact="${FOCUS_AGENT_ANSWER_ARTIFACT:-}"
+run_id="${FOCUS_AGENT_RUN_ID:-}"
+runtime_dir="${FOCUS_AGENT_RUNTIME_DIR:-}"
+answer_protocol="${FOCUS_AGENT_ANSWER_PROTOCOL:-}"
 agent_argc="${FOCUS_AGENT_COMMAND_ARGC:-0}"
 cache_root="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
 agent_command=()
@@ -64,6 +68,22 @@ if [[ ! -f "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" ]]; t
   exit 2
 fi
 
+if [[ ! -s "$pi_project_dir/extensions/focus-record-agent.ts" ]]; then
+  printf 'Focus record extension not found or empty: %s\n' \
+    "$pi_project_dir/extensions/focus-record-agent.ts" >&2
+  exit 2
+fi
+
+if [[ -z "$answer_artifact" || -z "$run_id" || -z "$runtime_dir" || ! -f "$answer_protocol" ]]; then
+  printf 'Focus answer protocol resources are unavailable.\n' >&2
+  exit 2
+fi
+
+if [[ ! "$answer_artifact" = "$runtime_dir"/* ]]; then
+  printf 'Focus answer artifact must be under the Focus runtime directory.\n' >&2
+  exit 2
+fi
+
 if [[ -z "${agent_command[0]:-}" ]] || ! command -v "${agent_command[0]}" >/dev/null 2>&1; then
   printf 'Focus Agent executable not found: %s\n' "${agent_command[0]:-}" >&2
   exit 127
@@ -78,11 +98,13 @@ prompt="$(cat "$prompt_file")"
 "${agent_command[@]}" \
   --approve \
   --no-extensions \
+  --extension "$workspace/.pi/extensions/focus-record-agent.ts" \
+  --no-session \
   --no-skills \
   --no-prompt-templates \
   --no-themes \
   --no-context-files \
   --system-prompt "$workspace/.pi/SYSTEM.md" \
   --skill "$workspace/.pi/skills/focus-answer-record-questions/SKILL.md" \
-  --tools read,bash,grep,find,ls \
+  --tools read,focus_record,submit_focus_answer \
   "$prompt"

@@ -3,16 +3,18 @@
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
 - `focus/app.py`: main `Focus` application class; owns transcript browsing, TOC sidebar, dual-view state, image view, grep, AI tools, and embedded Agent orchestration.
-- `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, citation formatting, markdown/link rendering, and PI session-log helpers.
+- `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, citation formatting, and markdown/link rendering.
 - `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
-- `focus/agent_helper.py`: read-only compact research context, source-map lookup, and database-free lexical search CLI used by embedded PI Agent sessions.
+- `focus/agent_helper.py`: read-only compact research context, source-map lookup, targeted map inspection, and database-free per-query diversified lexical search with source-date/document ranking used by embedded PI Agent sessions.
+- `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
 - `focus/ui/`: secondary Libadwaita windows such as settings and D-Bus command reference.
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
-- `.pi/SYSTEM.md`: replacement knowledge-work system prompt copied into each private embedded-Agent workspace.
+- `.pi/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.
 - `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions.
-- `scripts/focus-agent-vte.sh`: launches the embedded Agent with `--no-extensions` isolation and no extension exceptions. It copies the `.pi/` project resources into a disposable workspace, passes the staged system prompt and record-question skill explicitly, and restricts the Agent to the read-only tool allowlist `read,bash,grep,find,ls`.
+- `.pi/extensions/focus-record-agent.ts`: the sole explicitly loaded extension. It registers the shell-free structured record tool and terminating answer handoff, guards text-page access, enforces research budgets, caps provider output, and captures one best-effort fallback answer.
+- `scripts/focus-agent-vte.sh`: launches an ephemeral `--no-session` embedded Agent with extension discovery disabled and exactly the staged Focus extension loaded explicitly. It passes the staged system prompt and skill and restricts tools to `read,focus_record,submit_focus_answer`; corpus-wide grep is unavailable.
 - `config.json`: user-specific settings (input_dir, font sizes, API credentials, prompts); do not commit secrets.
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.
 - `prompts/`: change notes and UI prompt history.
@@ -24,11 +26,11 @@
 - `uv run focus`: launch the GTK viewer using the active case configuration.
 - `uv run focus /path/to/case_bundle`: launch Focus with a one-time input directory override.
 - `uv run focus refresh-current-case --quiet`: update Focus `config.json` from the currently selected case.
-- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle context --json`: read compact overview and source-map capability context.
+- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle context --json`: read the navigation-only overview prose and compact source-map capabilities before choosing search terms.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle overview --json`: read the optional nonauthoritative case overview.
-- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle map --json`: inspect the citation-aware source map.
+- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle map --section documents --json`: inspect a targeted citation-aware source-map section; unsectioned output remains available for direct diagnostics.
 - `uv run python -m focus.agent_helper --case-root /path/to/case_bundle lookup --file text_pages/0001.txt --json`: resolve a searched text page to its record citation.
-- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle search --query "placement" --json`: scan source pages without creating an index or database.
+- `uv run python -m focus.agent_helper --case-root /path/to/case_bundle search --query "placement" --json`: scan source pages without creating an index or database; defaults to six compact matches and omits attribution arrays.
 
 ## Coding Style & Naming Conventions
 - Follow PEP 8: 4-space indentation, snake_case for functions and variables, CapWords for classes.

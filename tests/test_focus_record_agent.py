@@ -268,11 +268,23 @@ def test_context_combines_overview_with_compact_schema_v2_map_status(tmp_path) -
     payload = _run_helper(root, "context", "--json")
 
     assert payload["overview"]["available"] is True
+    assert "# Case Overview" in payload["overview"]["content"]
+    assert "Orientation aid only" in payload["overview"]["content"]
     source_map = payload["source_map"]
     assert source_map["status"] == "valid"
     assert source_map["schema_version"] == 2
     assert source_map["participant_index_schema_version"] == 2
     assert source_map["counts"]["pages"] == 2
+    assert source_map["citation_series"] == [
+        {
+            "id": "ct_main",
+            "type": "CT",
+            "prefix": "CT",
+            "range": "",
+            "count": 0,
+            "collision": False,
+        }
+    ]
     assert source_map["capabilities"] == {
         "document_scope": True,
         "hearing_date_scope": True,
@@ -523,14 +535,17 @@ def test_search_normalizes_ocr_hyphenation_and_returns_citation_context(tmp_path
         "maternal grandmother placement",
         "--max-results",
         "5",
+        "--include-attribution-detail",
         "--json",
     )
 
     assert payload["candidate_pages"] == 2
     assert payload["total_matches"] == 1
     match = payload["matches"][0]
+    assert match["rank"] == 1
+    assert "groups" not in match
     assert match["citation_label"] == "CT 1"
-    assert match["text_path"] == "text_pages/0001.txt"
+    assert "text_path" not in match
     assert match["resolved_text_path"] == str(root / "text_pages/0001.txt")
     assert match["text_exists"] is True
     assert match["participants"][0]["name"] == "Mary Jones"
@@ -546,6 +561,7 @@ def test_search_uses_non_counsel_participant_metadata(tmp_path) -> None:
         "search",
         "--query",
         "Mary Jones",
+        "--include-attribution-detail",
         "--json",
     )
 
@@ -574,7 +590,186 @@ def test_search_scopes_by_witness_counsel_and_hearing_date(tmp_path) -> None:
     assert payload["candidate_pages"] == 1
     assert "ranking_hints" not in payload
     assert payload["matches"][0]["hearing_id"] == "hearing:0001"
-    assert payload["matches"][0]["score"] > 65
+    assert payload["matches"][0]["reason"] in {"exact-phrase", "all-terms"}
+
+
+def test_search_defaults_to_six_compact_results_without_attribution_arrays(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(root, "search", "--query", "placement safe", "--json")
+
+    match = payload["matches"][0]
+    assert "participants" not in match
+    assert "witnesses" not in match
+    assert "examinations" not in match
+    assert len(match["snippet"]) <= 242
+    assert "score" not in match
+    assert "matched_queries" not in match
+
+
+def test_search_diversifies_results_by_individual_query(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(
+        root,
+        "search",
+        "--query",
+        "mother attended therapy",
+        "--query",
+        "medication compliance",
+        "--max-results",
+        "2",
+        "--json",
+    )
+
+    assert [item["query"] for item in payload["queries"]] == [
+        "mother attended therapy",
+        "medication compliance",
+    ]
+    assert [match["file_page"] for match in payload["matches"]] == [1, 2]
+    assert payload["matches"][0]["query_indexes"] == [1]
+    assert payload["matches"][1]["query_indexes"] == [2]
+    assert payload["matches"][0]["documents"] == [
+        {"id": "hearing:0001", "type": "hearing", "label": "January 2, 2025"}
+    ]
+
+
+def test_causal_date_query_prefers_contemporaneous_event_source(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    source_map_path = root / "artifacts/source_map.json"
+    source_map = json.loads(source_map_path.read_text(encoding="utf-8"))
+    page_text = {
+        3: "The father removal reason was caretaker absence.\n",
+        4: "On November 18 2021 the father removal reason was caretaker absence.\n",
+    }
+    for file_page, document_id in ((3, "report:event"), (4, "report:history")):
+        (root / f"text_pages/{file_page:04d}.txt").write_text(
+            page_text[file_page],
+            encoding="utf-8",
+        )
+        source_map["pages"].append(
+            {
+                "file_name": f"{file_page:04d}.txt",
+                "file_page": file_page,
+                "text_path": f"text_pages/{file_page:04d}.txt",
+                "citation_label": f"CT {file_page}",
+                "citation_key": f"CT:{file_page}",
+                "document_ids": [document_id],
+            }
+        )
+    source_map["documents"].extend(
+        [
+            {
+                "id": "report:event",
+                "type": "report",
+                "label": "November 24, 2021 - Addendum Report",
+                "date": "November 24, 2021",
+                "report_name": "Addendum Report",
+                "start_page": 3,
+                "end_page": 3,
+            },
+            {
+                "id": "report:history",
+                "type": "report",
+                "label": "February 10, 2025 - 366.26 WIC Report",
+                "date": "February 10, 2025",
+                "report_name": "366.26 WIC Report",
+                "start_page": 4,
+                "end_page": 4,
+            },
+        ]
+    )
+    source_map_path.write_text(json.dumps(source_map), encoding="utf-8")
+
+    payload = _run_helper(
+        root,
+        "search",
+        "--query",
+        "November 18 2021 father removal reason",
+        "--max-results",
+        "2",
+        "--json",
+    )
+
+    assert [match["file_page"] for match in payload["matches"]] == [3, 4]
+    assert payload["matches"][0]["reason"] == "partial-terms"
+    assert "removal reason" in payload["matches"][0]["snippet"]
+    assert payload["matches"][0]["documents"][0]["label"] == (
+        "November 24, 2021 - Addendum Report"
+    )
+
+
+def test_direct_removal_conclusion_ranks_in_top_three(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+    (root / "text_pages/0002.txt").write_text(
+        "The court concluded that removal from parental custody was necessary.\n",
+        encoding="utf-8",
+    )
+
+    payload = _run_helper(
+        root,
+        "search",
+        "--query",
+        "removal from parental custody was necessary",
+        "--query",
+        "court concluded removal necessary",
+        "--query",
+        "why was the child removed",
+        "--json",
+    )
+
+    top_pages = [match["file_page"] for match in payload["matches"][:3]]
+    assert 2 in top_pages
+
+
+def test_search_excludes_partial_results_when_strong_results_exist(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(
+        root,
+        "search",
+        "--query",
+        "maternal grandmother removal",
+        "--query",
+        "maternal grandmother placement",
+        "--json",
+    )
+
+    assert payload["matches"][0]["file_page"] == 1
+    assert "groups" not in payload
+
+
+def test_removed_grouped_research_command_is_unavailable(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(HELPER),
+            "--case-root",
+            str(root),
+            "research",
+            "--query-group",
+            json.dumps({"purpose": "issue", "queries": ["placement"]}),
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode != 0
+    assert "invalid choice" in completed.stderr
+
+
+def test_targeted_map_inspection_returns_only_requested_section(tmp_path) -> None:
+    root = _write_case_bundle(tmp_path)
+
+    payload = _run_helper(root, "map", "--section", "documents", "--json")
+
+    assert payload["documents"]
+    assert "participant_index" not in payload
+    assert "paths" not in payload
 
 
 def test_search_is_read_only(tmp_path) -> None:

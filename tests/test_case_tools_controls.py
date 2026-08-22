@@ -214,6 +214,55 @@ class AgentControlsHarness:
         return self.has_session
 
 
+class FakeTickWindow:
+    def __init__(self) -> None:
+        self.callbacks: list[object] = []
+        self.removed: list[int] = []
+
+    def add_tick_callback(self, callback: object) -> int:
+        self.callbacks.append(callback)
+        return 71
+
+    def remove_tick_callback(self, callback_id: int) -> None:
+        self.removed.append(callback_id)
+
+
+class FakeResizeWidget:
+    def __init__(self) -> None:
+        self.resize_count = 0
+
+    def queue_resize(self) -> None:
+        self.resize_count += 1
+
+
+class FakeResizeScroller(FakeResizeWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.child = FakeResizeWidget()
+
+    def get_child(self) -> FakeResizeWidget:
+        return self.child
+
+
+class PostRenderResizeHarness:
+    _ensure_ai_panel_post_render_resize = Focus._ensure_ai_panel_post_render_resize
+    _on_ai_panel_post_render_tick = Focus._on_ai_panel_post_render_tick
+
+    def __init__(self) -> None:
+        self.win = FakeTickWindow()
+        self.scroller = FakeResizeScroller()
+        self._ai_panel_post_render_tick_id: int | None = None
+        self._ai_panel_post_render_frames = 0
+        self.height_updates = 0
+
+    def _active_ai_output_scroller(self) -> tuple[FakeResizeScroller, bool]:
+        return self.scroller, True
+
+    def _update_embedded_ai_panel_height(self, *, force: bool = False) -> None:
+        assert force
+        self.height_updates += 1
+
+
 class PresentationHarness:
     _case_tool_description = Focus._case_tool_description
 
@@ -444,6 +493,24 @@ def test_scroller_bounds_clear_the_minimum_before_changing_the_maximum() -> None
     Focus._set_scroller_content_height_bounds(scroller, 36, 207)
 
     assert scroller.calls == [("min", -1), ("max", 207), ("min", 36)]
+
+
+def test_post_render_resize_queues_layout_then_measures_once() -> None:
+    harness = PostRenderResizeHarness()
+
+    harness._ensure_ai_panel_post_render_resize()
+    harness._ensure_ai_panel_post_render_resize()
+
+    assert harness._ai_panel_post_render_tick_id == 71
+    assert harness._ai_panel_post_render_frames == 2
+    assert len(harness.win.callbacks) == 1
+    assert harness._on_ai_panel_post_render_tick(harness.win, None)
+    assert not harness._on_ai_panel_post_render_tick(harness.win, None)
+    assert harness._ai_panel_post_render_tick_id is None
+    assert harness._ai_panel_post_render_frames == 0
+    assert harness.height_updates == 1
+    assert harness.scroller.resize_count == 1
+    assert harness.scroller.child.resize_count == 1
 
 
 def test_pending_summary_restore_ignores_transient_scroll_fraction() -> None:

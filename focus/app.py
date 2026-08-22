@@ -4,6 +4,14 @@ from pathlib import Path
 import sys
 
 from .core import *  # noqa: F401,F403
+from .agent_answer import (
+    create_focus_run_id,
+    focus_answer_artifact_path,
+    focus_answer_runtime_dir,
+    focus_answer_status_message,
+    read_focus_answer_artifact,
+    remove_focus_answer_artifact,
+)
 from .ui.commands import FocusCommandsWindow
 from .ui.settings import AiSettingsWindow
 
@@ -205,6 +213,8 @@ class Focus(Adw.Application):
         self._ai_output_scrollers: list[Gtk.ScrolledWindow] = []
         self._ai_panel_resize_tick_id: int | None = None
         self._ai_panel_layout_idle_id: int | None = None
+        self._ai_panel_post_render_tick_id: int | None = None
+        self._ai_panel_post_render_frames = 0
         self._last_ai_panel_host_height = -1
         self._ai_status_label: Gtk.Label | None = None
         self._ai_spinner: Gtk.Spinner | None = None
@@ -235,8 +245,11 @@ class Focus(Adw.Application):
         self._agent_subview_toggle_guard = False
         self._agent_answer_poll_id: int | None = None
         self._agent_workspace_path: Path | None = None
-        self._agent_session_log_path: Path | None = None
-        self._agent_pi_session_dir: Path | None = None
+        self._agent_run_id = ""
+        self._agent_answer_artifact_path: Path | None = None
+        self._agent_answer_revision = 0
+        self._agent_answer_diagnostics: dict[str, Any] = {}
+        self._agent_answer_status = ""
         self._agent_last_answer_text = ""
         self._agent_terminal: Any | None = None
         self._agent_terminal_pid: int | None = None
@@ -1491,12 +1504,55 @@ class Focus(Adw.Application):
                     AI_OUTPUT_COLLAPSED_HEIGHT,
                 )
 
-    def _queue_embedded_ai_panel_height_update(self) -> None:
+    def _queue_embedded_ai_panel_height_update(
+        self,
+        *,
+        after_render: bool = False,
+    ) -> None:
         if not self._ai_panel_revealer or not self._ai_panel_revealer.get_reveal_child():
             return
+        if after_render:
+            self._ensure_ai_panel_post_render_resize()
         if self._ai_panel_layout_idle_id is not None:
             return
         self._ai_panel_layout_idle_id = GLib.idle_add(self._update_embedded_ai_panel_height_idle)
+
+    def _ensure_ai_panel_post_render_resize(self) -> None:
+        if not self.win:
+            return
+        self._ai_panel_post_render_frames = max(
+            self._ai_panel_post_render_frames,
+            2,
+        )
+        if self._ai_panel_post_render_tick_id is None:
+            self._ai_panel_post_render_tick_id = self.win.add_tick_callback(
+                self._on_ai_panel_post_render_tick
+            )
+
+    def _on_ai_panel_post_render_tick(
+        self,
+        widget: Gtk.Widget,
+        _frame_clock: Gdk.FrameClock,
+    ) -> bool:
+        if self.win is None or widget is not self.win:
+            self._ai_panel_post_render_tick_id = None
+            self._ai_panel_post_render_frames = 0
+            return False
+        if self._ai_panel_post_render_frames > 1:
+            active_scroller, _has_output = self._active_ai_output_scroller()
+            if active_scroller:
+                child = active_scroller.get_child()
+                if child:
+                    child.queue_resize()
+                active_scroller.queue_resize()
+        else:
+            self._update_embedded_ai_panel_height(force=True)
+        self._ai_panel_post_render_frames -= 1
+        if self._ai_panel_post_render_frames <= 0:
+            self._ai_panel_post_render_tick_id = None
+            self._ai_panel_post_render_frames = 0
+            return False
+        return True
 
     def _update_embedded_ai_panel_height_idle(self) -> bool:
         self._ai_panel_layout_idle_id = None
@@ -1595,6 +1651,10 @@ class Focus(Adw.Application):
         if self.win and self._ai_panel_resize_tick_id is not None:
             self.win.remove_tick_callback(self._ai_panel_resize_tick_id)
         self._ai_panel_resize_tick_id = None
+        if self.win and self._ai_panel_post_render_tick_id is not None:
+            self.win.remove_tick_callback(self._ai_panel_post_render_tick_id)
+        self._ai_panel_post_render_tick_id = None
+        self._ai_panel_post_render_frames = 0
         if self._ai_panel_layout_idle_id is not None:
             GLib.source_remove(self._ai_panel_layout_idle_id)
             self._ai_panel_layout_idle_id = None
@@ -1621,6 +1681,7 @@ class Focus(Adw.Application):
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
         self._stop_agent_answer_polling()
+        self._cleanup_agent_answer_artifact()
         self._cancel_pending_summary_scroll_restore()
         self._page_citation_range_start = None
         self._sync_citation_buttons()
@@ -1640,6 +1701,7 @@ class Focus(Adw.Application):
             ai_state.raw = ""
             self._apply_ai_output_links("", ai_state)
         self._agent_workspace_path = None
+        self._agent_answer_status = ""
         self._agent_last_answer_text = ""
         self._sync_show_image_action()
 
@@ -5473,6 +5535,9 @@ class Focus(Adw.Application):
 
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
         self._stop_grep_search_if_running()
+        self._stop_agent_terminal()
+        self._stop_agent_answer_polling()
+        self._cleanup_agent_answer_artifact()
         self._stop_ai_panel_resize_tracking()
         self._cancel_pending_summary_scroll_restore()
         if self._image_print_window:
@@ -6346,6 +6411,7 @@ class Focus(Adw.Application):
 
     def _clear_agent_answer(self) -> None:
         self._agent_last_answer_text = ""
+        self._agent_answer_status = ""
         state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
         if state:
             state.raw = ""
@@ -6358,39 +6424,59 @@ class Focus(Adw.Application):
         if self._agent_answer_poll_id is not None:
             GLib.source_remove(self._agent_answer_poll_id)
             self._agent_answer_poll_id = None
-        self._agent_session_log_path = None
+
+    def _cleanup_agent_answer_artifact(self) -> None:
+        remove_focus_answer_artifact(self._agent_answer_artifact_path)
+        self._agent_answer_artifact_path = None
+        self._agent_run_id = ""
+        self._agent_answer_revision = 0
 
     def _start_agent_answer_polling(self) -> None:
         self._stop_agent_answer_polling()
-        if self._agent_workspace_path is None:
+        if self._agent_answer_artifact_path is None or not self._agent_run_id:
             return
-        self._agent_answer_poll_id = GLib.timeout_add(1200, self._poll_agent_answer)
+        self._agent_answer_poll_id = GLib.timeout_add(250, self._poll_agent_answer)
         self._poll_agent_answer()
 
     def _poll_agent_answer(self) -> bool:
-        workspace = self._agent_workspace_path
-        if workspace is None:
+        artifact_path = self._agent_answer_artifact_path
+        run_id = self._agent_run_id
+        if artifact_path is None or not run_id:
             self._agent_answer_poll_id = None
             return False
-        if self._agent_session_log_path is None:
-            session_dir = self._agent_pi_session_dir or pi_session_dir_for_cwd(workspace)
-            self._agent_session_log_path = find_latest_pi_session_log_for_cwd(
-                session_dir,
-                workspace,
-            )
-        if self._agent_session_log_path is not None:
-            answer = extract_latest_pi_final_answer_from_jsonl(
-                self._agent_session_log_path
-            )
-            if answer and answer != self._agent_last_answer_text:
+        result = read_focus_answer_artifact(
+            artifact_path,
+            run_id=run_id,
+            last_revision=self._agent_answer_revision,
+        )
+        artifact = result.artifact
+        if artifact is not None:
+            self._agent_answer_revision = artifact.revision
+            self._agent_answer_diagnostics = dict(artifact.diagnostics)
+            answer = artifact.markdown
+            if answer:
                 self._agent_last_answer_text = answer
                 state = self._get_ai_output_state(AI_VIEW_AGENT_QA)
                 state.raw = answer
                 self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = answer
                 self._apply_ai_output_links(answer, state)
                 self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
-                self._update_ai_status("Final answer ready.", spinning=False)
-                self._queue_embedded_ai_panel_height_update()
+                self._agent_answer_status = focus_answer_status_message(artifact)
+                self._update_ai_status(
+                    self._agent_answer_status,
+                    spinning=False,
+                )
+                self._queue_embedded_ai_panel_height_update(after_render=True)
+            else:
+                self._agent_answer_status = (
+                    "Provider/session failure: no usable answer text."
+                )
+                self._update_ai_status(self._agent_answer_status, spinning=False)
+        elif result.error not in {"", "missing", "stale_revision"}:
+            self._update_ai_status(
+                f"Agent answer protocol failure ({result.error}).",
+                spinning=False,
+            )
         keep_polling = self._agent_terminal_active
         if not keep_polling:
             self._agent_answer_poll_id = None
@@ -6489,9 +6575,11 @@ class Focus(Adw.Application):
             not pi_settings.is_file()
             or not FOCUS_PI_SYSTEM_PROMPT_FILE.is_file()
             or not FOCUS_PI_SKILL_FILE.is_file()
+            or not FOCUS_PI_EXTENSION_FILE.is_file()
+            or not FOCUS_AGENT_ANSWER_PROTOCOL_FILE.is_file()
         ):
             self._ai_transient_toast(
-                "Focus PI system prompt, settings, or skill is missing."
+                "Focus PI settings, prompt, skill, extension, or answer protocol is missing."
             )
             return
 
@@ -6501,8 +6589,19 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Unable to create Agent workspace: {exc}")
             return
         self._agent_workspace_path = workspace
-        self._agent_session_log_path = None
-        self._agent_pi_session_dir = pi_session_dir_for_cwd(workspace)
+        self._cleanup_agent_answer_artifact()
+        try:
+            runtime_dir = focus_answer_runtime_dir()
+            run_id = create_focus_run_id()
+            answer_artifact = focus_answer_artifact_path(run_id, runtime_dir)
+        except (OSError, ValueError) as exc:
+            self._ai_transient_toast(f"Unable to create Agent answer transport: {exc}")
+            return
+        remove_focus_answer_artifact(answer_artifact)
+        self._agent_run_id = run_id
+        self._agent_answer_artifact_path = answer_artifact
+        self._agent_answer_revision = 0
+        self._agent_answer_diagnostics = {}
 
         env = os.environ.copy()
         env.update(
@@ -6510,6 +6609,10 @@ class Focus(Adw.Application):
                 "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
                 "FOCUS_AGENT_CASE_ROOT": str(self._record_layout.root),
                 "FOCUS_AGENT_WORKSPACE": str(workspace),
+                "FOCUS_AGENT_RUN_ID": run_id,
+                "FOCUS_AGENT_ANSWER_ARTIFACT": str(answer_artifact),
+                "FOCUS_AGENT_RUNTIME_DIR": str(runtime_dir),
+                "FOCUS_AGENT_ANSWER_PROTOCOL": str(FOCUS_AGENT_ANSWER_PROTOCOL_FILE),
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
                 "FOCUS_PI_PROJECT_DIR": str(FOCUS_PI_PROJECT_DIR),
@@ -6592,7 +6695,7 @@ class Focus(Adw.Application):
         self._sync_agent_session_widget_visibility()
         self._queue_embedded_ai_panel_height_update()
         if self._agent_answer_has_content():
-            message = "Final answer ready."
+            message = self._agent_answer_status or "Final answer ready."
         elif closing:
             message = "Agent session closed."
         else:
@@ -6634,6 +6737,8 @@ class Focus(Adw.Application):
                 pass
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
+        self._stop_agent_answer_polling()
+        self._cleanup_agent_answer_artifact()
         self._sync_agent_session_widget_visibility()
         self._update_ai_status("", spinning=False)
         self._queue_embedded_ai_panel_height_update()

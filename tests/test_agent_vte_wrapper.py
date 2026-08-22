@@ -56,6 +56,11 @@ def _run_wrapper(
         / "focus-answer-record-questions"
     )
     skill_dir.mkdir(parents=True)
+    extension_dir = pi_project_dir / "extensions"
+    extension_dir.mkdir(parents=True)
+    (extension_dir / "focus-record-agent.ts").write_text(
+        "// Focus test extension\n", encoding="utf-8"
+    )
     (pi_project_dir / "settings.json").write_text(
         '{"defaultProvider":"fireworks","defaultModel":"test-model",'
         '"defaultThinkingLevel":"medium"}',
@@ -68,6 +73,10 @@ def _run_wrapper(
         "---\nname: focus-answer-record-questions\ndescription: Test skill.\n---\n",
         encoding="utf-8",
     )
+    answer_protocol = tmp_path / "agent_answer.py"
+    answer_protocol.write_text("# test protocol\n", encoding="utf-8")
+    runtime_dir = tmp_path / "runtime" / "focus" / "agent-answers"
+    runtime_dir.mkdir(parents=True)
     executable = _fake_agent(tmp_path)
     env = os.environ.copy()
     env.update(
@@ -76,6 +85,10 @@ def _run_wrapper(
             "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
             "FOCUS_AGENT_CASE_ROOT": str(case_root),
             "FOCUS_AGENT_WORKSPACE": str(workspace),
+            "FOCUS_AGENT_RUN_ID": "abcdefghijklmnopqrstuvwx",
+            "FOCUS_AGENT_RUNTIME_DIR": str(runtime_dir),
+            "FOCUS_AGENT_ANSWER_ARTIFACT": str(runtime_dir / "answer.json"),
+            "FOCUS_AGENT_ANSWER_PROTOCOL": str(answer_protocol),
             "FOCUS_PI_PROJECT_DIR": str(pi_project_dir),
             "FOCUS_AGENT_COMMAND_ARGC": "1",
             "FOCUS_AGENT_COMMAND_ARG_0": str(executable),
@@ -103,6 +116,9 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         f"cwd={workspace}",
         "arg=--approve",
         "arg=--no-extensions",
+        "arg=--extension",
+        f"arg={workspace}/.pi/extensions/focus-record-agent.ts",
+        "arg=--no-session",
         "arg=--no-skills",
         "arg=--no-prompt-templates",
         "arg=--no-themes",
@@ -112,7 +128,7 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "arg=--skill",
         f"arg={workspace}/.pi/skills/focus-answer-record-questions/SKILL.md",
         "arg=--tools",
-        "arg=read,bash,grep,find,ls",
+        "arg=read,focus_record,submit_focus_answer",
         "arg=Exact Focus prompt",
         "with a second line.",
         "settings=staged",
@@ -121,10 +137,9 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "system=staged",
         "skill=staged",
     ]
-    # --no-extensions isolation is absolute: no extension is loaded, and no
-    # capture warning is emitted.
-    assert "arg=--extension" not in output
-    assert "capture" not in completed.stderr.lower()
+    assert output.count("arg=--extension") == 1
+    assert "arg=--no-session" in output
+    assert "arg=read,bash,grep,find,ls" not in output
     assert not workspace.exists()
     assert not prompt_path.exists()
 

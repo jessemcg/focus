@@ -1,105 +1,205 @@
+from __future__ import annotations
+
 import json
 import os
 
-from focus.core import (
-    extract_latest_pi_final_answer_from_jsonl,
-    find_latest_pi_session_log_for_cwd,
-    pi_session_dir_for_cwd,
-    pi_session_log_matches_cwd,
+from focus.agent_answer import (
+    create_focus_run_id,
+    focus_answer_artifact_path,
+    focus_answer_status_message,
+    lint_focus_answer,
+    read_focus_answer_artifact,
+    remove_focus_answer_artifact,
 )
 
 
-def _write_jsonl(path, rows) -> None:
+def _artifact(run_id: str, markdown: str = "Useful answer.", **changes: object) -> dict:
+    payload = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "revision": 1,
+        "status": "complete",
+        "capture": "submit_tool",
+        "answer_kind": "answered",
+        "markdown": markdown,
+        "warnings": [],
+        "diagnostics": {
+            "provider": "fireworks",
+            "model": "accounts/fireworks/models/deepseek-v4-pro-0813",
+            "thinking": "low",
+            "stop_reason": "toolUse",
+            "assistant_turns": 7,
+            "tool_calls": 9,
+            "searches": 2,
+            "pages_read": 6,
+            "grep_calls": 0,
+            "map_inspections": 0,
+            "usage": {
+                "input": 10,
+                "output": 20,
+                "cache_read": 30,
+                "reported_cost": 0.04,
+            },
+            "elapsed_ms": 100,
+        },
+    }
+    payload.update(changes)
+    return payload
+
+
+def _write_artifact(path, payload: object, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            if isinstance(row, str):
-                handle.write(row + "\n")
-            else:
-                handle.write(json.dumps(row) + "\n")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    path.chmod(mode)
 
 
-def test_extract_latest_pi_final_answer_ignores_tool_use_and_thinking(tmp_path) -> None:
-    log_path = tmp_path / "pi-session.jsonl"
-    _write_jsonl(
-        log_path,
-        [
-            {"type": "session", "version": 3, "cwd": str(tmp_path)},
-            "{partial",
-            {
-                "type": "message",
-                "message": {
-                    "role": "assistant",
-                    "content": [
-                        {"type": "thinking", "thinking": "Search first"},
-                        {"type": "text", "text": "intermediate narration"},
-                        {"type": "toolCall", "name": "bash"},
-                    ],
-                    "stopReason": "toolUse",
-                },
-            },
-            {
-                "type": "message",
-                "message": {
-                    "role": "assistant",
-                    "content": [
-                        {"type": "thinking", "thinking": "Done"},
-                        {"type": "text", "text": "First final answer."},
-                    ],
-                    "stopReason": "stop",
-                },
-            },
-            {
-                "type": "message",
-                "message": {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "Latest follow-up answer."}],
-                    "stopReason": "length",
-                },
-            },
-        ],
+def test_lint_diagnostics_never_mutate_formatting_imperfect_markdown() -> None:
+    markdown = (
+        "**Planning checklist:** preserve this best-effort answer.\n\n"
+        "The case overview says \"this quotation contains far more than five words\". "
+        "See CT 12."
     )
 
-    assert (
-        extract_latest_pi_final_answer_from_jsonl(log_path)
-        == "Latest follow-up answer."
+    warnings = lint_focus_answer(markdown)
+
+    assert {"long_quote", "bold_markup", "record_metadata"} <= set(warnings)
+    assert markdown == (
+        "**Planning checklist:** preserve this best-effort answer.\n\n"
+        "The case overview says \"this quotation contains far more than five words\". "
+        "See CT 12."
     )
 
 
-def test_pi_session_log_matching_and_latest_selection(tmp_path) -> None:
-    session_dir = tmp_path / "pi-sessions"
-    workspace = tmp_path / "agent-workspace"
-    old_log = session_dir / "old.jsonl"
-    new_log = session_dir / "new.jsonl"
-    other_log = session_dir / "other.jsonl"
-    _write_jsonl(old_log, [{"type": "session", "version": 3, "cwd": str(workspace)}])
-    _write_jsonl(new_log, ["{partial", {"type": "session", "version": 3, "cwd": str(workspace)}])
-    _write_jsonl(
-        other_log,
-        [{"type": "session", "version": 3, "cwd": str(tmp_path / "other")}],
+def test_valid_submit_artifact_is_accepted_unchanged_with_nonblocking_warning(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    markdown = 'The answer rests on "a quotation longer than five total words".'
+    _write_artifact(path, _artifact(run_id, markdown))
+
+    result = read_focus_answer_artifact(path, run_id=run_id)
+
+    assert result.error == ""
+    assert result.artifact is not None
+    assert result.artifact.markdown == markdown
+    assert "long_quote" in result.artifact.warnings
+
+
+def test_length_and_provider_interruption_artifacts_preserve_usable_text(tmp_path) -> None:
+    for stop_reason in ("length", "error", "aborted"):
+        run_id = create_focus_run_id()
+        path = focus_answer_artifact_path(run_id, tmp_path)
+        payload = _artifact(
+            run_id,
+            "Available partial answer.",
+            status="partial",
+            capture="assistant_fallback",
+        )
+        payload["diagnostics"]["stop_reason"] = stop_reason
+        _write_artifact(path, payload)
+
+        result = read_focus_answer_artifact(path, run_id=run_id)
+
+        assert result.artifact is not None
+        assert result.artifact.markdown == "Available partial answer."
+        assert result.artifact.status == "partial"
+        expected = (
+            "Partial answer—output limit reached."
+            if stop_reason == "length"
+            else f"Partial answer—Agent {stop_reason}."
+        )
+        assert focus_answer_status_message(result.artifact) == expected
+
+
+def test_plain_assistant_fallback_gets_subdued_best_effort_status(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    payload = _artifact(run_id, "Plain final answer.", capture="assistant_fallback")
+    payload["diagnostics"]["stop_reason"] = "stop"
+    _write_artifact(path, payload)
+
+    result = read_focus_answer_artifact(path, run_id=run_id)
+
+    assert result.artifact is not None
+    assert focus_answer_status_message(result.artifact) == "Best-effort answer ready."
+
+
+def test_provider_error_without_text_has_clear_failure_status(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    payload = _artifact(
+        run_id,
+        "",
+        status="partial",
+        capture="assistant_fallback",
+        answer_kind="insufficient_text",
     )
-    os.utime(old_log, (1, 1))
-    os.utime(new_log, (3, 3))
-    os.utime(other_log, (2, 2))
+    payload["diagnostics"]["stop_reason"] = "error"
+    _write_artifact(path, payload)
 
-    assert pi_session_log_matches_cwd(new_log, workspace)
-    assert not pi_session_log_matches_cwd(other_log, workspace)
-    assert find_latest_pi_session_log_for_cwd(session_dir, workspace) == new_log
+    result = read_focus_answer_artifact(path, run_id=run_id)
 
-
-def test_pi_session_dir_for_cwd_uses_default_encoded_path(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("PI_CODING_AGENT_SESSION_DIR", raising=False)
-    agent_dir = tmp_path / "agent"
-    workspace = tmp_path / "nested" / "workspace"
-
-    session_dir = pi_session_dir_for_cwd(workspace, agent_dir)
-
-    expected_suffix = "--" + str(workspace.resolve()).lstrip("/").replace("/", "-") + "--"
-    assert session_dir == agent_dir / "sessions" / expected_suffix
+    assert result.artifact is not None
+    assert focus_answer_status_message(result.artifact) == (
+        "Provider/session failure: no usable answer text."
+    )
 
 
-def test_pi_session_dir_for_cwd_honors_environment_override(tmp_path, monkeypatch) -> None:
-    override = tmp_path / "custom-sessions"
-    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(override))
+def test_tool_use_narration_cannot_be_an_assistant_fallback(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    payload = _artifact(run_id, "Interim narration", capture="assistant_fallback")
+    payload["diagnostics"]["stop_reason"] = "toolUse"
+    _write_artifact(path, payload)
 
-    assert pi_session_dir_for_cwd(tmp_path / "workspace") == override
+    result = read_focus_answer_artifact(path, run_id=run_id)
+
+    assert result.artifact is None
+    assert result.error == "invalid_capture_stop_reason"
+
+
+def test_artifact_rejects_wrong_run_stale_revision_and_unsupported_modes(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    _write_artifact(path, _artifact("z" * 24))
+    assert read_focus_answer_artifact(path, run_id=run_id).error == "wrong_run_id"
+
+    _write_artifact(path, _artifact(run_id))
+    assert read_focus_answer_artifact(path, run_id=run_id, last_revision=1).error == "stale_revision"
+
+    _write_artifact(path, _artifact(run_id, status="pending"))
+    assert read_focus_answer_artifact(path, run_id=run_id).error == "invalid_status"
+
+    _write_artifact(path, _artifact(run_id, capture="session_parser"))
+    assert read_focus_answer_artifact(path, run_id=run_id).error == "invalid_capture"
+
+
+def test_artifact_rejects_malformed_insecure_and_duplicate_revisions(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    path.write_text("{not-json", encoding="utf-8")
+    path.chmod(0o600)
+    assert read_focus_answer_artifact(path, run_id=run_id).error == "malformed"
+
+    _write_artifact(path, _artifact(run_id), mode=0o644)
+    assert read_focus_answer_artifact(path, run_id=run_id).error == "insecure_artifact"
+
+    _write_artifact(path, _artifact(run_id))
+    first = read_focus_answer_artifact(path, run_id=run_id)
+    assert first.artifact is not None
+    duplicate = read_focus_answer_artifact(
+        path,
+        run_id=run_id,
+        last_revision=first.artifact.revision,
+    )
+    assert duplicate.error == "stale_revision"
+
+
+def test_artifact_cleanup_is_idempotent(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    _write_artifact(path, _artifact(run_id))
+
+    remove_focus_answer_artifact(path)
+    remove_focus_answer_artifact(path)
+
+    assert not path.exists()
