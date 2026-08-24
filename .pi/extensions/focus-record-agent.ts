@@ -4,12 +4,6 @@ import { Type } from "typebox";
 import { chmod, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
-const OUTPUT_TOKEN_CAP = 8192;
-const SEARCH_SOFT_LIMIT = 2;
-const SEARCH_HARD_LIMIT = 6;
-const PAGE_SOFT_LIMIT = 8;
-const PAGE_HARD_LIMIT = 24;
-const MAP_HARD_LIMIT = 1;
 const RUN_ID_RE = /^[A-Za-z0-9_-]{20,128}$/;
 const WARNING_CATEGORIES = new Set([
   "long_quote",
@@ -98,8 +92,6 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
   let submitted = false;
   let revision = 0;
   let lastAssistant: CapturedAssistant | undefined;
-  let warnedSearch = false;
-  let warnedPages = false;
   let canonicalTextRoot = textRoot;
   let transportError = "";
   let activeProvider = "fireworks";
@@ -208,11 +200,6 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
     activeThinking = event.level;
   });
 
-  pi.on("before_provider_request", (event) => {
-    const payload = event.payload as Record<string, unknown>;
-    return { ...payload, max_tokens: OUTPUT_TOKEN_CAP };
-  });
-
   pi.on("tool_execution_start", () => {
     counters.toolCalls += 1;
   });
@@ -224,22 +211,8 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
       if (!(await guardedRecordPath((event.input as any)?.path, ctx.cwd))) {
         return { block: true, reason: "Read access is limited to the active case text_pages directory." };
       }
-      if (counters.pagesRead >= PAGE_HARD_LIMIT) {
-        return { block: true, reason: "Page-read budget exhausted. Answer from pages already read or state that the available text is insufficient." };
-      }
       counters.pagesRead += 1;
     }
-  });
-
-  pi.on("tool_result", (event) => {
-    if (event.toolName !== "read" || warnedPages || counters.pagesRead < PAGE_SOFT_LIMIT) return;
-    warnedPages = true;
-    return {
-      content: [
-        ...event.content,
-        { type: "text", text: "Research note: eight pages have been read. Synthesize now unless ambiguity, conflict, attribution, or a negative finding requires more." },
-      ],
-    };
   });
 
   pi.on("message_end", (event) => {
@@ -282,7 +255,7 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
   pi.registerTool({
     name: "focus_record",
     label: "Focus Record",
-    description: "Read navigation-only context, search mapped text, resolve citations/pages, inspect one targeted map section, or inspect a document. The tool is read-only, shell-free, and budgeted.",
+    description: "Read navigation-only context, search mapped text, resolve citations/pages, inspect a targeted map section, or inspect a document. The tool is read-only and shell-free.",
     promptSnippet: "Research the active Focus record with structured, source-resolving actions",
     parameters: Type.Object({
       action: StringEnum(["context", "search", "lookup", "document", "map"] as const),
@@ -305,9 +278,6 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
       if (params.action === "context") {
         args.push("context", "--json");
       } else if (params.action === "search") {
-        if (counters.searches >= SEARCH_HARD_LIMIT) {
-          return { content: [{ type: "text", text: JSON.stringify({ error: "search_budget_exhausted", instruction: "Answer from evidence already read or state that the available text is insufficient." }) }], details: { error: "search_budget_exhausted" } };
-        }
         counters.searches += 1;
         if (!params.queries?.length) throw new Error("search requires at least one query");
         args.push("search");
@@ -328,9 +298,6 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
         if (!params.id) throw new Error("document requires id");
         args.push("document", "--id", params.id, "--json");
       } else {
-        if (counters.mapInspections >= MAP_HARD_LIMIT) {
-          return { content: [{ type: "text", text: JSON.stringify({ error: "map_budget_exhausted", instruction: "Use the map evidence already inspected and synthesize." }) }], details: { error: "map_budget_exhausted" } };
-        }
         if (!params.map_section) throw new Error("map requires map_section");
         counters.mapInspections += 1;
         args.push("map", "--section", params.map_section, "--json");
@@ -343,10 +310,6 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
         payload = { error: "invalid_helper_response", type: "ProtocolError" };
       }
       if (result.code !== 0 && !payload.error) payload = { error: "helper_failed", type: "ProcessError" };
-      if (params.action === "search" && !warnedSearch && counters.searches >= SEARCH_SOFT_LIMIT) {
-        warnedSearch = true;
-        payload.research_warning = "Two searches completed. Synthesize now unless ambiguity, conflict, attribution, or a negative finding requires more.";
-      }
       return {
         content: [{ type: "text", text: JSON.stringify(payload) }],
         details: { action: params.action, error: payload.error ?? "" },

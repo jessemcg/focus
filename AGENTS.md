@@ -13,7 +13,7 @@
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
 - `.pi/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.
 - `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions.
-- `.pi/extensions/focus-record-agent.ts`: the sole explicitly loaded extension. It registers the shell-free structured record tool and terminating answer handoff, guards text-page access, enforces research budgets, caps provider output, and captures one best-effort fallback answer.
+- `.pi/extensions/focus-record-agent.ts`: the sole explicitly loaded extension. It registers the shell-free structured record tool and terminating answer handoff, guards text-page access, leaves the provider/model output limit unchanged (no Focus-imposed token cap or search/page/map budget), and captures one best-effort fallback answer.
 - `scripts/focus-agent-vte.sh`: launches an ephemeral `--no-session` embedded Agent with extension discovery disabled and exactly the staged Focus extension loaded explicitly. It passes the staged system prompt and skill and restricts tools to `read,focus_record,submit_focus_answer`; corpus-wide grep is unavailable.
 - `config.json`: user-specific settings (input_dir, font sizes, API credentials, prompts); do not commit secrets.
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.

@@ -41,7 +41,7 @@ def test_pi_system_prompt_is_short_and_delegates_to_canonical_skill() -> None:
     assert "resolved_text_path" not in prompt
 
 
-def test_pi_record_skill_has_bounded_stop_first_workflow_and_soft_style() -> None:
+def test_pi_record_skill_has_repeatable_stop_first_workflow_and_soft_style() -> None:
     skill = FOCUS_PI_SKILL_FILE.read_text(encoding="utf-8")
 
     assert skill.startswith(f"---\nname: {FOCUS_PI_SKILL_NAME}\n")
@@ -53,8 +53,10 @@ def test_pi_record_skill_has_bounded_stop_first_workflow_and_soft_style() -> Non
     assert "diversified by query" in skill
     assert "prefer contemporaneous orders" in skill
     assert "historical allegation or later summary alone" in skill
-    assert "Run at most one follow-up `search`" in skill
+    assert "Run as many additional targeted `search` calls as needed" in skill
     assert "no corpus-wide grep tool" in skill
+    assert "Run at most one follow-up" not in skill
+    assert "budgets are enforced by the tools" not in skill
     assert "Never mention, quote, or rely on the overview" in skill
     assert "submit_focus_answer" in skill
     assert "first substantively useful answer" in skill
@@ -69,7 +71,7 @@ def test_pi_record_skill_has_bounded_stop_first_workflow_and_soft_style() -> Non
     assert "```bash" not in skill
 
 
-def test_focus_extension_is_shell_free_budgeted_and_terminating() -> None:
+def test_focus_extension_is_shell_free_uncapped_and_terminating() -> None:
     source = EXTENSION.read_text(encoding="utf-8")
 
     assert 'name: "focus_record"' in source
@@ -80,11 +82,21 @@ def test_focus_extension_is_shell_free_budgeted_and_terminating() -> None:
     assert "pi.exec(python, args" in source
     assert "child_process" not in source
     assert "exec(" not in source.replace("pi.exec(", "")
-    assert "OUTPUT_TOKEN_CAP = 8192" in source
-    assert "SEARCH_HARD_LIMIT = 6" in source
-    assert "PAGE_HARD_LIMIT = 24" in source
+    assert "OUTPUT_TOKEN_CAP" not in source
+    assert "SEARCH_HARD_LIMIT" not in source
+    assert "PAGE_HARD_LIMIT" not in source
+    assert "MAP_HARD_LIMIT" not in source
+    assert "before_provider_request" not in source
+    assert "max_tokens" not in source
+    assert "budget_exhausted" not in source
+    assert "research_warning" not in source
+    assert "Synthesize now" not in source
     assert 'event.toolName === "grep"' not in source
-    assert "MAP_HARD_LIMIT = 1" in source
+    assert "counters.searches += 1" in source
+    assert "counters.mapInspections += 1" in source
+    assert "counters.pagesRead += 1" in source
+    assert "guardedRecordPath" in source
+    assert "Read access is limited to the active case text_pages directory." in source
     assert "terminate: true" in source
     assert 'if (stopReason === "toolUse") return;' in source
     assert 'capture: "assistant_fallback"' in source
