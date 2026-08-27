@@ -194,6 +194,39 @@ def test_artifact_rejects_malformed_insecure_and_duplicate_revisions(tmp_path) -
     assert duplicate.error == "stale_revision"
 
 
+def test_sequential_revisions_for_one_run_are_accepted_in_order(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+
+    first_markdown = 'First answer with "a short quote".'
+    second_markdown = "Second answer replaces the first unchanged."
+
+    _write_artifact(path, _artifact(run_id, first_markdown))
+    first = read_focus_answer_artifact(path, run_id=run_id)
+    assert first.artifact is not None
+    assert first.artifact.revision == 1
+    assert first.artifact.markdown == first_markdown
+
+    _write_artifact(path, _artifact(run_id, second_markdown, revision=2))
+    second = read_focus_answer_artifact(
+        path,
+        run_id=run_id,
+        last_revision=first.artifact.revision,
+    )
+    assert second.artifact is not None
+    assert second.artifact.revision == 2
+    assert second.artifact.markdown == second_markdown
+
+    # A stale duplicate of the already-accepted revision is rejected.
+    stale = read_focus_answer_artifact(
+        path,
+        run_id=run_id,
+        last_revision=second.artifact.revision,
+    )
+    assert stale.artifact is None
+    assert stale.error == "stale_revision"
+
+
 def test_artifact_cleanup_is_idempotent(tmp_path) -> None:
     run_id = create_focus_run_id()
     path = focus_answer_artifact_path(run_id, tmp_path)

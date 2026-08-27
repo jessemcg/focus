@@ -76,8 +76,7 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
   const runId = process.env.FOCUS_AGENT_RUN_ID ?? "";
   const artifactPath = resolve(process.env.FOCUS_AGENT_ANSWER_ARTIFACT ?? "");
   const runtimeDir = resolve(process.env.FOCUS_AGENT_RUNTIME_DIR ?? dirname(artifactPath));
-  const startedAt = Date.now();
-  const counters: Counters = {
+  const emptyCounters = (): Counters => ({
     assistantTurns: 0,
     toolCalls: 0,
     searches: 0,
@@ -88,7 +87,9 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
     output: 0,
     cacheRead: 0,
     reportedCost: 0,
-  };
+  });
+  let startedAt = Date.now();
+  let counters: Counters = emptyCounters();
   let submitted = false;
   let revision = 0;
   let lastAssistant: CapturedAssistant | undefined;
@@ -189,6 +190,13 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
       activeModel = ctx.model.id;
     }
     activeThinking = ctx.thinkingLevel;
+  });
+
+  pi.on("before_agent_start", () => {
+    submitted = false;
+    lastAssistant = undefined;
+    counters = emptyCounters();
+    startedAt = Date.now();
   });
 
   pi.on("model_select", (event) => {

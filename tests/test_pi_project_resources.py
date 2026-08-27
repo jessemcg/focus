@@ -107,6 +107,25 @@ def test_focus_extension_is_shell_free_uncapped_and_terminating() -> None:
     assert "mode: 0o600" in source
 
 
+def test_focus_extension_resets_submission_state_per_prompt() -> None:
+    source = EXTENSION.read_text(encoding="utf-8")
+
+    assert 'pi.on("before_agent_start"' in source
+    assert "submitted = false" in source
+    assert "lastAssistant = undefined" in source
+    assert "counters = emptyCounters()" in source
+    assert "startedAt = Date.now()" in source
+    assert "let revision = 0" in source
+    assert "let counters: Counters = emptyCounters()" in source
+    # Submission guard remains within a single prompt: the tool still flips it
+    # so duplicate submit_focus_answer calls cannot overwrite an accepted answer.
+    assert 'if (submitted) {' in source
+    assert 'details: { accepted: false }' in source
+    # The fallback is still gated per prompt by the same flag, so a settled run
+    # that did submit never rewrites, and a fresh prompt resets the guard.
+    assert 'if (submitted) return;' in source
+
+
 def test_agent_prompt_contains_only_the_users_question() -> None:
     prompt = Focus._compose_agent_prompt("  Who made the finding at CT 67?  ")
 
