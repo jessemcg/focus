@@ -14,7 +14,7 @@ from focus.agent_trace import (
     pi_session_log_matches_cwd,
     reasoning_trace_path,
     snapshot_pi_session_jsonl,
-    trace_review_clipboard_text,
+    trace_clipboard_text,
 )
 
 
@@ -218,15 +218,11 @@ def test_snapshot_replaces_atomically_with_private_permissions(
     ]
 
 
-def test_trace_review_prompt_is_diagnostic_not_resumption(tmp_path: Path) -> None:
+def test_trace_clipboard_text_is_path_only(tmp_path: Path) -> None:
     path = tmp_path / "traces/latest_trace.jsonl"
-    prompt = trace_review_clipboard_text(path)
+    text = trace_clipboard_text(path)
 
-    assert str(path) in prompt
-    assert "diagnostic evidence" in prompt
-    assert "Do not resume" in prompt
-    assert "chunks" in prompt
-    assert "Focus code, prompts" in prompt
-    assert "model reasoning errors" in prompt
-    assert "confidential" in prompt
-    assert "generalizable improvements" in prompt
+    assert text == str(path)
+    assert "\n" not in text
+    assert "review" not in text.casefold()
+    assert "diagnostic" not in text.casefold()

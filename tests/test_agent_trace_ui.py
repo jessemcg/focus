@@ -113,7 +113,7 @@ def test_header_state_exposes_copy_trace_without_answer_or_session(
     assert not harness._agent_session_button.sensitive
 
 
-def test_copy_trace_click_snapshots_then_copies_prompt(
+def test_copy_trace_click_snapshots_then_copies_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,9 +142,9 @@ def test_copy_trace_click_snapshots_then_copies_prompt(
     assert json.loads(lines[0])["type"] == "session"
     assert len(lines) == 2
     assert clipboard.set.call_count == 1
-    prompt = clipboard.set.call_args.args[0]
-    assert str(destination) in prompt
-    assert "diagnostic evidence" in prompt
+    copied = clipboard.set.call_args.args[0]
+    assert copied == str(destination)
+    assert "diagnostic" not in copied.casefold()
     assert any(str(destination) in toast for toast in harness.toasts)
 
 

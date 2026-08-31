@@ -1,11 +1,11 @@
-"""Focus Agent session-trace discovery, snapshotting, and review prompts.
+"""Focus Agent session-trace discovery and snapshotting.
 
 The embedded Agent runs PI inside a private disposable workspace. While the
 run is active, PI persists its session JSONL under the workspace's
 ``pi-sessions`` directory; when the wrapper exits it preserves that file under
 Focus's private runtime directory so failed and completed runs remain
 diagnosable. This module owns the discovery contract for both locations, the
-validated atomic snapshot workflow, and the ready-to-paste review prompt.
+validated atomic snapshot workflow, and the clipboard trace path.
 """
 
 from __future__ import annotations
@@ -21,21 +21,6 @@ from .agent_answer import RUN_ID_RE
 PI_SESSION_LOG_GLOB = "**/*.jsonl"
 TRACE_STATE_DIR_PARTS = ("focus", "traces")
 TRACE_FILENAME = "latest_trace.jsonl"
-TRACE_REVIEW_PROMPT_TEMPLATE = """\
-Please review a completed Focus agent run as a debugging task. This is not a request to continue or answer the underlying record-research question.
-
-Session trace (the full persisted PI session JSONL):
-{path}
-
-Treat that JSONL file as diagnostic evidence only. Do not resume, continue, or fork the record-research conversation or its temporary workspace. The file can contain the asked question, assistant thinking blocks when the provider supplies them, tool calls and results (record page reads and searches), final answers, model metadata, costs, and errors, and it may include confidential case material.
-
-Please:
-1. Read the complete file, in chunks if it is too large for one read.
-2. Compare what the run actually did with the current Focus code, prompts, and the focus-answer-record-questions skill.
-3. Distinguish model reasoning errors from prompt, workflow, tool, or infrastructure failures, and identify which occurred where.
-4. Avoid reproducing confidential content from the trace unless quoting it is necessary to explain a defect.
-5. Recommend concrete, generalizable improvements rather than overfitting to this single run.
-"""
 
 
 class TraceSnapshotError(Exception):
@@ -244,7 +229,6 @@ def snapshot_pi_session_jsonl(source: Path, destination: Path) -> Path:
     return destination
 
 
-def trace_review_clipboard_text(path: Path) -> str:
-    """Build the ready-to-paste PI review prompt for a published trace."""
-    absolute = Path(os.path.abspath(os.path.expanduser(str(path))))
-    return TRACE_REVIEW_PROMPT_TEMPLATE.format(path=absolute)
+def trace_clipboard_text(path: Path) -> str:
+    """Return the absolute trace path placed on the clipboard for Copy Trace."""
+    return str(Path(os.path.abspath(os.path.expanduser(str(path)))))

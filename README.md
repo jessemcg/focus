@@ -136,7 +136,7 @@ $XDG_STATE_HOME/focus/traces/latest_trace.jsonl
 
 falling back to `~/.local/state/focus/traces/latest_trace.jsonl` when `XDG_STATE_HOME` is unset. Set `FOCUS_TRACE_PATH` to an absolute file path to publish the snapshot somewhere else, such as synchronized storage; a relative value is rejected. The destination directory is created with `0700` permissions and the snapshot file is `0600`. If a snapshot cannot be validated or written, the previous trace and the clipboard are left untouched.
 
-After publishing the snapshot, Copy Trace places a ready-to-paste review prompt on the clipboard. That prompt asks a fresh PI coding session to treat the JSONL as diagnostic evidence — not as a conversation to resume — and to compare the run with the current Focus code, prompts, and record-question skill, separate model reasoning errors from prompt/workflow/tool/infrastructure failures, and recommend concrete, generalizable improvements.
+After publishing the snapshot, Copy Trace places the snapshot's absolute path on the clipboard — nothing else. Paste that path into a fresh PI coding session and compose your own review request; the trace is meant as diagnostic evidence to review, not a conversation to resume.
 
 The trace is the **full persisted PI session JSONL**: the asked question, assistant thinking blocks when the provider supplies them, tool calls and results (record page reads and searches), final answers, model metadata, costs, and errors. It can contain confidential case material, so it stays in private local state — never in the repository, case bundles, configuration, or logs — and it is not redacted, because redaction could remove the evidence needed to diagnose a failure. Reviewing the trace as a file is intentionally different from resuming or forking the PI session: Focus never launches or forks PI from the snapshot.
 
@@ -205,7 +205,7 @@ gdbus call --session \
 - `focus/core.py`: shared config, record layout, citation, and rendering helpers.
 - `focus/agent_helper.py`: compact context, targeted map, lookup, document, and ranked search CLI for Agent sessions.
 - `focus/agent_answer.py`: answer-artifact transport checks and non-blocking category linter.
-- `focus/agent_trace.py`: embedded-Agent session-log discovery, validated atomic trace snapshots, and the Copy Trace review prompt.
+- `focus/agent_trace.py`: embedded-Agent session-log discovery, validated atomic trace snapshots, and the Copy Trace clipboard path.
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
 - `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, exactly one explicit Focus extension, a workspace-scoped session log preserved for Copy Trace, and the strict `read,focus_record,submit_focus_answer` tool allowlist.

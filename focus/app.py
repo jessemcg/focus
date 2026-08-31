@@ -19,7 +19,7 @@ from .agent_trace import (
     focus_session_preserve_dir,
     reasoning_trace_path,
     snapshot_pi_session_jsonl,
-    trace_review_clipboard_text,
+    trace_clipboard_text,
 )
 from .ui.commands import FocusCommandsWindow
 from .ui.settings import AiSettingsWindow
@@ -939,7 +939,7 @@ class Focus(Adw.Application):
         self._agent_copy_trace_button.add_css_class("flat")
         self._agent_copy_trace_button.set_valign(Gtk.Align.CENTER)
         self._agent_copy_trace_button.set_tooltip_text(
-            "Refresh the latest full Agent session trace and copy a PI review prompt "
+            "Refresh the latest full Agent session trace and copy its path "
             "for pasting into a new PI session"
         )
         self._agent_copy_trace_button.set_sensitive(False)
@@ -6572,16 +6572,15 @@ class Focus(Adw.Application):
                 f"Copy Trace failed; previous trace preserved: {error}"
             )
             return
-        prompt = trace_review_clipboard_text(destination)
         display = Gdk.Display.get_default()
         if display is None:
             self._ai_transient_toast(
                 f"Agent trace saved to {destination}, but the clipboard was unavailable."
             )
             return
-        display.get_clipboard().set(prompt)
+        display.get_clipboard().set(trace_clipboard_text(destination))
         self._ai_transient_toast(
-            f"Copied Agent trace review prompt. Trace: {destination}"
+            f"Copied Agent trace path. Trace: {destination}"
         )
 
     @staticmethod
