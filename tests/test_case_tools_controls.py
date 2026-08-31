@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from focus.app import Focus
@@ -206,12 +207,17 @@ class AgentControlsHarness:
         self._agent_output_header = FakeVisibility()
         self._agent_answer_button = FakeButton()
         self._agent_session_button = FakeButton()
+        self._agent_copy_trace_button = FakeButton()
         self._agent_submit_button = FakeButton()
         self._agent_question_entry = FakeEntry()
         self.has_session = False
+        self.trace_source: Path | None = None
 
     def _agent_session_has_content(self) -> bool:
         return self.has_session
+
+    def _agent_trace_source(self) -> Path | None:
+        return self.trace_source
 
 
 class FakeTickWindow:

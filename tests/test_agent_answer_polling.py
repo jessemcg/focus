@@ -71,6 +71,10 @@ class AgentAnswerPollHarness:
         self._agent_answer_status = ""
         self._agent_terminal_active = True
         self._agent_answer_poll_id = 123
+        self._agent_workspace_path: Path | None = None
+        self._agent_session_log_path: Path | None = None
+        self._agent_session_preserve_path: Path | None = None
+        self.header_syncs = 0
         self._output_state = AiOutputView()
         self._ai_outputs = {AI_VIEW_AGENT_QA: self._output_state}
         self._view_state = FocusViewState()
@@ -96,6 +100,9 @@ class AgentAnswerPollHarness:
 
     def _queue_embedded_ai_panel_height_update(self, *, after_render: bool = False) -> None:
         self.height_updates += 1
+
+    def _sync_agent_output_header_state(self) -> None:
+        self.header_syncs += 1
 
 
 def test_poll_accepts_two_revisions_and_renders_latest_through_links(tmp_path) -> None:
@@ -161,3 +168,40 @@ def test_poll_does_not_replace_answer_on_stale_revision(tmp_path) -> None:
     assert harness._agent_last_answer_text == first_markdown
     assert harness._output_state.raw == first_markdown
     assert harness.link_calls == [first_markdown]
+
+
+def test_poll_discovers_live_session_log_once(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = AgentAnswerPollHarness(run_id, path)
+    _write(path, _artifact_payload(run_id, 1, "Answer text."))
+
+    workspace = tmp_path / "workspace"
+    session_log = workspace / "pi-sessions" / "session.jsonl"
+    session_log.parent.mkdir(parents=True)
+    session_log.write_text(
+        json.dumps({"type": "session", "cwd": str(workspace)}) + "\n",
+        encoding="utf-8",
+    )
+    harness._agent_workspace_path = workspace
+
+    assert harness._poll_agent_answer() is True
+    assert harness._agent_session_log_path == session_log
+    # Discovery resynchronizes the output header exactly once.
+    assert harness.header_syncs == 1
+
+    # A later poll keeps the already-discovered log and does not re-sync.
+    assert harness._poll_agent_answer() is True
+    assert harness._agent_session_log_path == session_log
+    assert harness.header_syncs == 1
+
+
+def test_poll_without_workspace_skips_session_discovery(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = AgentAnswerPollHarness(run_id, path)
+    _write(path, _artifact_payload(run_id, 1, "Answer text."))
+
+    assert harness._poll_agent_answer() is True
+    assert harness._agent_session_log_path is None
+    assert harness.header_syncs == 0

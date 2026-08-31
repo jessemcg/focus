@@ -8,6 +8,7 @@ answer_artifact="${FOCUS_AGENT_ANSWER_ARTIFACT:-}"
 run_id="${FOCUS_AGENT_RUN_ID:-}"
 runtime_dir="${FOCUS_AGENT_RUNTIME_DIR:-}"
 answer_protocol="${FOCUS_AGENT_ANSWER_PROTOCOL:-}"
+session_preserve_dir="${FOCUS_AGENT_SESSION_PRESERVE_DIR:-}"
 agent_argc="${FOCUS_AGENT_COMMAND_ARGC:-0}"
 cache_root="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
 agent_command=()
@@ -36,6 +37,16 @@ else
 fi
 
 cleanup() {
+  # Preserve the session JSONL for post-run Copy Trace diagnostics before the
+  # disposable workspace is removed. Best-effort: a failure here must not block
+  # workspace cleanup.
+  if [[ -n "$session_preserve_dir" && -n "$run_id" && -d "$workspace/pi-sessions" ]]; then
+    mkdir -p "$session_preserve_dir" 2>/dev/null || true
+    latest_session="$(ls -t "$workspace/pi-sessions"/*.jsonl 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$latest_session" ]]; then
+      mv -f "$latest_session" "$session_preserve_dir/${run_id}.jsonl" 2>/dev/null || true
+    fi
+  fi
   rm -rf "$workspace"
   rm -f "$prompt_file"
 }
@@ -91,15 +102,16 @@ fi
 
 mkdir -p "$workspace/tmp"
 mkdir -p "$workspace/.pi"
+mkdir -p "$workspace/pi-sessions"
 cp -a "$pi_project_dir/." "$workspace/.pi/"
 cd "$workspace"
 export TMPDIR="$workspace/tmp"
+export PI_CODING_AGENT_SESSION_DIR="$workspace/pi-sessions"
 prompt="$(cat "$prompt_file")"
 "${agent_command[@]}" \
   --approve \
   --no-extensions \
   --extension "$workspace/.pi/extensions/focus-record-agent.ts" \
-  --no-session \
   --no-skills \
   --no-prompt-templates \
   --no-themes \

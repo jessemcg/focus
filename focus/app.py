@@ -12,6 +12,15 @@ from .agent_answer import (
     read_focus_answer_artifact,
     remove_focus_answer_artifact,
 )
+from .agent_trace import (
+    TraceSnapshotError,
+    find_latest_pi_session_log_for_cwd,
+    focus_preserved_session_path,
+    focus_session_preserve_dir,
+    reasoning_trace_path,
+    snapshot_pi_session_jsonl,
+    trace_review_clipboard_text,
+)
 from .ui.commands import FocusCommandsWindow
 from .ui.settings import AiSettingsWindow
 
@@ -242,9 +251,12 @@ class Focus(Adw.Application):
         self._agent_session_widget: Gtk.Widget | None = None
         self._agent_answer_button: Gtk.ToggleButton | None = None
         self._agent_session_button: Gtk.ToggleButton | None = None
+        self._agent_copy_trace_button: Gtk.Button | None = None
         self._agent_subview_toggle_guard = False
         self._agent_answer_poll_id: int | None = None
         self._agent_workspace_path: Path | None = None
+        self._agent_session_log_path: Path | None = None
+        self._agent_session_preserve_path: Path | None = None
         self._agent_run_id = ""
         self._agent_answer_artifact_path: Path | None = None
         self._agent_answer_revision = 0
@@ -922,6 +934,19 @@ class Focus(Adw.Application):
         )
         agent_subview_strip.append(self._agent_session_button)
         agent_output_header.append(agent_subview_strip)
+
+        self._agent_copy_trace_button = Gtk.Button(label="Copy Trace")
+        self._agent_copy_trace_button.add_css_class("flat")
+        self._agent_copy_trace_button.set_valign(Gtk.Align.CENTER)
+        self._agent_copy_trace_button.set_tooltip_text(
+            "Refresh the latest full Agent session trace and copy a PI review prompt "
+            "for pasting into a new PI session"
+        )
+        self._agent_copy_trace_button.set_sensitive(False)
+        self._agent_copy_trace_button.connect(
+            "clicked", self._on_agent_copy_trace_clicked
+        )
+        agent_output_header.append(self._agent_copy_trace_button)
         self._agent_output_header = agent_output_header
         agent_view.append(agent_output_header)
 
@@ -1701,6 +1726,7 @@ class Focus(Adw.Application):
             ai_state.raw = ""
             self._apply_ai_output_links("", ai_state)
         self._agent_workspace_path = None
+        self._reset_agent_trace_state()
         self._agent_answer_status = ""
         self._agent_last_answer_text = ""
         self._sync_show_image_action()
@@ -2639,6 +2665,38 @@ class Focus(Adw.Application):
     def _agent_session_has_content(self) -> bool:
         return bool(self._agent_terminal_active or Vte is None)
 
+    def _agent_trace_source(self) -> Path | None:
+        """Return the current run's session JSONL: live first, then preserved."""
+        workspace = self._agent_workspace_path
+        if workspace is not None:
+            live = find_latest_pi_session_log_for_cwd(
+                workspace / "pi-sessions",
+                workspace,
+            )
+            if live is not None and live.is_file():
+                return live
+        preserved = self._agent_session_preserve_path
+        if preserved is not None and preserved.is_file():
+            return preserved
+        return None
+
+    def _reset_agent_trace_state(self) -> None:
+        """Drop the previous run's trace references before a new Agent launch."""
+        previous = self._agent_session_preserve_path
+        if previous is not None:
+            try:
+                previous.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._agent_session_log_path = None
+        self._agent_session_preserve_path = None
+
+    def _resync_agent_trace_after_exit(self) -> bool:
+        """One-shot post-exit resync; the wrapper preserves the trace on exit."""
+        if not self._agent_terminal_active:
+            self._sync_agent_output_header_state()
+        return False
+
     def _agent_answer_has_content(self) -> bool:
         state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
         return bool(
@@ -2649,12 +2707,15 @@ class Focus(Adw.Application):
     def _sync_agent_output_header_state(self) -> None:
         has_answer = self._agent_answer_has_content()
         has_session = self._agent_session_has_content()
+        has_trace = self._agent_trace_source() is not None
         if self._agent_output_header:
-            self._agent_output_header.set_visible(has_answer or has_session)
+            self._agent_output_header.set_visible(has_answer or has_session or has_trace)
         if self._agent_answer_button:
             self._agent_answer_button.set_sensitive(has_answer)
         if self._agent_session_button:
             self._agent_session_button.set_sensitive(has_session)
+        if self._agent_copy_trace_button:
+            self._agent_copy_trace_button.set_sensitive(has_trace)
 
     def _sync_agent_session_widget_visibility(self) -> None:
         if self._agent_session_widget:
@@ -6444,6 +6505,15 @@ class Focus(Adw.Application):
         if artifact_path is None or not run_id:
             self._agent_answer_poll_id = None
             return False
+        workspace = self._agent_workspace_path
+        if workspace is not None and self._agent_session_log_path is None:
+            discovered = find_latest_pi_session_log_for_cwd(
+                workspace / "pi-sessions",
+                workspace,
+            )
+            if discovered is not None:
+                self._agent_session_log_path = discovered
+                self._sync_agent_output_header_state()
         result = read_focus_answer_artifact(
             artifact_path,
             run_id=run_id,
@@ -6482,6 +6552,38 @@ class Focus(Adw.Application):
             self._agent_answer_poll_id = None
         return keep_polling
 
+    def _on_agent_copy_trace_clicked(self, _button: Gtk.Button) -> None:
+        source = self._agent_trace_source()
+        if source is None:
+            self._ai_transient_toast(
+                "Copy Trace: no session trace available for the current Agent run."
+            )
+            self._sync_agent_output_header_state()
+            return
+        try:
+            destination = reasoning_trace_path()
+        except ValueError as error:
+            self._ai_transient_toast(f"Copy Trace: {error}")
+            return
+        try:
+            snapshot_pi_session_jsonl(source, destination)
+        except (TraceSnapshotError, OSError) as error:
+            self._ai_transient_toast(
+                f"Copy Trace failed; previous trace preserved: {error}"
+            )
+            return
+        prompt = trace_review_clipboard_text(destination)
+        display = Gdk.Display.get_default()
+        if display is None:
+            self._ai_transient_toast(
+                f"Agent trace saved to {destination}, but the clipboard was unavailable."
+            )
+            return
+        display.get_clipboard().set(prompt)
+        self._ai_transient_toast(
+            f"Copied Agent trace review prompt. Trace: {destination}"
+        )
+
     @staticmethod
     def _compose_agent_prompt(question: str) -> str:
         return (
@@ -6515,6 +6617,7 @@ class Focus(Adw.Application):
         self._stop_agent_terminal()
         self._stop_agent_answer_polling()
         self._clear_agent_answer()
+        self._reset_agent_trace_state()
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._ai_settings = load_ai_settings()
         self._current_view_state().agent_question_text = question
@@ -6602,6 +6705,18 @@ class Focus(Adw.Application):
         self._agent_answer_artifact_path = answer_artifact
         self._agent_answer_revision = 0
         self._agent_answer_diagnostics = {}
+        try:
+            session_preserve_dir = focus_session_preserve_dir()
+            session_preserve_path = focus_preserved_session_path(
+                run_id,
+                session_preserve_dir,
+            )
+        except (OSError, ValueError) as exc:
+            self._ai_transient_toast(
+                f"Unable to create Agent session trace storage: {exc}"
+            )
+            return
+        self._agent_session_preserve_path = session_preserve_path
 
         env = os.environ.copy()
         env.update(
@@ -6612,6 +6727,7 @@ class Focus(Adw.Application):
                 "FOCUS_AGENT_RUN_ID": run_id,
                 "FOCUS_AGENT_ANSWER_ARTIFACT": str(answer_artifact),
                 "FOCUS_AGENT_RUNTIME_DIR": str(runtime_dir),
+                "FOCUS_AGENT_SESSION_PRESERVE_DIR": str(session_preserve_dir),
                 "FOCUS_AGENT_ANSWER_PROTOCOL": str(FOCUS_AGENT_ANSWER_PROTOCOL_FILE),
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
@@ -6694,6 +6810,10 @@ class Focus(Adw.Application):
         self._poll_agent_answer()
         self._sync_agent_session_widget_visibility()
         self._queue_embedded_ai_panel_height_update()
+        # The wrapper preserves the session JSONL in its exit trap; re-check the
+        # trace source once more shortly after exit so Copy Trace stays exposed
+        # even if preservation completed after the synchronous header resync.
+        GLib.timeout_add(750, self._resync_agent_trace_after_exit)
         if self._agent_answer_has_content():
             message = self._agent_answer_status or "Final answer ready."
         elif closing:

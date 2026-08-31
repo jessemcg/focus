@@ -9,12 +9,13 @@
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
 - `focus/agent_helper.py`: read-only compact research context, source-map lookup, targeted map inspection, and database-free per-query diversified lexical search with source-date/document ranking used by embedded PI Agent sessions.
 - `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
+- `focus/agent_trace.py`: embedded-Agent session-log discovery (live workspace `pi-sessions` plus the wrapper-preserved runtime copy), the validated atomic `latest_trace.jsonl` snapshot workflow, and the Copy Trace review prompt. The snapshot destination is private XDG state with an absolute `FOCUS_TRACE_PATH` override; it must never be written inside the repository or case bundles.
 - `focus/ui/`: secondary Libadwaita windows such as settings and D-Bus command reference.
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
 - `.pi/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.
 - `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions.
 - `.pi/extensions/focus-record-agent.ts`: the sole explicitly loaded extension. It registers the shell-free structured record tool and terminating answer handoff, guards text-page access, leaves the provider/model output limit unchanged (no Focus-imposed token cap or search/page/map budget), and captures one best-effort fallback answer.
-- `scripts/focus-agent-vte.sh`: launches an ephemeral `--no-session` embedded Agent with extension discovery disabled and exactly the staged Focus extension loaded explicitly. It passes the staged system prompt and skill and restricts tools to `read,focus_record,submit_focus_answer`; corpus-wide grep is unavailable.
+- `scripts/focus-agent-vte.sh`: launches the embedded Agent with extension discovery disabled and exactly the staged Focus extension loaded explicitly. It scopes PI's session log to the workspace's private `pi-sessions` directory (`PI_CODING_AGENT_SESSION_DIR`; no `--no-session`) and, on cleanup, preserves the newest session JSONL as `$FOCUS_AGENT_SESSION_PRESERVE_DIR/<run_id>.jsonl` before removing the disposable workspace, so Copy Trace works after a run ends. It passes the staged system prompt and skill and restricts tools to `read,focus_record,submit_focus_answer`; corpus-wide grep is unavailable.
 - `config.json`: user-specific settings (input_dir, font sizes, API credentials, prompts); do not commit secrets.
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.
 - `prompts/`: change notes and UI prompt history.
