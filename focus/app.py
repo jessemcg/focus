@@ -937,6 +937,7 @@ class Focus(Adw.Application):
 
         self._agent_copy_trace_button = Gtk.Button(label="Copy Trace")
         self._agent_copy_trace_button.add_css_class("flat")
+        self._agent_copy_trace_button.add_css_class("no-bold")
         self._agent_copy_trace_button.set_valign(Gtk.Align.CENTER)
         self._agent_copy_trace_button.set_tooltip_text(
             "Refresh the latest full Agent session trace and copy its path "
@@ -946,7 +947,7 @@ class Focus(Adw.Application):
         self._agent_copy_trace_button.connect(
             "clicked", self._on_agent_copy_trace_clicked
         )
-        agent_output_header.append(self._agent_copy_trace_button)
+        agent_subview_strip.append(self._agent_copy_trace_button)
         self._agent_output_header = agent_output_header
         agent_view.append(agent_output_header)
 
