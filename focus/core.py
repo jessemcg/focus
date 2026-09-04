@@ -54,9 +54,7 @@ from markdown_it.tree import SyntaxTreeNode
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 gi.require_version("GdkPixbuf", "2.0")
-gi.require_version("PangoCairo", "1.0")
 from gi.repository import Adw, Gio, GLib, Gdk, GdkPixbuf, GObject, Gtk, Pango  # type: ignore
-from gi.repository import PangoCairo  # type: ignore
 
 Vte = None  # type: ignore[assignment]
 try:
@@ -250,8 +248,6 @@ DEFAULT_SUMMARY_EMPHASIS_COLOR = "#f6c65b"
 DEFAULT_SEARCH_CHIP_COLOR = "#99c1f1"
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
 DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
-DEFAULT_PRINT_FONT_FAMILY = "Century Schoolbook"
-DEFAULT_PRINT_FONT_SIZE_PT = 12
 DEFAULT_PRINT_MARGIN_IN = 1.0
 SIDEBAR_TREE_INDENT = 4
 SIDEBAR_ACTIVE_SCROLL_MARGIN = 24

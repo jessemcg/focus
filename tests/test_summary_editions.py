@@ -520,7 +520,6 @@ class PagedHarness:
     _summary_bookmarks_path_for = Focus._summary_bookmarks_path_for
     _read_summary_bookmarks = Focus._read_summary_bookmarks
     _extract_summary_bookmark_line = Focus._extract_summary_bookmark_line
-    _on_summary_print_clicked = Focus._on_summary_print_clicked
     _open_page_matched_pdf = Focus._open_page_matched_pdf
     _load_summary_edition_for = Focus._load_summary_edition_for
     _summary_page_search_text = Focus._summary_page_search_text
@@ -542,7 +541,6 @@ class PagedHarness:
         self._summary_open_pdf_button = FakePageWidget()
         self._summary_bookmark_action_button = FakePageWidget()
         self._summary_return_bookmark_action_button = FakePageWidget()
-        self._summary_print_action = FakePageWidget()
         self._summary_buffer = object()  # truthy sentinel; rendering is faked
         self._summary_view = None
         self.input_dir = Path(tempfile.mkdtemp())
@@ -552,12 +550,6 @@ class PagedHarness:
 
     def _apply_summary_search_highlights(self) -> None:
         self.highlight_calls += 1
-
-    def _on_summary_begin_print(self, *_args) -> None:
-        pass
-
-    def _on_summary_draw_page(self, *_args) -> None:
-        pass
 
     def _get_ai_host_window(self):  # noqa: ANN201
         return None
@@ -907,33 +899,7 @@ class TestViewStateRestoration(PagedBehaviorTests):
         assert harness.displayed_pages == [1]
 
 
-class TestPrintRouting(PagedBehaviorTests):
-    def test_paged_print_routes_to_page_matched_pdf(self, tmp_path) -> None:
-        class OpenPdfSpyHarness(PagedHarness):
-            opened_pdf = False
-
-            def _open_page_matched_pdf(self) -> bool:
-                self.opened_pdf = True
-                return True
-
-        harness = OpenPdfSpyHarness(self._edition(tmp_path))
-        harness._summary_raw = "First paragraph."
-        harness._on_summary_print_clicked(None)
-        assert harness.opened_pdf
-
-    def test_legacy_print_falls_back_to_print_operation(self, tmp_path) -> None:
-        root, summary_path, _pages = _build_edition(tmp_path)
-        edition = _load(root, summary_path)
-        harness = PagedHarness(edition)
-        harness._summary_raw = "Legacy text."
-        harness._summary_is_paged = lambda: False
-        with mock.patch.object(
-            harness, "_open_page_matched_pdf", return_value=True
-        ) as open_pdf, mock.patch("focus.app.Gtk.PrintOperation") as operation:
-            harness._on_summary_print_clicked(None)
-        open_pdf.assert_not_called()
-        operation.assert_called_once()
-
+class TestOpenPdfRouting(PagedBehaviorTests):
     def test_open_pdf_reports_absolute_path_without_viewer(self, tmp_path) -> None:
         import focus.app as app
 

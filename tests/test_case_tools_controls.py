@@ -35,14 +35,6 @@ class FakeButton:
         self.css_classes.discard(css_class)
 
 
-class FakeAction:
-    def __init__(self) -> None:
-        self.enabled = False
-
-    def set_enabled(self, enabled: bool) -> None:
-        self.enabled = enabled
-
-
 class FakeVisibility:
     def __init__(self, visible: bool = False) -> None:
         self.visible = visible
@@ -289,7 +281,6 @@ class SummaryActionHarness:
         self._has_bookmark = False
         self._summary_bookmark_action_button = FakeButton()
         self._summary_return_bookmark_action_button = FakeButton()
-        self._summary_print_action = FakeAction()
         self.page_control_updates = 0
 
     def _summary_has_saved_bookmark(self) -> bool:
@@ -438,11 +429,12 @@ def test_case_tool_descriptions_follow_the_active_source() -> None:
     assert "minute-order summaries" in harness._case_tool_description()
 
 
-def test_print_summary_action_tracks_printable_summary_state() -> None:
+def test_summary_actions_track_printable_summary_state() -> None:
     harness = SummaryActionHarness()
 
     harness._refresh_summary_actions_state()
-    assert not harness._summary_print_action.enabled
+    assert not harness._summary_bookmark_action_button.sensitive
+    assert not harness._summary_return_bookmark_action_button.sensitive
 
     harness._summary_loaded_path = object()
     harness._summary_raw = "Summary text"
@@ -451,7 +443,6 @@ def test_print_summary_action_tracks_printable_summary_state() -> None:
 
     assert harness._summary_bookmark_action_button.sensitive
     assert harness._summary_return_bookmark_action_button.sensitive
-    assert harness._summary_print_action.enabled
 
 
 def test_empty_header_only_views_do_not_reserve_body_space() -> None:
