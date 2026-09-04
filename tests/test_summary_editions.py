@@ -23,6 +23,7 @@ from focus.summary_editions import (
     load_summary_edition,
     render_page_text,
     search_pages,
+    with_paragraph_spacing,
 )
 
 # Minimal deliberately-authored one-page PDF fixture (static bytes; the
@@ -326,7 +327,127 @@ class EditionRenderAndSearchTests(unittest.TestCase):
             self.assertEqual(find_page_for_source_line(edition, 999), 3)
 
 
+
+class ParagraphSpacingTests(unittest.TestCase):
+    """Paginated display spacing: one empty line between paragraphs."""
+
+    def test_two_paragraphs_render_with_exactly_one_empty_line(self) -> None:
+        self.assertEqual(
+            with_paragraph_spacing("First paragraph.\nSecond paragraph."),
+            "First paragraph.\n\nSecond paragraph.",
+        )
+
+    def test_existing_newline_runs_normalize_without_accumulating(self) -> None:
+        self.assertEqual(
+            with_paragraph_spacing("First.\n\n\nSecond.\n\n\n\n\nThird."),
+            "First.\n\nSecond.\n\nThird.",
+        )
+
+    def test_no_spacing_added_at_page_edges(self) -> None:
+        self.assertEqual(
+            with_paragraph_spacing("\n\nFirst.\nSecond.\n\n\n"),
+            "First.\n\nSecond.",
+        )
+        self.assertEqual(
+            with_paragraph_spacing("Only paragraph."), "Only paragraph."
+        )
+        self.assertEqual(with_paragraph_spacing(""), "")
+
+    def test_render_page_text_itself_stays_unspaced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            pages_spec = [
+                {
+                    "text": "First paragraph.\nSecond paragraph.",
+                    "first": 1,
+                    "last": 2,
+                },
+                {"text": "Third paragraph.", "first": 3, "last": 3},
+            ]
+            root, summary_path, _pages = _build_edition(
+                Path(temporary), pages_spec=pages_spec
+            )
+            edition = _load(root, summary_path)
+            # The loader and renderer keep sidecar text and link offsets
+            # untouched; spacing is a separate display-only transformation.
+            self.assertEqual(
+                render_page_text(edition, 1),
+                "First paragraph.\nSecond paragraph.",
+            )
+
+    def test_links_reconstruct_correctly_across_paragraph_boundary(self) -> None:
+        text = "First paragraph body.\nSecond paragraph continues here."
+        pages_spec = [
+            {
+                "text": text,
+                "first": 1,
+                "last": 2,
+                "links": [
+                    {
+                        "start": text.index("First"),
+                        "end": text.index("First") + len("First"),
+                        "label": "First",
+                        "target": 12,
+                    },
+                    {
+                        "start": text.index("Second"),
+                        "end": text.index("Second") + len("Second"),
+                        "label": "Second",
+                        "target": 345,
+                    },
+                ],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(
+                Path(temporary), pages_spec=pages_spec
+            )
+            edition = _load(root, summary_path)
+            self.assertEqual(
+                with_paragraph_spacing(render_page_text(edition, 1)),
+                "[First](page:12) paragraph body.\n\n"
+                "[Second](page:345) paragraph continues here.",
+            )
+
+    def test_paginated_search_offsets_match_spaced_display(self) -> None:
+        pages_spec = [
+            {
+                "text": "First paragraph body.\nSecond paragraph body here.",
+                "first": 1,
+                "last": 2,
+            },
+            {"text": "Third paragraph body.", "first": 3, "last": 3},
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(
+                Path(temporary), pages_spec=pages_spec
+            )
+            edition = _load(root, summary_path)
+            displayed = with_paragraph_spacing(render_page_text(edition, 1))
+            needle = "Second"
+            # The legacy default render stays aligned to unspaced sidecar text.
+            legacy = search_pages(edition, needle)
+            assert legacy == [
+                (
+                    1,
+                    edition.pages[0].text.index(needle),
+                    edition.pages[0].text.index(needle) + len(needle),
+                )
+            ]
+            # App-style paginated search matches the spaced display offsets.
+            spaced = search_pages(
+                edition,
+                needle,
+                render=lambda _edition, page_number: with_paragraph_spacing(
+                    render_page_text(edition, page_number)
+                ),
+            )
+            assert spaced == [
+                (1, displayed.index(needle), displayed.index(needle) + len(needle))
+            ]
+
+
 class FakePageWidget:
+
     def __init__(self) -> None:
         self.visible = False
         self.text = ""
@@ -372,6 +493,9 @@ class PagedHarness:
     _on_summary_print_clicked = Focus._on_summary_print_clicked
     _open_page_matched_pdf = Focus._open_page_matched_pdf
     _load_summary_edition_for = Focus._load_summary_edition_for
+    _summary_page_search_text = Focus._summary_page_search_text
+    _extract_ai_link_spans = Focus._extract_ai_link_spans
+    _extract_markdown_page_link_spans = Focus._extract_markdown_page_link_spans
 
     def __init__(self, edition) -> None:
         self._summary_edition = edition
@@ -485,6 +609,53 @@ class TestPageNavigation(PagedBehaviorTests):
         assert harness.link_applied[-1] == "March 3, 2025 [Hearing](page:1234) end."
         harness._display_summary_page(2)
         assert harness.link_applied[-1] == "Second page."
+
+    def test_display_receives_paragraph_spaced_text(self, tmp_path) -> None:
+        pages_spec = [
+            {
+                "text": "First paragraph body.\nSecond paragraph body here.",
+                "first": 1,
+                "last": 2,
+            },
+            {"text": "Third paragraph body.", "first": 3, "last": 3},
+        ]
+        root, summary_path, _pages = _build_edition(tmp_path, pages_spec=pages_spec)
+        harness = PagedHarness(_load(root, summary_path))
+        harness._display_summary_page(1)
+        expected = "First paragraph body.\n\nSecond paragraph body here."
+        assert harness._summary_raw == expected
+        assert harness.link_applied[-1] == expected
+        harness._display_summary_page(2)
+        assert harness.link_applied[-1] == "Third paragraph body."
+
+    def test_paged_search_matches_spaced_buffer_offsets(self, tmp_path) -> None:
+        pages_spec = [
+            {
+                "text": "First paragraph body.\nSecond paragraph body here.",
+                "first": 1,
+                "last": 2,
+            },
+            {"text": "Third paragraph body.", "first": 3, "last": 3},
+        ]
+        root, summary_path, _pages = _build_edition(tmp_path, pages_spec=pages_spec)
+        edition = _load(root, summary_path)
+        harness = PagedHarness(edition)
+        harness._display_summary_page(1)
+        buffer_text = harness._summary_page_search_text(harness._summary_raw)
+        matches = search_pages(
+            edition,
+            "Second",
+            render=lambda _edition, page_number: harness._summary_page_search_text(
+                with_paragraph_spacing(render_page_text(edition, page_number))
+            ),
+        )
+        assert matches == [
+            (
+                1,
+                buffer_text.index("Second"),
+                buffer_text.index("Second") + len("Second"),
+            )
+        ]
 
 
 class TestBookmarks(PagedBehaviorTests):

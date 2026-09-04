@@ -11,6 +11,7 @@ from .summary_editions import (
     load_summary_edition,
     render_page_text,
     search_pages,
+    with_paragraph_spacing,
 )
 from .agent_answer import (
     create_focus_run_id,
@@ -3706,7 +3707,9 @@ class Focus(Adw.Application):
                 query,
                 render=lambda _edition, page_number: (
                     self._summary_page_search_text(
-                        render_page_text(self._summary_edition, page_number)
+                        with_paragraph_spacing(
+                            render_page_text(self._summary_edition, page_number)
+                        )
                     )
                 ),
             )
@@ -7338,7 +7341,7 @@ class Focus(Adw.Application):
         page = min(max(1, page_number), edition.page_count)
         self._summary_edition_page = page
         self._current_view_state().summary_current_page = page
-        page_text = render_page_text(edition, page)
+        page_text = with_paragraph_spacing(render_page_text(edition, page))
         self._summary_raw = page_text
         if self._summary_buffer:
             self._apply_summary_links(page_text)

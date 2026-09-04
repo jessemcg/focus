@@ -276,6 +276,27 @@ def render_page_text(edition: SummaryEdition, page_number: int) -> str:
     return "".join(pieces)
 
 
+_NEWLINE_RUN_RE = re.compile(r"\n+")
+
+
+def with_paragraph_spacing(text: str) -> str:
+    """Display form of paginated page text: one empty line per paragraph.
+
+    RecordPrep's sidecar page text uses newlines only at extracted
+    paragraph/block boundaries (visual line wrapping is already spaces), so
+    every newline run — after ``render_page_text`` has reconstructed the
+    trusted link syntax — normalizes to exactly ``\\n\\n``. Leading and
+    trailing newlines are dropped so spacing is never added at page edges,
+    and each page is transformed independently, so paragraphs are never
+    joined or spaced across paper-page boundaries. The sidecar text, link
+    offsets, and source-line mapping remain unchanged; apply this only to
+    paginated display and search text, never to legacy continuous summaries.
+    """
+    if not text:
+        return text
+    return _NEWLINE_RUN_RE.sub("\n\n", text).strip("\n")
+
+
 def find_page_for_source_line(edition: SummaryEdition, line_number: int) -> int:
     """First sidecar page whose source-line range contains ``line_number``."""
     for page in edition.pages:
