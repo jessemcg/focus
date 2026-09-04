@@ -4,6 +4,14 @@ from pathlib import Path
 import sys
 
 from .core import *  # noqa: F401,F403
+from .summary_editions import (
+    SummaryEdition,
+    SummaryEditionError,
+    find_page_for_source_line,
+    load_summary_edition,
+    render_page_text,
+    search_pages,
+)
 from .agent_answer import (
     create_focus_run_id,
     focus_answer_artifact_path,
@@ -161,7 +169,7 @@ class Focus(Adw.Application):
         self._summary_motion_controller: Gtk.EventControllerMotion | None = None
         self._summary_search_entry: Gtk.SearchEntry | None = None
         self._summary_search_query = ""
-        self._summary_search_matches: list[tuple[int, int]] = []
+        self._summary_search_matches: list[tuple[int, ...]] = []
         self._summary_search_index = -1
         self._summary_search_tag: Gtk.TextTag | None = None
         self._summary_search_current_tag: Gtk.TextTag | None = None
@@ -180,6 +188,13 @@ class Focus(Adw.Application):
         self._summary_scroll_restore_attempts = 0
         self._summary_active_source: str | None = None
         self._summary_progress_label: Gtk.Label | None = None
+        self._summary_edition: SummaryEdition | None = None
+        self._summary_edition_page = 1
+        self._summary_page_entry: Gtk.Entry | None = None
+        self._summary_page_total_label: Gtk.Label | None = None
+        self._summary_prev_page_button: Gtk.Button | None = None
+        self._summary_next_page_button: Gtk.Button | None = None
+        self._summary_open_pdf_button: Gtk.Button | None = None
         self._summary_source_buttons: dict[str, Gtk.ToggleButton] = {}
         self._more_case_tools_button: Gtk.MenuButton | None = None
         self._summary_bookmark_action_button: Gtk.Button | None = None
@@ -1025,6 +1040,59 @@ class Focus(Adw.Application):
         self._summary_progress_label.set_ellipsize(Pango.EllipsizeMode.END)
         summary_row.insert(self._summary_progress_label, -1)
 
+        self._summary_prev_page_button = Gtk.Button(icon_name="go-previous-symbolic")
+        self._summary_prev_page_button.add_css_class("flat")
+        self._summary_prev_page_button.add_css_class("no-bold")
+        self._summary_prev_page_button.set_valign(Gtk.Align.CENTER)
+        self._summary_prev_page_button.set_tooltip_text("Previous summary page")
+        self._summary_prev_page_button.connect(
+            "clicked", self._on_summary_prev_page_clicked
+        )
+        self._summary_prev_page_button.set_visible(False)
+        summary_row.insert(self._summary_prev_page_button, -1)
+
+        self._summary_page_entry = Gtk.Entry()
+        self._summary_page_entry.set_width_chars(3)
+        self._summary_page_entry.set_max_width_chars(4)
+        self._summary_page_entry.set_alignment(1.0)
+        self._summary_page_entry.set_valign(Gtk.Align.CENTER)
+        self._summary_page_entry.set_tooltip_text("Jump to a summary page number")
+        self._summary_page_entry.connect(
+            "activate", self._on_summary_page_entry_activate
+        )
+        self._summary_page_entry.set_visible(False)
+        summary_row.insert(self._summary_page_entry, -1)
+
+        self._summary_page_total_label = Gtk.Label(label="of 1")
+        self._summary_page_total_label.add_css_class("dim-label")
+        self._summary_page_total_label.set_valign(Gtk.Align.CENTER)
+        self._summary_page_total_label.set_visible(False)
+        summary_row.insert(self._summary_page_total_label, -1)
+
+        self._summary_next_page_button = Gtk.Button(icon_name="go-next-symbolic")
+        self._summary_next_page_button.add_css_class("flat")
+        self._summary_next_page_button.add_css_class("no-bold")
+        self._summary_next_page_button.set_valign(Gtk.Align.CENTER)
+        self._summary_next_page_button.set_tooltip_text("Next summary page")
+        self._summary_next_page_button.connect(
+            "clicked", self._on_summary_next_page_clicked
+        )
+        self._summary_next_page_button.set_visible(False)
+        summary_row.insert(self._summary_next_page_button, -1)
+
+        self._summary_open_pdf_button = Gtk.Button(label="Open PDF")
+        self._summary_open_pdf_button.add_css_class("flat")
+        self._summary_open_pdf_button.add_css_class("no-bold")
+        self._summary_open_pdf_button.set_valign(Gtk.Align.CENTER)
+        self._summary_open_pdf_button.set_tooltip_text(
+            "Open the page-matched summary PDF for printing"
+        )
+        self._summary_open_pdf_button.connect(
+            "clicked", self._on_summary_open_pdf_clicked
+        )
+        self._summary_open_pdf_button.set_visible(False)
+        summary_row.insert(self._summary_open_pdf_button, -1)
+
         self._summary_bookmark_action_button = Gtk.Button(label="Set Bookmark")
         self._summary_bookmark_action_button.add_css_class("flat")
         self._summary_bookmark_action_button.add_css_class("no-bold")
@@ -1791,6 +1859,9 @@ class Focus(Adw.Application):
             state.agent_question_text = self._agent_question_entry.get_text()
         state.summary_loaded_path = self._summary_loaded_path
         state.summary_active_source = self._summary_active_source
+        state.summary_current_page = (
+            self._summary_edition_page if self._summary_is_paged() else None
+        )
 
     def _set_window_title(self, window_suffix: str | None = None) -> None:
         case_name = self._case_name
@@ -3608,6 +3679,15 @@ class Focus(Adw.Application):
         if self._summary_search_current_tag:
             self._summary_buffer.remove_tag(self._summary_search_current_tag, start, end)
 
+    def _summary_page_search_text(self, text: str) -> str:
+        """Render summary text exactly as the summary buffer displays it."""
+        rendered, _phrase_spans = self._extract_ai_link_spans(text)
+        rendered, _page_spans, _phrase_map = self._extract_markdown_page_link_spans(
+            rendered
+        )
+        rendered, _markdown_spans, _orig_to_clean = _render_markdown_text(rendered)
+        return rendered
+
     def _update_summary_search_matches(self) -> None:
         if not self._summary_buffer:
             return
@@ -3616,18 +3696,33 @@ class Focus(Adw.Application):
         query = self._summary_search_query
         if not query:
             return
-        start = self._summary_buffer.get_start_iter()
-        end = self._summary_buffer.get_end_iter()
-        flags = Gtk.TextSearchFlags.CASE_INSENSITIVE
-        while True:
-            result = start.forward_search(query, flags, end)
-            if result is None:
-                break
-            match_start, match_end = result
-            self._summary_search_matches.append(
-                (match_start.get_offset(), match_end.get_offset())
+        if self._summary_is_paged():
+            # Search every paper page in document order; paper page boundaries
+            # are search boundaries. Match against exactly the text the
+            # buffer displays so offsets align with rendered highlights.
+            assert self._summary_edition is not None
+            self._summary_search_matches = search_pages(
+                self._summary_edition,
+                query,
+                render=lambda _edition, page_number: (
+                    self._summary_page_search_text(
+                        render_page_text(self._summary_edition, page_number)
+                    )
+                ),
             )
-            start = match_end
+        else:
+            start = self._summary_buffer.get_start_iter()
+            end = self._summary_buffer.get_end_iter()
+            flags = Gtk.TextSearchFlags.CASE_INSENSITIVE
+            while True:
+                result = start.forward_search(query, flags, end)
+                if result is None:
+                    break
+                match_start, match_end = result
+                self._summary_search_matches.append(
+                    (match_start.get_offset(), match_end.get_offset())
+                )
+                start = match_end
         self._apply_summary_search_highlights()
 
     def _apply_summary_search_highlights(self) -> None:
@@ -3640,22 +3735,38 @@ class Focus(Adw.Application):
         end = self._summary_buffer.get_end_iter()
         self._summary_buffer.remove_tag(self._summary_search_tag, start, end)
         self._summary_buffer.remove_tag(self._summary_search_current_tag, start, end)
-        for start_offset, end_offset in self._summary_search_matches:
+        active_match = None
+        if 0 <= self._summary_search_index < len(self._summary_search_matches):
+            active_match = self._summary_search_matches[self._summary_search_index]
+        paged = self._summary_is_paged()
+        current_page = self._summary_edition_page
+        for match in self._summary_search_matches:
+            if paged:
+                match_page, start_offset, end_offset = match
+                if match_page != current_page:
+                    continue
+            else:
+                start_offset, end_offset = match
             start_iter = self._summary_buffer.get_iter_at_offset(start_offset)
             end_iter = self._summary_buffer.get_iter_at_offset(end_offset)
             self._summary_buffer.apply_tag(self._summary_search_tag, start_iter, end_iter)
-        if 0 <= self._summary_search_index < len(self._summary_search_matches):
-            start_offset, end_offset = self._summary_search_matches[self._summary_search_index]
-            start_iter = self._summary_buffer.get_iter_at_offset(start_offset)
-            end_iter = self._summary_buffer.get_iter_at_offset(end_offset)
-            self._summary_buffer.apply_tag(self._summary_search_current_tag, start_iter, end_iter)
+            if active_match == match:
+                self._summary_buffer.apply_tag(
+                    self._summary_search_current_tag, start_iter, end_iter
+                )
 
     def _scroll_to_summary_match(self, index: int) -> None:
         if not self._summary_view or not self._summary_buffer:
             return
         if index < 0 or index >= len(self._summary_search_matches):
             return
-        start_offset, _ = self._summary_search_matches[index]
+        match = self._summary_search_matches[index]
+        if self._summary_is_paged():
+            match_page, start_offset, _end_offset = match
+            if match_page != self._summary_edition_page:
+                self._display_summary_page(match_page, scroll_top=False)
+        else:
+            start_offset = match[0]
         start_iter = self._summary_buffer.get_iter_at_offset(start_offset)
         self._summary_view.scroll_to_iter(start_iter, 0.15, True, 0.1, 0.1)
 
@@ -3686,6 +3797,10 @@ class Focus(Adw.Application):
     def _update_summary_progress_label(self, adjustment: Gtk.Adjustment | None = None) -> None:
         if not self._summary_progress_label:
             return
+        if self._summary_is_paged():
+            # Paged mode shows flat page controls instead of a percentage.
+            self._summary_progress_label.set_visible(False)
+            return
         if not self._summary_buffer or self._summary_buffer.get_char_count() <= 0:
             self._summary_progress_label.set_text("0%")
             return
@@ -3705,6 +3820,7 @@ class Focus(Adw.Application):
             self._ai_active_view == AI_VIEW_FILE
             and not self._summary_scroll_restore_guard
             and self._summary_pending_restore_fraction is None
+            and not self._summary_is_paged()
         ):
             self._current_view_state().summary_scroll_fraction = fraction
         self._update_summary_progress_label(adjustment)
@@ -3713,6 +3829,9 @@ class Focus(Adw.Application):
         if not self._summary_scroller or not self._summary_loaded_path:
             return
         state = self._current_view_state()
+        if self._summary_is_paged():
+            state.summary_current_page = self._summary_edition_page
+            return
         if self._summary_pending_restore_fraction is not None:
             state.summary_scroll_fraction = self._summary_pending_restore_fraction
             return
@@ -3810,6 +3929,10 @@ class Focus(Adw.Application):
         if not path:
             return
         state = self._current_view_state()
+        if self._summary_is_paged():
+            if state.summary_loaded_path == path and state.summary_current_page:
+                self._display_summary_page(state.summary_current_page)
+            return
         if state.summary_loaded_path == path and state.summary_scroll_fraction is not None:
             self._restore_summary_scroll_fraction(state.summary_scroll_fraction)
             return
@@ -3831,7 +3954,7 @@ class Focus(Adw.Application):
             return data
         return {}
 
-    def _extract_summary_bookmark_line(self, summary_path: Path) -> int | None:
+    def _extract_summary_bookmark_entry(self, summary_path: Path) -> dict[str, Any] | None:
         bookmarks_path = self._summary_bookmarks_path_for(summary_path)
         data = self._read_summary_bookmarks(bookmarks_path)
         bookmarks = data.get("bookmarks")
@@ -3840,6 +3963,12 @@ class Focus(Adw.Application):
         entry = bookmarks.get(summary_path.name)
         if not isinstance(entry, dict):
             return None
+        return entry
+
+    def _extract_summary_bookmark_line(self, summary_path: Path) -> int | None:
+        entry = self._extract_summary_bookmark_entry(summary_path)
+        if entry is None:
+            return None
         try:
             line_num = int(entry.get("line"))
         except (TypeError, ValueError):
@@ -3847,6 +3976,43 @@ class Focus(Adw.Application):
         if line_num < 1:
             return None
         return line_num
+
+    def _summary_bookmark_page(self, summary_path: Path) -> int | None:
+        """Resolve the saved bookmark to a paper page for paged summaries.
+
+        Version-2 bookmarks name their page directly and are honored only
+        when the summary text still matches ``source_sha256``. Version-1 line
+        bookmarks map to the first sidecar page whose source-line range
+        contains the line; they are not rewritten until the user next sets a
+        bookmark.
+        """
+        if not self._summary_is_paged() or self._summary_edition is None:
+            return None
+        entry = self._extract_summary_bookmark_entry(summary_path)
+        if entry is None:
+            return None
+        version = entry.get("version")
+        if version == 2:
+            source_sha = entry.get("source_sha256")
+            if source_sha != self._summary_edition.source_sha256:
+                self._ai_transient_toast(
+                    "The summary changed since this bookmark was saved; starting at page 1."
+                )
+                return 1
+            try:
+                page = int(entry.get("page"))
+            except (TypeError, ValueError):
+                return 1
+            if page < 1 or page > self._summary_edition.page_count:
+                self._ai_transient_toast(
+                    "The summary changed since this bookmark was saved; starting at page 1."
+                )
+                return 1
+            return page
+        line_num = self._extract_summary_bookmark_line(summary_path)
+        if line_num is None:
+            return None
+        return find_page_for_source_line(self._summary_edition, line_num)
 
     def _scroll_summary_to_line(self, line_num: int) -> None:
         if not self._summary_view or not self._summary_buffer:
@@ -3921,25 +4087,40 @@ class Focus(Adw.Application):
             self._summary_return_bookmark_action_button.set_sensitive(has_summary and has_bookmark)
         if self._summary_print_action:
             self._summary_print_action.set_enabled(has_summary and has_printable_text)
+        self._update_summary_page_controls()
 
     def _on_summary_bookmark_clicked(self, _button: Gtk.Button) -> None:
         if not self._summary_loaded_path:
             self._ai_transient_toast("No summary file is loaded.")
-            return
-        line_num = self._top_visible_summary_line_number()
-        if line_num is None:
-            self._ai_transient_toast("No summary text is available to bookmark.")
             return
         bookmarks_path = self._summary_bookmarks_path_for(self._summary_loaded_path)
         data = self._read_summary_bookmarks(bookmarks_path)
         bookmarks = data.get("bookmarks")
         if not isinstance(bookmarks, dict):
             bookmarks = {}
-        bookmarks[self._summary_loaded_path.name] = {
-            "line": line_num,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        data["version"] = 1
+        if self._summary_is_paged():
+            assert self._summary_edition is not None
+            page = self._summary_edition_page
+            entry: dict[str, Any] = {
+                "page": page,
+                "line": self._summary_edition.pages[page - 1].source_first_line,
+                "source_sha256": self._summary_edition.source_sha256,
+                "version": 2,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            label = f"page {page}"
+        else:
+            line_num = self._top_visible_summary_line_number()
+            if line_num is None:
+                self._ai_transient_toast("No summary text is available to bookmark.")
+                return
+            entry = {
+                "line": line_num,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            label = f"line {line_num}"
+        bookmarks[self._summary_loaded_path.name] = entry
+        data["version"] = 2 if self._summary_is_paged() else 1
         data["bookmarks"] = bookmarks
         try:
             bookmarks_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3949,12 +4130,22 @@ class Focus(Adw.Application):
             return
         self._refresh_summary_actions_state()
         self._ai_transient_toast(
-            f"Bookmarked {self._summary_loaded_path.name} at line {line_num}."
+            f"Bookmarked {self._summary_loaded_path.name} at {label}."
         )
 
     def _on_summary_return_bookmark_clicked(self, _button: Gtk.Button) -> None:
         if not self._summary_loaded_path:
             self._ai_transient_toast("No summary file is loaded.")
+            return
+        if self._summary_is_paged():
+            page = self._summary_bookmark_page(self._summary_loaded_path)
+            if page is None:
+                self._ai_transient_toast("No saved bookmark for this summary.")
+                return
+            self._display_summary_page(page)
+            self._ai_transient_toast(
+                f"Returned to bookmark in {self._summary_loaded_path.name} at page {page}."
+            )
             return
         line_num = self._extract_summary_bookmark_line(self._summary_loaded_path)
         if line_num is None:
@@ -7103,6 +7294,153 @@ class Focus(Adw.Application):
         self._show_summary_view(switch_view=switch_view)
         self._queue_embedded_ai_panel_height_update()
 
+    def _load_summary_edition_for(
+        self, path: Path, source: str | None
+    ) -> SummaryEdition | None:
+        """Load a validated page-matched edition, or None for legacy mode."""
+        if source is None:
+            source = self._infer_summary_source(path)
+        manifest_path = _find_manifest_near_path(self.input_dir)
+        manifest_files: dict[str, Any] | None = None
+        manifest_dir = self.input_dir
+        if manifest_path:
+            manifest_dir = manifest_path.parent
+            manifest = _read_manifest_file(manifest_path)
+            files = manifest.get("files")
+            if isinstance(files, dict):
+                manifest_files = files
+        try:
+            return load_summary_edition(
+                focus_source=source,
+                summary_path=path,
+                bundle_root=self.input_dir,
+                manifest_files=manifest_files,
+                manifest_dir=manifest_dir,
+            )
+        except SummaryEditionError:
+            return None
+        except OSError:
+            return None
+
+    def _summary_is_paged(self) -> bool:
+        return self._summary_edition is not None
+
+    def _display_summary_page(
+        self,
+        page_number: int,
+        *,
+        switch_view: bool = False,
+        scroll_top: bool = True,
+    ) -> None:
+        edition = self._summary_edition
+        if edition is None or not edition.page_count:
+            return
+        page = min(max(1, page_number), edition.page_count)
+        self._summary_edition_page = page
+        self._current_view_state().summary_current_page = page
+        page_text = render_page_text(edition, page)
+        self._summary_raw = page_text
+        if self._summary_buffer:
+            self._apply_summary_links(page_text)
+        self._refresh_summary_actions_state()
+        self._update_summary_page_controls()
+        self._apply_summary_search_highlights()
+        if scroll_top and self._summary_view and self._summary_buffer:
+            start_iter = self._summary_buffer.get_start_iter()
+            self._summary_view.scroll_to_iter(start_iter, 0.0, True, 0.0, 0.0)
+        if switch_view:
+            self._show_summary_view(switch_view=True)
+
+    def _update_summary_page_controls(self) -> None:
+        paged = self._summary_is_paged()
+        if self._summary_progress_label:
+            self._summary_progress_label.set_visible(not paged)
+        for widget in (
+            self._summary_prev_page_button,
+            self._summary_page_entry,
+            self._summary_page_total_label,
+            self._summary_next_page_button,
+            self._summary_open_pdf_button,
+        ):
+            if widget:
+                widget.set_visible(paged)
+        if not paged or self._summary_edition is None:
+            return
+        total = self._summary_edition.page_count
+        if self._summary_page_entry:
+            self._summary_page_entry.set_text(str(self._summary_edition_page))
+        if self._summary_page_total_label:
+            self._summary_page_total_label.set_text(f"of {total}")
+        if self._summary_prev_page_button:
+            self._summary_prev_page_button.set_sensitive(self._summary_edition_page > 1)
+        if self._summary_next_page_button:
+            self._summary_next_page_button.set_sensitive(
+                self._summary_edition_page < total
+            )
+
+    def _on_summary_prev_page_clicked(self, _button: Gtk.Button | None) -> None:
+        if not self._summary_is_paged():
+            return
+        self._display_summary_page(self._summary_edition_page - 1)
+
+    def _on_summary_next_page_clicked(self, _button: Gtk.Button | None) -> None:
+        if not self._summary_is_paged():
+            return
+        self._display_summary_page(self._summary_edition_page + 1)
+
+    def _on_summary_page_entry_activate(self, entry: Gtk.Entry) -> None:
+        if not self._summary_is_paged():
+            return
+        raw = entry.get_text().strip()
+        try:
+            requested = int(raw)
+        except ValueError:
+            self._ai_transient_toast("Enter a summary page number.")
+            self._update_summary_page_controls()
+            return
+        assert self._summary_edition is not None
+        if requested < 1 or requested > self._summary_edition.page_count:
+            self._ai_transient_toast(
+                f"Page {requested} is outside this summary (1–{self._summary_edition.page_count})."
+            )
+            self._update_summary_page_controls()
+            return
+        self._display_summary_page(requested)
+
+    def _on_summary_open_pdf_clicked(self, _button: Gtk.Button | None) -> None:
+        self._open_page_matched_pdf()
+
+    def _open_page_matched_pdf(self) -> bool:
+        """Revalidate and open the canonical summary PDF; True when opened."""
+        if not self._summary_loaded_path:
+            self._ai_transient_toast("No summary file is loaded.")
+            return False
+        edition = self._load_summary_edition_for(
+            self._summary_loaded_path, self._summary_active_source
+        )
+        if edition is None:
+            self._ai_transient_toast(
+                "The page-matched PDF is unavailable; the summary changed or the edition is missing."
+            )
+            return False
+        pdf_path = edition.pdf_path
+        try:
+            launched = Gio.AppInfo.launch_default_for_uri(
+                pdf_path.resolve().as_uri(), None
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._ai_transient_toast(
+                f"No PDF viewer is available. Open the summary PDF at: {pdf_path.resolve()} ({exc})"
+            )
+            return False
+        if not launched:
+            self._ai_transient_toast(
+                f"No PDF viewer is available. Open the summary PDF at: {pdf_path.resolve()}"
+            )
+            return False
+        self._ai_transient_toast(f"Opened page-matched PDF: {pdf_path.name}")
+        return True
+
     def _build_summary_print_font(self) -> Pango.FontDescription:
         font_desc = Pango.FontDescription()
         font_desc.set_family(DEFAULT_PRINT_FONT_FAMILY)
@@ -7133,6 +7471,11 @@ class Focus(Adw.Application):
     def _on_summary_print_clicked(self, _button: Gtk.Button | None) -> None:
         if not self._summary_raw.strip():
             self._ai_transient_toast("No summary loaded to print.")
+            return
+        if self._summary_is_paged():
+            # A valid edition exists: the canonical page-matched PDF is the
+            # paper authority. Pango re-pagination would change page breaks.
+            self._open_page_matched_pdf()
             return
         self._summary_print_text = self._summary_raw
         operation = Gtk.PrintOperation()
@@ -7219,7 +7562,10 @@ class Focus(Adw.Application):
         if state.summary_loaded_path == resolved:
             if self._ai_active_view == AI_VIEW_FILE:
                 self._capture_summary_scroll_position()
-            if state.summary_scroll_fraction is not None:
+            if (
+                state.summary_scroll_fraction is not None
+                and not self._summary_is_paged()
+            ):
                 self._prepare_summary_scroll_restore(state.summary_scroll_fraction)
         else:
             self._cancel_pending_summary_scroll_restore()
@@ -7230,7 +7576,20 @@ class Focus(Adw.Application):
         self._set_summary_active_source(source)
         state.summary_loaded_path = resolved
         state.summary_active_source = source
-        self._set_summary_text(text, switch_view=not allow_auto)
+        self._summary_edition = self._load_summary_edition_for(resolved, source)
+        if self._summary_is_paged():
+            assert self._summary_edition is not None
+            if state.summary_loaded_path == resolved and state.summary_current_page:
+                initial_page = state.summary_current_page
+            else:
+                initial_page = self._summary_bookmark_page(resolved) or 1
+            self._display_summary_page(initial_page, switch_view=not allow_auto)
+            # Recompute page-aware matches for the newly loaded edition;
+            # the search entry text persists across summaries.
+            self._refresh_summary_search(reset_active=True)
+        else:
+            state.summary_current_page = None
+            self._set_summary_text(text, switch_view=not allow_auto)
         self._restore_summary_position(resolved)
         self._update_ai_status("", spinning=False)
         if show_toast:

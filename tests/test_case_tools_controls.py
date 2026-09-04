@@ -143,6 +143,9 @@ class SummaryScrollHarness:
         self._summary_scroll_restore_attempts = 0
         self.progress_updates = 0
 
+    def _summary_is_paged(self) -> bool:
+        return False
+
     def _current_view_state(self) -> FakeSummaryState:
         return self.state
 
@@ -287,9 +290,16 @@ class SummaryActionHarness:
         self._summary_bookmark_action_button = FakeButton()
         self._summary_return_bookmark_action_button = FakeButton()
         self._summary_print_action = FakeAction()
+        self.page_control_updates = 0
 
     def _summary_has_saved_bookmark(self) -> bool:
         return self._has_bookmark
+
+    def _summary_is_paged(self) -> bool:
+        return False
+
+    def _update_summary_page_controls(self) -> None:
+        self.page_control_updates += 1
 
 
 class BodyVisibilityHarness:

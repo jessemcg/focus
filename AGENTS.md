@@ -8,6 +8,7 @@
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
 - `focus/agent_helper.py`: read-only compact research context, source-map lookup, targeted map inspection, and database-free per-query diversified lexical search with source-date/document ranking used by embedded PI Agent sessions.
+- `focus/summary_editions.py`: strict page-map loader and page renderer for RecordPrep's page-matched summary editions; validates sidecars as a unit (hashes, paths, spans) and never repaginates or parses the PDF layout.
 - `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
 - `focus/agent_trace.py`: embedded-Agent session-log discovery (live workspace `pi-sessions` plus the wrapper-preserved runtime copy), the validated atomic `latest_trace.jsonl` snapshot workflow, and the Copy Trace clipboard path. The snapshot destination is private XDG state with an absolute `FOCUS_TRACE_PATH` override; it must never be written inside the repository or case bundles.
 - `focus/ui/`: secondary Libadwaita windows such as settings and D-Bus command reference.

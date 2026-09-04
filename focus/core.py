@@ -2187,6 +2187,7 @@ class FocusViewState:
     summary_loaded_path: Path | None = None
     summary_active_source: str | None = None
     summary_scroll_fraction: float | None = None
+    summary_current_page: int | None = None
 
 OBSOLETE_SEARCH_CONFIG_KEYS = {
     "voyage_api_key", "voyage_model", "rag_provider", "rag_voyage_api_key",

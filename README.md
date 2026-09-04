@@ -90,6 +90,13 @@ case_bundle/
     hearings_sum_<case>.txt
     reports_sum_<case>.txt
     minutes_sum_<case>.txt
+    editions/
+      hearings_sum_<case>.pdf
+      hearings_sum_<case>.pages.json
+      reports_sum_<case>.pdf
+      reports_sum_<case>.pages.json
+      minutes_sum_<case>.pdf
+      minutes_sum_<case>.pages.json
 ```
 
 Only `text_pages` is required for basic browsing. Source-resolved Agent answers require `artifacts/source_map.json`. Source-map v1 remains searchable; participant-aware scopes and attribution require RecordPrep source-map v2.
@@ -167,6 +174,8 @@ uv run python -m focus.agent_helper \
 ## Summaries
 
 Focus displays RecordPrep's source hearing, report, and minute-order summaries and remains compatible with organized summaries from older bundles. **Hearings** and **Reports** stay directly available in the Case Tools navigation; **More** groups minute orders, summary printing, extraction, and page-range summarization. When content is available, the expanded panel targets about one-third of the app window height, with a 260-pixel total-height floor on shorter windows when space permits. Current RecordPrep bundles no longer create separate organized derivatives. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose and the concise case overview are nonauthoritative and must be checked against the record for Agent answers.
+
+When a bundle includes RecordPrep's page-matched summary editions (`summaries/editions/` plus the manifest `summarized_<kind>_pdf`/`summarized_<kind>_pages` companion keys), Focus browses each summary one printable page at a time with flat Previous/Next controls, an editable page number, and `Page N of M` numbering that matches the PDF exactly. Search still covers every page in document order, Enter follows matches across page transitions, and paper-page boundaries act as search boundaries. Set Bookmark stores the paper page (with a `line` fallback and `source_sha256` freshness guard; older version-1 line bookmarks still return approximately until the next Set Bookmark). **Open PDF** — and Print, whenever a valid edition exists — opens the canonical Letter PDF in the default document viewer for printing, preserving fixed page membership and footer numbers; the Pango text-printing path remains only as the explicit fallback for bundles without a valid edition. Focus validates the sidecar against both the summary text and the PDF by hash and rejects it as a unit if anything is missing, malformed, path-escaping, or stale, degrading safely to the continuous scrolling, percentage, line-bookmark, and legacy-print behavior.
 
 Focus's own page/range summary and extraction tools are independent of Agent Q&A and use the model profiles selected in Settings.
 
