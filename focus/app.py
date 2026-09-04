@@ -3983,11 +3983,17 @@ class Focus(Adw.Application):
     def _summary_bookmark_page(self, summary_path: Path) -> int | None:
         """Resolve the saved bookmark to a paper page for paged summaries.
 
-        Version-2 bookmarks name their page directly and are honored only
-        when the summary text still matches ``source_sha256``. Version-1 line
-        bookmarks map to the first sidecar page whose source-line range
-        contains the line; they are not rewritten until the user next sets a
-        bookmark.
+        Version-3 bookmarks name their paper page, the summary source hash,
+        and the edition PDF hash. The exact page is honored only when both
+        hashes still match; a matching source with a different PDF hash means
+        the edition was repaginated, so the saved source line maps through
+        the current sidecar instead and the user is notified. Legacy
+        version-2 page bookmarks validate the source hash and then use their
+        stored line fallback rather than trusting an obsolete page number.
+        Version-1 line bookmarks map to the first sidecar page whose
+        source-line range contains the line; they are not rewritten until the
+        user next sets a bookmark. Any source mismatch or unusable line/page
+        falls back safely to page 1.
         """
         if not self._summary_is_paged() or self._summary_edition is None:
             return None
@@ -3995,26 +4001,50 @@ class Focus(Adw.Application):
         if entry is None:
             return None
         version = entry.get("version")
-        if version == 2:
+        if version in (2, 3):
             source_sha = entry.get("source_sha256")
             if source_sha != self._summary_edition.source_sha256:
                 self._ai_transient_toast(
                     "The summary changed since this bookmark was saved; starting at page 1."
                 )
                 return 1
-            try:
-                page = int(entry.get("page"))
-            except (TypeError, ValueError):
+            if version == 3:
+                pdf_sha = entry.get("pdf_sha256")
+                if not isinstance(pdf_sha, str) or not pdf_sha:
+                    return 1
+                if pdf_sha != self._summary_edition.pdf_sha256:
+                    return self._repaginated_bookmark_page(entry)
+                try:
+                    page = int(entry.get("page"))
+                except (TypeError, ValueError):
+                    return 1
+                if page < 1 or page > self._summary_edition.page_count:
+                    return 1
+                return page
+            # Legacy version-2: the named page may be obsolete after the v2
+            # repagination, so map the stored line fallback instead.
+            line_num = self._extract_summary_bookmark_line(summary_path)
+            if line_num is None:
                 return 1
-            if page < 1 or page > self._summary_edition.page_count:
-                self._ai_transient_toast(
-                    "The summary changed since this bookmark was saved; starting at page 1."
-                )
-                return 1
-            return page
+            return find_page_for_source_line(self._summary_edition, line_num)
         line_num = self._extract_summary_bookmark_line(summary_path)
         if line_num is None:
             return None
+        return find_page_for_source_line(self._summary_edition, line_num)
+
+    def _repaginated_bookmark_page(self, entry: dict[str, Any]) -> int:
+        """Map a repaginated bookmark's saved source line to the new layout."""
+        self._ai_transient_toast(
+            "Summary pagination changed since this bookmark was saved; "
+            "returning to the saved line in the new layout."
+        )
+        try:
+            line_num = int(entry.get("line"))
+        except (TypeError, ValueError):
+            return 1
+        if line_num < 1:
+            return 1
+        assert self._summary_edition is not None
         return find_page_for_source_line(self._summary_edition, line_num)
 
     def _scroll_summary_to_line(self, line_num: int) -> None:
@@ -4108,7 +4138,9 @@ class Focus(Adw.Application):
                 "page": page,
                 "line": self._summary_edition.pages[page - 1].source_first_line,
                 "source_sha256": self._summary_edition.source_sha256,
-                "version": 2,
+                "pdf_sha256": self._summary_edition.pdf_sha256,
+                "layout_id": self._summary_edition.layout_id,
+                "version": 3,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             label = f"page {page}"
@@ -4123,7 +4155,7 @@ class Focus(Adw.Application):
             }
             label = f"line {line_num}"
         bookmarks[self._summary_loaded_path.name] = entry
-        data["version"] = 2 if self._summary_is_paged() else 1
+        data["version"] = 3 if self._summary_is_paged() else 1
         data["bookmarks"] = bookmarks
         try:
             bookmarks_path.parent.mkdir(parents=True, exist_ok=True)
@@ -7340,7 +7372,9 @@ class Focus(Adw.Application):
             return
         page = min(max(1, page_number), edition.page_count)
         self._summary_edition_page = page
-        self._current_view_state().summary_current_page = page
+        state = self._current_view_state()
+        state.summary_current_page = page
+        state.summary_edition_sha256 = edition.pdf_sha256
         page_text = with_paragraph_spacing(render_page_text(edition, page))
         self._summary_raw = page_text
         if self._summary_buffer:
@@ -7562,7 +7596,8 @@ class Focus(Adw.Application):
             return
         self._stop_ai_stream_if_running()
         state = self._current_view_state()
-        if state.summary_loaded_path == resolved:
+        same_summary = state.summary_loaded_path == resolved
+        if same_summary:
             if self._ai_active_view == AI_VIEW_FILE:
                 self._capture_summary_scroll_position()
             if (
@@ -7582,7 +7617,11 @@ class Focus(Adw.Application):
         self._summary_edition = self._load_summary_edition_for(resolved, source)
         if self._summary_is_paged():
             assert self._summary_edition is not None
-            if state.summary_loaded_path == resolved and state.summary_current_page:
+            if (
+                same_summary
+                and state.summary_current_page
+                and state.summary_edition_sha256 == self._summary_edition.pdf_sha256
+            ):
                 initial_page = state.summary_current_page
             else:
                 initial_page = self._summary_bookmark_page(resolved) or 1
@@ -7592,6 +7631,7 @@ class Focus(Adw.Application):
             self._refresh_summary_search(reset_active=True)
         else:
             state.summary_current_page = None
+            state.summary_edition_sha256 = None
             self._set_summary_text(text, switch_view=not allow_auto)
         self._restore_summary_position(resolved)
         self._update_ai_status("", spinning=False)

@@ -17,6 +17,7 @@ from focus.app import Focus
 from focus.summary_editions import (
     FOCUS_SOURCE_TO_EDITION_KIND,
     SummaryEditionError,
+    SUPPORTED_LAYOUT_IDS,
     edition_manifest_paths,
     edition_same_stem_paths,
     find_page_for_source_line,
@@ -76,6 +77,7 @@ def _build_edition(
     mutate_sidecar=None,
     source_sha: str | None = None,
     pdf_sha: str | None = None,
+    layout_id: str = "recordprep-summary-letter-v2",
 ) -> tuple[Path, Path, Path]:
     kind = kind or FOCUS_SOURCE_TO_EDITION_KIND[focus_source]
     pages_spec = pages_spec or [
@@ -99,7 +101,7 @@ def _build_edition(
         "artifact": "recordprep-summary-pages",
         "schema_version": 1,
         "kind": kind,
-        "layout": {"id": "recordprep-summary-letter-v1"},
+        "layout": {"id": layout_id},
         "source": {
             "path": f"summaries/{summary_name}",
             "sha256": source_sha or _sha256_bytes(source_text.encode("utf-8")),
@@ -155,6 +157,28 @@ class EditionDiscoveryTests(unittest.TestCase):
             self.assertEqual(edition.kind, "hearings")
             self.assertEqual(edition.page_count, 2)
             self.assertEqual(edition.pages[0].text, "First paragraph.")
+            self.assertEqual(edition.layout_id, "recordprep-summary-letter-v2")
+
+    def test_legacy_v1_layout_is_still_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(
+                Path(temporary), layout_id="recordprep-summary-letter-v1"
+            )
+            edition = _load(root, summary_path)
+            self.assertEqual(edition.layout_id, "recordprep-summary-letter-v1")
+            self.assertEqual(edition.page_count, 2)
+
+    def test_supported_layouts_cover_v1_and_v2(self) -> None:
+        self.assertIn("recordprep-summary-letter-v1", SUPPORTED_LAYOUT_IDS)
+        self.assertIn("recordprep-summary-letter-v2", SUPPORTED_LAYOUT_IDS)
+
+    def test_unknown_layout_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(
+                Path(temporary), layout_id="recordprep-summary-letter-v9"
+            )
+            with pytest.raises(SummaryEditionError, match="layout mismatch"):
+                _load(root, summary_path)
 
     def test_same_stem_discovery_without_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -472,6 +496,9 @@ class FakePageWidget:
 class FakeViewState:
     def __init__(self) -> None:
         self.summary_current_page = None
+        self.summary_edition_sha256 = None
+        self.summary_scroll_fraction = None
+        self.summary_loaded_path = None
 
 
 class PagedHarness:
@@ -486,6 +513,9 @@ class PagedHarness:
     _refresh_summary_actions_state = Focus._refresh_summary_actions_state
     _summary_has_saved_bookmark = Focus._summary_has_saved_bookmark
     _summary_bookmark_page = Focus._summary_bookmark_page
+    _repaginated_bookmark_page = Focus._repaginated_bookmark_page
+    _on_summary_bookmark_clicked = Focus._on_summary_bookmark_clicked
+    _load_summary_from_path = Focus._load_summary_from_path
     _extract_summary_bookmark_entry = Focus._extract_summary_bookmark_entry
     _summary_bookmarks_path_for = Focus._summary_bookmarks_path_for
     _read_summary_bookmarks = Focus._read_summary_bookmarks
@@ -665,12 +695,30 @@ class TestBookmarks(PagedBehaviorTests):
         )
         bookmarks_path.parent.mkdir(parents=True, exist_ok=True)
         bookmarks_path.write_text(
-            json.dumps({"version": 2, "bookmarks": {harness._summary_loaded_path.name: entry}}),
+            json.dumps({"version": 3, "bookmarks": {harness._summary_loaded_path.name: entry}}),
             encoding="utf-8",
         )
         return bookmarks_path
 
-    def test_version2_page_bookmark_return(self, tmp_path) -> None:
+    def test_set_bookmark_writes_version3_with_pdf_hash(self, tmp_path) -> None:
+        import focus.app as focus_app
+
+        harness = PagedHarness(self._edition(tmp_path))
+        harness._on_summary_bookmark_clicked(None)
+        bookmarks_path = harness._summary_bookmarks_path_for(
+            harness._summary_loaded_path
+        )
+        data = json.loads(bookmarks_path.read_text(encoding="utf-8"))
+        assert data["version"] == 3
+        entry = data["bookmarks"][harness._summary_loaded_path.name]
+        assert entry["version"] == 3
+        assert entry["page"] == 1
+        assert entry["line"] == 1
+        assert entry["source_sha256"] == harness._summary_edition.source_sha256
+        assert entry["pdf_sha256"] == harness._summary_edition.pdf_sha256
+        assert entry["layout_id"] == harness._summary_edition.layout_id
+
+    def test_version3_exact_page_restored_when_both_hashes_match(self, tmp_path) -> None:
         harness = PagedHarness(self._edition(tmp_path))
         self._seed_bookmark(
             harness,
@@ -678,11 +726,72 @@ class TestBookmarks(PagedBehaviorTests):
                 "page": 2,
                 "line": 3,
                 "source_sha256": harness._summary_edition.source_sha256,
-                "version": 2,
+                "pdf_sha256": harness._summary_edition.pdf_sha256,
+                "layout_id": harness._summary_edition.layout_id,
+                "version": 3,
                 "updated_at": "2026-09-03T00:00:00+00:00",
             },
         )
         assert harness._summary_bookmark_page(harness._summary_loaded_path) == 2
+        assert not any("changed" in toast for toast in harness.toasts)
+
+    def test_version3_pdf_hash_mismatch_maps_saved_line(self, tmp_path) -> None:
+        pages_spec = [
+            {"text": "One.", "first": 1, "last": 5},
+            {"text": "Two.", "first": 6, "last": 10},
+            {"text": "Three.", "first": 11, "last": 15},
+        ]
+        root, summary_path, _pages = _build_edition(
+            tmp_path, pages_spec=pages_spec
+        )
+        harness = PagedHarness(_load(root, summary_path))
+        # The bookmark was saved against the same source but an older PDF
+        # whose page 2 contained source line 12; the current sidecar places
+        # line 12 on page 3.
+        self._seed_bookmark(
+            harness,
+            {
+                "page": 2,
+                "line": 12,
+                "source_sha256": harness._summary_edition.source_sha256,
+                "pdf_sha256": "1" * 64,
+                "layout_id": "recordprep-summary-letter-v1",
+                "version": 3,
+                "updated_at": "2026-09-03T00:00:00+00:00",
+            },
+        )
+        assert harness._summary_bookmark_page(harness._summary_loaded_path) == 3
+        assert any("pagination changed" in toast for toast in harness.toasts)
+
+    def test_version3_out_of_range_page_falls_back_to_page_one(self, tmp_path) -> None:
+        harness = PagedHarness(self._edition(tmp_path))
+        self._seed_bookmark(
+            harness,
+            {
+                "page": 9,
+                "line": 3,
+                "source_sha256": harness._summary_edition.source_sha256,
+                "pdf_sha256": harness._summary_edition.pdf_sha256,
+                "layout_id": harness._summary_edition.layout_id,
+                "version": 3,
+                "updated_at": "2026-09-03T00:00:00+00:00",
+            },
+        )
+        assert harness._summary_bookmark_page(harness._summary_loaded_path) == 1
+
+    def test_version3_missing_pdf_hash_falls_back_to_page_one(self, tmp_path) -> None:
+        harness = PagedHarness(self._edition(tmp_path))
+        self._seed_bookmark(
+            harness,
+            {
+                "page": 2,
+                "line": 3,
+                "source_sha256": harness._summary_edition.source_sha256,
+                "version": 3,
+                "updated_at": "2026-09-03T00:00:00+00:00",
+            },
+        )
+        assert harness._summary_bookmark_page(harness._summary_loaded_path) == 1
 
     def test_version2_hash_mismatch_starts_at_page_one(self, tmp_path) -> None:
         harness = PagedHarness(self._edition(tmp_path))
@@ -699,8 +808,10 @@ class TestBookmarks(PagedBehaviorTests):
         assert harness._summary_bookmark_page(harness._summary_loaded_path) == 1
         assert any("changed" in toast for toast in harness.toasts)
 
-    def test_version2_out_of_range_page_is_rejected(self, tmp_path) -> None:
+    def test_version2_obsolete_page_uses_line_fallback(self, tmp_path) -> None:
         harness = PagedHarness(self._edition(tmp_path))
+        # A legacy v2 bookmark names page 9, which no longer exists after the
+        # v2 repagination; the stored line fallback maps to the new layout.
         self._seed_bookmark(
             harness,
             {
@@ -711,7 +822,8 @@ class TestBookmarks(PagedBehaviorTests):
                 "updated_at": "2026-09-03T00:00:00+00:00",
             },
         )
-        assert harness._summary_bookmark_page(harness._summary_loaded_path) == 1
+        assert harness._summary_bookmark_page(harness._summary_loaded_path) == 2
+        assert not any("changed" in toast for toast in harness.toasts)
 
     def test_version1_line_bookmark_maps_to_page(self, tmp_path) -> None:
         harness = PagedHarness(self._edition(tmp_path))
@@ -722,7 +834,7 @@ class TestBookmarks(PagedBehaviorTests):
         assert harness._summary_bookmark_page(harness._summary_loaded_path) == 2
         assert not any("changed" in toast for toast in harness.toasts)
 
-    def test_version2_entry_keeps_line_for_older_clients(self, tmp_path) -> None:
+    def test_version3_entry_keeps_line_for_older_clients(self, tmp_path) -> None:
         harness = PagedHarness(self._edition(tmp_path))
         self._seed_bookmark(
             harness,
@@ -730,11 +842,69 @@ class TestBookmarks(PagedBehaviorTests):
                 "page": 2,
                 "line": 3,
                 "source_sha256": harness._summary_edition.source_sha256,
-                "version": 2,
+                "pdf_sha256": harness._summary_edition.pdf_sha256,
+                "layout_id": harness._summary_edition.layout_id,
+                "version": 3,
                 "updated_at": "2026-09-03T00:00:00+00:00",
             },
         )
         assert harness._extract_summary_bookmark_line(harness._summary_loaded_path) == 3
+
+
+class TestViewStateRestoration(PagedBehaviorTests):
+    """Cached paper-page restoration must be edition-hash aware."""
+
+    def _harness_for_reload(self, edition):
+        harness = PagedHarness(edition)
+        harness._auto_loading_summary = False
+        harness._stop_ai_stream_if_running = lambda: None
+        harness._cancel_pending_summary_scroll_restore = lambda: None
+        harness._infer_summary_source = lambda path: "hearing"
+        harness._set_summary_active_source = lambda source: None
+        harness._load_summary_edition_for = lambda path, source: edition
+        harness._summary_bookmark_page = lambda path: None
+        harness._restore_summary_position = lambda path: None
+        harness._update_ai_status = lambda *args, **kwargs: None
+        harness._refresh_summary_search = lambda **kwargs: None
+        harness._ai_active_view = "other"
+        harness.displayed_pages: list[int] = []
+        harness._display_summary_page = (
+            lambda page, **kwargs: harness.displayed_pages.append(page)
+        )
+        return harness
+
+    def test_matching_edition_hash_restores_cached_page(self, tmp_path) -> None:
+        root, summary_path, _pages = _build_edition(tmp_path)
+        edition = _load(root, summary_path)
+        harness = self._harness_for_reload(edition)
+        harness._state.summary_loaded_path = summary_path.resolve()
+        harness._state.summary_current_page = 2
+        harness._state.summary_edition_sha256 = edition.pdf_sha256
+        harness._load_summary_from_path(summary_path, allow_auto=True)
+        assert harness.displayed_pages == [2]
+
+    def test_changed_edition_hash_cannot_restore_stale_page(self, tmp_path) -> None:
+        root, summary_path, _pages = _build_edition(tmp_path)
+        edition = _load(root, summary_path)
+        harness = self._harness_for_reload(edition)
+        # Same path, but the cached page belongs to a different (older or
+        # newer) edition whose pagination no longer matches this PDF.
+        harness._state.summary_loaded_path = summary_path.resolve()
+        harness._state.summary_current_page = 2
+        harness._state.summary_edition_sha256 = "stale-edition-hash"
+        harness._load_summary_from_path(summary_path, allow_auto=True)
+        assert harness.displayed_pages == [1]
+
+    def test_switching_summaries_cannot_inherit_unrelated_page(self, tmp_path) -> None:
+        root, summary_path, _pages = _build_edition(tmp_path)
+        edition = _load(root, summary_path)
+        harness = self._harness_for_reload(edition)
+        # The cached page belongs to a different summary file entirely.
+        harness._state.summary_loaded_path = (root / "summaries/other_sum_X.txt").resolve()
+        harness._state.summary_current_page = 2
+        harness._state.summary_edition_sha256 = edition.pdf_sha256
+        harness._load_summary_from_path(summary_path, allow_auto=True)
+        assert harness.displayed_pages == [1]
 
 
 class TestPrintRouting(PagedBehaviorTests):

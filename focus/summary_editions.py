@@ -18,7 +18,13 @@ from typing import Any
 
 PAGE_MAP_ARTIFACT = "recordprep-summary-pages"
 PAGE_MAP_SCHEMA_VERSION = 1
-LAYOUT_ID = "recordprep-summary-letter-v1"
+# Focus consumes editions produced by any supported RecordPrep layout. v2 is
+# the denser current Letter layout; v1 sidecars remain readable so bundles
+# keep working until RecordPrep rebuilds them.
+SUPPORTED_LAYOUT_IDS: tuple[str, ...] = (
+    "recordprep-summary-letter-v1",
+    "recordprep-summary-letter-v2",
+)
 
 # Focus summary sources mapped to RecordPrep page-map categories.
 FOCUS_SOURCE_TO_EDITION_KIND = {
@@ -58,6 +64,7 @@ class SummaryEdition:
     pdf_path: Path
     pdf_sha256: str
     pages: tuple[SummaryEditionPage, ...]
+    layout_id: str = ""
 
     @property
     def page_count(self) -> int:
@@ -149,12 +156,13 @@ def load_summary_edition(
     if page_map.get("kind") != edition_kind:
         problems.append("category mismatch")
     layout = page_map.get("layout")
-    if not isinstance(layout, dict) or layout.get("id") != LAYOUT_ID:
+    if not isinstance(layout, dict) or layout.get("id") not in SUPPORTED_LAYOUT_IDS:
         problems.append("layout mismatch")
     if problems:
         raise SummaryEditionError(
             "Page map sidecar rejected: " + ", ".join(problems) + "."
         )
+    layout_id = str(layout["id"])
 
     source_info = page_map.get("source")
     pdf_info = page_map.get("pdf")
@@ -253,6 +261,7 @@ def load_summary_edition(
         pdf_path=pdf_path,
         pdf_sha256=pdf_sha.lower(),
         pages=tuple(validated),
+        layout_id=layout_id,
     )
 
 
