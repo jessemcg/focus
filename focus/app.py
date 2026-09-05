@@ -6364,6 +6364,34 @@ class Focus(Adw.Application):
             self._maybe_prefill_sum_range_for_current_page()
         self._refresh_search_highlighted_button()
 
+    def _cached_summary_is_ineligible(self) -> bool:
+        """Whether the currently cached summary is a digest, not a final."""
+        path = self._summary_loaded_path
+        if path is not None and not _is_eligible_summary_file(path):
+            return True
+        return bool(self._summary_raw) and (
+            RECORDPREP_DIGEST_MARKER in self._summary_raw
+        )
+
+    def _discard_ineligible_cached_summary(self) -> bool:
+        """Drop a cached digest selection so the intended kind resolves again.
+
+        Returns True when a cached digest selection was discarded, including
+        when its text was already loaded. Never loads anything itself, so it
+        cannot recurse or restore the rejected path a second time.
+        """
+        if not self._cached_summary_is_ineligible():
+            return False
+        state = self._current_view_state()
+        self._summary_loaded_path = None
+        state.summary_loaded_path = None
+        state.summary_scroll_fraction = None
+        state.summary_current_page = None
+        state.summary_edition_sha256 = None
+        self._summary_edition = None
+        self._set_summary_text("", switch_view=False)
+        return True
+
     def _ensure_summary_for_active_view(self) -> None:
         state = self._current_view_state()
         if (
@@ -6372,9 +6400,26 @@ class Focus(Adw.Application):
             and state.summary_loaded_path == self._summary_loaded_path
             and self._summary_has_text()
         ):
-            self._set_summary_active_source(state.summary_active_source)
-            return
-        if state.summary_loaded_path and state.summary_loaded_path.exists():
+            if self._cached_summary_is_ineligible():
+                # Discard the cached digest selection and resolve the
+                # intended summary kind again, even though text is loaded.
+                self._discard_ineligible_cached_summary()
+                self._auto_load_summary_file(
+                    preferred_source=state.summary_active_source
+                )
+                return
+            else:
+                self._set_summary_active_source(state.summary_active_source)
+                return
+        elif (
+            state.summary_loaded_path
+            and state.summary_loaded_path.exists()
+            and not _is_eligible_summary_file(state.summary_loaded_path)
+        ):
+            # A restored view-state path pointing at a digest is discarded
+            # rather than repeatedly restored.
+            state.summary_loaded_path = None
+        elif state.summary_loaded_path and state.summary_loaded_path.exists():
             self._load_summary_from_path(
                 state.summary_loaded_path,
                 allow_auto=True,
@@ -7120,7 +7165,7 @@ class Focus(Adw.Application):
         try:
             for name in candidates:
                 path = summaries_dir / name
-                if path.is_file():
+                if _is_eligible_summary_file(path):
                     matches.append(path)
             for item in summaries_dir.iterdir():
                 if not item.is_file():
@@ -7129,7 +7174,8 @@ class Focus(Adw.Application):
                     continue
                 lowered = item.name.casefold()
                 if any(keyword in lowered for keyword in keywords):
-                    matches.append(item)
+                    if _is_eligible_summary_file(item):
+                        matches.append(item)
         except OSError as exc:  # noqa: BLE001
             if show_toast:
                 self._ai_transient_toast(f"Could not read summaries folder: {exc}")
@@ -7183,7 +7229,7 @@ class Focus(Adw.Application):
         )
         for file_key in file_keys:
             summary_path = _path_from_manifest(files.get(file_key), manifest_path.parent)
-            if summary_path and summary_path.exists():
+            if summary_path and _is_eligible_summary_file(summary_path):
                 return summary_path
         return None
 
@@ -7197,21 +7243,38 @@ class Focus(Adw.Application):
         *,
         show_toast: bool = True,
     ) -> Path | None:
-        matches: list[Path] = []
-        manifest_summary = self._find_summary_in_manifest(manifest_path, file_keys)
-        if manifest_summary:
-            matches.append(manifest_summary)
+        # An eligible current per-kind final summary (the ``summarized_*``
+        # manifest reference) wins immediately; directory sorting cannot
+        # displace it. Otherwise legacy manifest references and directory
+        # candidates are ranked organized < ordinary < consolidated.
+        current_keys = tuple(
+            key for key in file_keys if _summary_manifest_key_tier(key) == 0
+        )
+        current_summary = self._find_summary_in_manifest(manifest_path, current_keys)
+        if current_summary:
+            return current_summary
+        ranked: list[tuple[int, str, Path]] = []
+        for key in file_keys:
+            tier = _summary_manifest_key_tier(key)
+            if tier == 0:
+                continue
+            legacy_summary = self._find_summary_in_manifest(manifest_path, (key,))
+            if legacy_summary:
+                ranked.append((tier, legacy_summary.name.casefold(), legacy_summary))
+                break
         directory_summary = self._find_summary_in_dir(
             label,
             candidates,
             keywords,
-            show_toast=show_toast and manifest_summary is None,
+            show_toast=show_toast and not ranked,
         )
         if directory_summary:
-            matches.append(directory_summary)
-        if not matches:
+            priority = _summary_file_priority(directory_summary)
+            ranked.append((priority[0], priority[1], directory_summary))
+        if not ranked:
             return None
-        return sorted(set(matches), key=_summary_file_priority)[0]
+        ranked.sort(key=lambda entry: (entry[0], entry[1]))
+        return ranked[0][2]
 
     def _on_minutes_summary_clicked(self, _button: Gtk.Button) -> None:
         manifest_path = _find_manifest_near_path(self.input_dir)
@@ -7251,19 +7314,19 @@ class Focus(Adw.Application):
         if summary_path:
             self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_REPORTS)
 
-    def _auto_load_summary_file(self) -> None:
+    def _auto_load_summary_file(self, *, preferred_source: str | None = None) -> None:
         if self._auto_loading_summary:
             return
         self._auto_loading_summary = True
         try:
-            if self._summary_has_text():
+            if self._summary_has_text() and not self._cached_summary_is_ineligible():
                 return
             manifest_path = _find_manifest_near_path(self.input_dir)
-            if manifest_path:
+            if manifest_path and preferred_source in (None, SUMMARY_SOURCE_MINUTES):
                 manifest = _read_manifest_file(manifest_path)
                 files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
                 summary_path = _path_from_manifest(files.get(MINUTES_SUMMARY_MANIFEST_KEY), manifest_path.parent)
-                if summary_path and summary_path.exists():
+                if summary_path and _is_eligible_summary_file(summary_path):
                     self._load_summary_from_path(
                         summary_path,
                         allow_auto=True,
@@ -7271,37 +7334,35 @@ class Focus(Adw.Application):
                         show_toast=False,
                     )
                     return
-            hearing = self._find_preferred_summary_path(
-                "Hearing",
-                manifest_path,
-                HEARING_SUMMARY_MANIFEST_KEYS,
-                HEARING_SUMMARY_CANDIDATES,
-                ("hearing",),
-                show_toast=False,
-            )
-            if hearing:
-                self._load_summary_from_path(
-                    hearing,
-                    allow_auto=True,
-                    source=SUMMARY_SOURCE_HEARING,
+
+            def _resolve(kind_label: str, keys: tuple[str, ...], candidates: tuple[str, ...], keywords: tuple[str, ...], source: str) -> bool:
+                summary_path = self._find_preferred_summary_path(
+                    kind_label,
+                    manifest_path,
+                    keys,
+                    candidates,
+                    keywords,
                     show_toast=False,
                 )
-                return
-            reports = self._find_preferred_summary_path(
-                "Reports",
-                manifest_path,
-                REPORTS_SUMMARY_MANIFEST_KEYS,
-                REPORTS_SUMMARY_CANDIDATES,
-                ("report", "reports"),
-                show_toast=False,
-            )
-            if reports:
+                if not summary_path:
+                    return False
                 self._load_summary_from_path(
-                    reports,
+                    summary_path,
                     allow_auto=True,
-                    source=SUMMARY_SOURCE_REPORTS,
+                    source=source,
                     show_toast=False,
                 )
+                return True
+
+            kinds = (
+                ("Hearing", HEARING_SUMMARY_MANIFEST_KEYS, HEARING_SUMMARY_CANDIDATES, ("hearing",), SUMMARY_SOURCE_HEARING),
+                ("Reports", REPORTS_SUMMARY_MANIFEST_KEYS, REPORTS_SUMMARY_CANDIDATES, ("report", "reports"), SUMMARY_SOURCE_REPORTS),
+            )
+            if preferred_source == SUMMARY_SOURCE_REPORTS:
+                kinds = (kinds[1], kinds[0])
+            for kind_label, keys, candidates, keywords, source in kinds:
+                if _resolve(kind_label, keys, candidates, keywords, source):
+                    return
         finally:
             self._auto_loading_summary = False
 

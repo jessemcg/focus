@@ -181,6 +181,15 @@ REPORTS_SUMMARY_CANDIDATES = (
     "summarized_reports_consolidated.txt",
 )
 SUMMARY_TEXT_EXTENSIONS = (".txt", ".md")
+# Reserved RecordPrep digest artifacts carry this marker in HTML comments and
+# are intermediate stores, never human-readable final summaries. Recognizing
+# the marker in file content keeps a renamed digest (or a wrong manifest
+# reference) from bypassing filename exclusion.
+RECORDPREP_DIGEST_MARKER = "recordprep:digest-"
+# Generated RecordPrep digest/fact filename families and technical sidecars:
+# <kind>_digests_<case>.md/.jsonl/.meta.json, digests_<kind>.md,
+# <kind>_facts_<case>.jsonl/.meta.json, and facts_<kind>.jsonl.
+SUMMARY_EXCLUDED_NAME_TOKENS = frozenset({"digests", "facts"})
 MINUTES_SUMMARY_MANIFEST_KEY = "summarized_minutes"
 HEARING_BOUNDARIES_MANIFEST_KEY = "hearing_boundaries"
 REPORT_BOUNDARIES_MANIFEST_KEY = "report_boundaries"
@@ -202,12 +211,65 @@ SUMMARY_BOOKMARKS_FILENAME = "summary_bookmarks.json"
 
 
 def _summary_file_priority(path: Path) -> tuple[int, str]:
+    """Selection order among eligible ordinary summaries.
+
+    Legacy organized summaries win, then other ordinary summaries, then
+    legacy consolidated summaries as the last fallback.
+    """
     name = path.name.casefold()
     if "organized" in name:
         return (0, name)
     if "consolidated" in name:
         return (2, name)
     return (1, name)
+
+
+def _summary_manifest_key_tier(key: str) -> int:
+    """Precedence tier for one manifest ``files`` key.
+
+    Tier 0 is the current per-kind final summary (``summarized_hearings`` /
+    ``summarized_reports``); tier 1 is a legacy organized reference and tier
+    3 is a legacy consolidated reference.
+    """
+    normalized = str(key or "").casefold()
+    if normalized.startswith("summarized_"):
+        return 0
+    if "organized" in normalized:
+        return 1
+    if "consolidated" in normalized:
+        return 3
+    return 2
+
+
+def _is_eligible_summary_file(path: Path) -> bool:
+    """Whether ``path`` can serve as a human-readable final summary.
+
+    Requires a regular, readable file with a supported ``.txt`` or legacy
+    ``.md`` extension, rejects the generated RecordPrep digest/fact filename
+    families and technical sidecars, and rejects any file whose content
+    carries the reserved RecordPrep digest marker so a renamed digest or an
+    incorrect manifest reference cannot bypass exclusion. Ordinary summaries
+    are never rejected merely because their narrative mentions a word such
+    as "digest".
+    """
+    try:
+        if not path.is_file():
+            return False
+    except OSError:
+        return False
+    if path.suffix.lower() not in SUMMARY_TEXT_EXTENSIONS:
+        return False
+    name_tokens = {
+        token for token in re.split(r"[^a-z0-9]+", path.name.casefold()) if token
+    }
+    if name_tokens & SUMMARY_EXCLUDED_NAME_TOKENS:
+        return False
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(65536)
+    except OSError:
+        return False
+    return RECORDPREP_DIGEST_MARKER.encode("utf-8") not in head
 
 # =====================
 # UI Defaults
