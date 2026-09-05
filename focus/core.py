@@ -3011,7 +3011,12 @@ PAGE_MARKER_LINE_RE = re.compile(
     re.MULTILINE,
 )
 IMAGE_PAGE_SELECTION_RE = re.compile(r"^\s*(\d{1,4})(?:\s*-\s*(\d{1,4}))?\s*$")
-AI_LINK_SPAN_RE = re.compile(r'(?:\"|“)(.+?)(?:\"|”)|\*\*(.+?)\*\*', re.DOTALL)
+# Quote pairs are style-matched: straight quotes pair with straight quotes
+# and curly quotes pair with curly quotes. Mixing openers and closers
+# across styles (for example model-typed straight quotes around
+# curly-quoted summary text) previously bridged link spans across
+# sentences and paragraphs.
+AI_LINK_SPAN_RE = re.compile(r'"([^"]+)"|“([^”]+)”|\*\*(.+?)\*\*', re.DOTALL)
 MARKDOWN_PAGE_LINK_RE = re.compile(
     r"\[(?P<label>[^\]\n]*?)\]\(\s*page\s*:\s*(?P<page>\d{1,8})\s*\)",
     re.IGNORECASE,

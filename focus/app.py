@@ -3328,7 +3328,12 @@ class Focus(Adw.Application):
             before = text[cursor:start]
             parts.append(before)
             offset += len(before)
-            phrase = (match.group(1) or match.group(2) or "").strip()
+            phrase = (
+                match.group(1)
+                or match.group(2)
+                or match.group(3)
+                or ""
+            ).strip()
             if phrase:
                 link_phrase, trailing = split_link_phrase(phrase)
                 if link_phrase:
