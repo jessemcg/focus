@@ -7,8 +7,11 @@ from .core import *  # noqa: F401,F403
 from .summary_editions import (
     SummaryEdition,
     SummaryEditionError,
+    SummaryPageDisplay,
+    emphasis_match_text,
     find_page_for_source_line,
     load_summary_edition,
+    render_page_display,
     render_page_text,
     search_pages,
     with_paragraph_spacing,
@@ -3132,22 +3135,10 @@ class Focus(Adw.Application):
             dark=Adw.StyleManager.get_default().get_dark(),
         )
 
-    def _apply_summary_emphasis(
-        self,
-        text: str,
-        source: str | None,
-        buffer: Gtk.TextBuffer | None,
-        page_offset_map: list[int],
-        markdown_offset_map: list[int],
-    ) -> None:
-        if not buffer:
-            return
-        spans = _extract_summary_emphasis_spans(text, source)
-        if not spans:
-            return
+    def _ensure_summary_emphasis_tag(self, buffer: Gtk.TextBuffer) -> Gtk.TextTag | None:
         table = buffer.get_tag_table()
         if table is None:
-            return
+            return None
         tag = table.lookup("summary-entry-emphasis")
         accent_color = self._resolve_summary_emphasis_color()
         if tag is None:
@@ -3161,6 +3152,24 @@ class Focus(Adw.Application):
             tag.set_property("foreground-rgba", accent_color)
             tag.set_property("weight", Pango.Weight.BOLD)
             tag.set_property("scale", 1.08)
+        return tag
+
+    def _apply_summary_emphasis(
+        self,
+        text: str,
+        source: str | None,
+        buffer: Gtk.TextBuffer | None,
+        page_offset_map: list[int],
+        markdown_offset_map: list[int],
+    ) -> None:
+        if not buffer:
+            return
+        spans = _extract_summary_emphasis_spans(text, source)
+        if not spans:
+            return
+        tag = self._ensure_summary_emphasis_tag(buffer)
+        if tag is None:
+            return
 
         for start, end in spans:
             if end <= start:
@@ -3290,6 +3299,95 @@ class Focus(Adw.Application):
             self._summary_link_tag_lookup,
             self._summary_scroller,
         )
+
+    def _apply_structured_summary_page(self, display: SummaryPageDisplay) -> None:
+        """Display one schema v2 edition page from its validated spans.
+
+        Sets the buffer to the exact structured display text and applies the
+        existing phrase and page-link tags directly from the validated quote
+        and link spans — the display text is never reparsed for quotation
+        marks and never has Markdown delimiters injected. Legacy editions
+        keep the established ``_apply_summary_links`` pipeline.
+        """
+        buffer = self._summary_buffer
+        if buffer is None:
+            return
+        table = buffer.get_tag_table()
+        if table is None:
+            return
+        for tag in self._summary_link_tags:
+            try:
+                table.remove(tag)
+            except TypeError:
+                pass
+        self._summary_link_tags.clear()
+        self._summary_link_tag_lookup.clear()
+
+        buffer.set_text(display.text)
+        self._apply_structured_summary_emphasis(display)
+
+        quote_color = self._resolve_ai_quote_color(self._summary_view)
+        for start, end, phrase in display.phrase_spans:
+            if end <= start:
+                continue
+            tag = buffer.create_tag(
+                None,
+                foreground_rgba=quote_color,
+                underline=Pango.Underline.NONE,
+                weight=Pango.Weight.MEDIUM,
+            )
+            self._summary_link_tag_lookup[tag] = ("phrase", phrase)
+            buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_iter_at_offset(end))
+            self._summary_link_tags.append(tag)
+
+        for start, end, page_str in display.page_link_spans:
+            if end <= start:
+                continue
+            page_link_color = Gdk.RGBA()
+            brighten = 0.18
+            page_link_color.red = min(1.0, quote_color.red + brighten)
+            page_link_color.green = min(1.0, quote_color.green + brighten)
+            page_link_color.blue = min(1.0, quote_color.blue + brighten)
+            page_link_color.alpha = 1.0
+            tag = buffer.create_tag(
+                None,
+                foreground_rgba=page_link_color,
+                underline=Pango.Underline.NONE,
+            )
+            self._summary_link_tag_lookup[tag] = ("page", page_str)
+            buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_iter_at_offset(end))
+            self._summary_link_tags.append(tag)
+        if self._summary_scroller:
+            self._summary_scroller.queue_resize()
+
+    def _apply_structured_summary_emphasis(self, display: SummaryPageDisplay) -> None:
+        """Apply the legacy entry-emphasis tag for a structured page.
+
+        Entry patterns run against the match text with trusted page-link
+        syntax reinserted from the validated spans, and matched offsets map
+        back onto the structured display text.
+        """
+        buffer = self._summary_buffer
+        if buffer is None:
+            return
+        summary_source = self._summary_active_source
+        if summary_source is None and self._summary_loaded_path is not None:
+            summary_source = self._infer_summary_source(self._summary_loaded_path)
+        match_text, offset_map = emphasis_match_text(display)
+        spans = _extract_summary_emphasis_spans(match_text, summary_source)
+        if not spans:
+            return
+        tag = self._ensure_summary_emphasis_tag(buffer)
+        if tag is None:
+            return
+        for start, end in spans:
+            if end <= start:
+                continue
+            start = offset_map[min(start, len(offset_map) - 1)]
+            end = offset_map[min(end, len(offset_map) - 1)]
+            if end <= start:
+                continue
+            buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_iter_at_offset(end))
 
     def _refresh_ai_quote_colors(self) -> None:
         if self._summary_view and self._summary_raw:
@@ -3701,16 +3799,24 @@ class Focus(Adw.Application):
             # are search boundaries. Match against exactly the text the
             # buffer displays so offsets align with rendered highlights.
             assert self._summary_edition is not None
-            self._summary_search_matches = search_pages(
-                self._summary_edition,
-                query,
-                render=lambda _edition, page_number: (
+            if self._summary_edition.has_quote_spans:
+                # Schema v2 display text is already quote-free and link-free;
+                # use it exactly as the buffer shows it.
+                render = lambda _edition, page_number: render_page_display(
+                    self._summary_edition, page_number
+                ).text
+            else:
+                render = lambda _edition, page_number: (
                     self._summary_page_search_text(
                         with_paragraph_spacing(
                             render_page_text(self._summary_edition, page_number)
                         )
                     )
-                ),
+                )
+            self._summary_search_matches = search_pages(
+                self._summary_edition,
+                query,
+                render=render,
             )
         else:
             start = self._summary_buffer.get_start_iter()
@@ -7426,10 +7532,18 @@ class Focus(Adw.Application):
         state = self._current_view_state()
         state.summary_current_page = page
         state.summary_edition_sha256 = edition.pdf_sha256
-        page_text = with_paragraph_spacing(render_page_text(edition, page))
-        self._summary_raw = page_text
-        if self._summary_buffer:
-            self._apply_summary_links(page_text)
+        if edition.has_quote_spans:
+            # Schema v2 editions: apply the validated bold quote and
+            # page-link spans directly to the exact display text.
+            display = render_page_display(edition, page)
+            self._summary_raw = display.text
+            if self._summary_buffer:
+                self._apply_structured_summary_page(display)
+        else:
+            page_text = with_paragraph_spacing(render_page_text(edition, page))
+            self._summary_raw = page_text
+            if self._summary_buffer:
+                self._apply_summary_links(page_text)
         self._refresh_summary_actions_state()
         self._update_summary_page_controls()
         self._apply_summary_search_highlights()

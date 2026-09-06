@@ -20,11 +20,14 @@ from focus.summary_editions import (
     SUPPORTED_LAYOUT_IDS,
     edition_manifest_paths,
     edition_same_stem_paths,
+    emphasis_match_text,
     find_page_for_source_line,
     load_summary_edition,
+    render_page_display,
     render_page_text,
     search_pages,
     with_paragraph_spacing,
+    with_paragraph_spacing_mapped,
 )
 
 # Minimal deliberately-authored one-page PDF fixture (static bytes; the
@@ -45,8 +48,9 @@ def _sha256_bytes(data: bytes) -> str:
 
 
 def _sidecar_pages(spec: list[dict]) -> list[dict]:
-    return [
-        {
+    pages = []
+    for index, entry in enumerate(spec):
+        page = {
             "page": index + 1,
             "text": entry["text"],
             "source_first_line": entry["first"],
@@ -61,8 +65,18 @@ def _sidecar_pages(spec: list[dict]) -> list[dict]:
                 for link in entry.get("links", [])
             ],
         }
-        for index, entry in enumerate(spec)
-    ]
+        if "quotes" in entry:
+            page["quotes"] = [
+                {
+                    "start": quote["start"],
+                    "end": quote["end"],
+                    "label": quote["label"],
+                    "phrase": quote["phrase"],
+                }
+                for quote in entry["quotes"]
+            ]
+        pages.append(page)
+    return pages
 
 
 def _build_edition(
@@ -78,6 +92,7 @@ def _build_edition(
     source_sha: str | None = None,
     pdf_sha: str | None = None,
     layout_id: str = "recordprep-summary-letter-v2",
+    schema_version: int = 1,
 ) -> tuple[Path, Path, Path]:
     kind = kind or FOCUS_SOURCE_TO_EDITION_KIND[focus_source]
     pages_spec = pages_spec or [
@@ -99,7 +114,7 @@ def _build_edition(
 
     page_map = {
         "artifact": "recordprep-summary-pages",
-        "schema_version": 1,
+        "schema_version": schema_version,
         "kind": kind,
         "layout": {"id": layout_id},
         "source": {
@@ -528,6 +543,7 @@ class PagedHarness:
 
     def __init__(self, edition) -> None:
         self._summary_edition = edition
+        self.structured_displays = []
         self._summary_edition_page = 1
         self._summary_loaded_path = edition.source_path if edition else None
         self._summary_active_source = "hearing"
@@ -559,6 +575,9 @@ class PagedHarness:
 
     def _apply_summary_links(self, text: str) -> None:
         self.link_applied.append(text)
+
+    def _apply_structured_summary_page(self, display) -> None:
+        self.structured_displays.append(display)
 
     def _ai_transient_toast(self, message: str) -> None:
         self.toasts.append(message)
@@ -917,3 +936,289 @@ class TestOpenPdfRouting(PagedBehaviorTests):
             str(harness._summary_edition.pdf_path.resolve()) in toast
             for toast in harness.toasts
         )
+
+
+def _v3_pages_spec() -> list[dict]:
+    return [
+        {
+            "text": "The court found substantial progress and marked improvement.",
+            "first": 1,
+            "last": 1,
+            "quotes": [
+                {
+                    "start": 16,
+                    "end": 36,
+                    "label": "substantial progress",
+                    "phrase": "substantial progress",
+                },
+                {
+                    "start": 41,
+                    "end": 59,
+                    "label": "marked improvement",
+                    "phrase": "marked improvement",
+                },
+            ],
+        },
+        {
+            "text": "Second paragraph.",
+            "first": 3,
+            "last": 3,
+            "links": [{"start": 7, "end": 16, "label": "paragraph", "target": 4210}],
+            "quotes": [],
+        },
+    ]
+
+
+class SchemaV2LoaderTests(unittest.TestCase):
+    """Schema v2 / layout v3 editions: strict quote-span validation."""
+
+    def _build_v3(self, tmp_path: Path, pages_spec=None, mutate_sidecar=None):
+        return _build_edition(
+            tmp_path,
+            layout_id="recordprep-summary-letter-v3",
+            schema_version=2,
+            pages_spec=pages_spec if pages_spec is not None else _v3_pages_spec(),
+            source_text=(
+                'The court found "substantial progress" and “marked improvement”.\n\n'
+                "Second [paragraph](page:4210).\n"
+            ),
+            mutate_sidecar=mutate_sidecar,
+        )
+
+    def test_schema_v2_v3_edition_is_accepted_with_quote_spans(self, tmp_path=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = self._build_v3(Path(temporary))
+            edition = _load(root, summary_path)
+            assert edition.schema_version == 2
+            assert edition.has_quote_spans
+            assert edition.layout_id == "recordprep-summary-letter-v3"
+            assert len(edition.pages[0].quotes) == 2
+            first = edition.pages[0].quotes[0]
+            assert (first.start, first.end) == (16, 36)
+            assert first.label == "substantial progress"
+            assert first.phrase == "substantial progress"
+            assert edition.pages[1].quotes == ()
+            assert edition.pages[1].links[0].target_page == 4210
+
+    def test_schema_v2_rejects_legacy_layout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(
+                Path(temporary),
+                layout_id="recordprep-summary-letter-v2",
+                schema_version=2,
+            )
+            with pytest.raises(SummaryEditionError):
+                _load(root, summary_path)
+
+    def test_schema_v1_rejects_v3_layout(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(
+                Path(temporary),
+                layout_id="recordprep-summary-letter-v3",
+                schema_version=1,
+            )
+            with pytest.raises(SummaryEditionError):
+                _load(root, summary_path)
+
+    def test_quote_span_label_mismatch_is_rejected(self):
+        def mutate(page_map):
+            page_map["pages"][0]["quotes"][0]["label"] = "Wrong"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = self._build_v3(
+                Path(temporary), mutate_sidecar=mutate
+            )
+            with pytest.raises(SummaryEditionError):
+                _load(root, summary_path)
+
+    def test_quote_span_out_of_bounds_is_rejected(self):
+        def mutate(page_map):
+            page_map["pages"][0]["quotes"][0]["end"] = 9999
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = self._build_v3(
+                Path(temporary), mutate_sidecar=mutate
+            )
+            with pytest.raises(SummaryEditionError):
+                _load(root, summary_path)
+
+    def test_missing_quote_spans_are_rejected(self):
+        def mutate(page_map):
+            for entry in page_map["pages"]:
+                entry.pop("quotes", None)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = self._build_v3(
+                Path(temporary), mutate_sidecar=mutate
+            )
+            with pytest.raises(SummaryEditionError):
+                _load(root, summary_path)
+
+    def test_overlapping_quote_spans_are_rejected(self):
+        def mutate(page_map):
+            quotes = page_map["pages"][0]["quotes"]
+            quotes.append(
+                {
+                    "start": 30,
+                    "end": 50,
+                    "label": quotes[0]["label"][:6] + quotes[1]["label"][:8],
+                    "phrase": "overlap",
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = self._build_v3(
+                Path(temporary), mutate_sidecar=mutate
+            )
+            with pytest.raises(SummaryEditionError):
+                _load(root, summary_path)
+
+    def test_missing_quote_phrase_is_rejected(self):
+        def mutate(page_map):
+            page_map["pages"][0]["quotes"][0]["phrase"] = ""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = self._build_v3(
+                Path(temporary), mutate_sidecar=mutate
+            )
+            with pytest.raises(SummaryEditionError):
+                _load(root, summary_path)
+
+
+class StructuredDisplayTests(unittest.TestCase):
+    """Structured paginated display for schema v2 editions."""
+
+    def _edition(self, pages_spec=None, source_text=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(
+                Path(temporary),
+                layout_id="recordprep-summary-letter-v3",
+                schema_version=2,
+                pages_spec=pages_spec if pages_spec is not None else _v3_pages_spec(),
+                source_text=(
+                    source_text
+                    if source_text is not None
+                    else 'The court found "substantial progress" and “marked improvement”.\n\n'
+                    "Second [paragraph](page:4210).\n"
+                ),
+            )
+            return _load(root, summary_path)
+
+    def test_display_text_is_exact_and_spans_remap(self):
+        edition = self._edition()
+        display = render_page_display(edition, 1)
+        assert display.text == with_paragraph_spacing(edition.pages[0].text)
+        assert display.text == "The court found substantial progress and marked improvement."
+        assert display.phrase_spans == (
+            (16, 36, "substantial progress"),
+            (41, 59, "marked improvement"),
+        )
+        assert display.page_link_spans == ()
+        page_two = render_page_display(edition, 2)
+        assert page_two.text == "Second paragraph."
+        assert page_two.page_link_spans == ((7, 16, "4210"),)
+        assert page_two.phrase_spans == ()
+        # Span offsets index into the exact display text.
+        for start, end, phrase in page_two.page_link_spans:
+            assert page_two.text[start:end] == "paragraph"
+
+    def test_page_split_quote_fragments_carry_full_phrase(self):
+        pages_spec = [
+            {
+                "text": "He said begin",
+                "first": 1,
+                "last": 1,
+                "quotes": [
+                    {
+                        "start": 8,
+                        "end": 13,
+                        "label": "begin",
+                        "phrase": "begin end",
+                    }
+                ],
+            },
+            {
+                "text": "end of it.",
+                "first": 2,
+                "last": 2,
+                "quotes": [
+                    {
+                        "start": 0,
+                        "end": 3,
+                        "label": "end",
+                        "phrase": "begin end",
+                    }
+                ],
+            },
+        ]
+        edition = self._edition(pages_spec)
+        first = render_page_display(edition, 1)
+        second = render_page_display(edition, 2)
+        assert first.phrase_spans == ((8, 13, "begin end"),)
+        assert second.phrase_spans == ((0, 3, "begin end"),)
+
+    def test_paragraph_spacing_mapped_matches_plain_transform(self):
+        text = "One paragraph.\nSecond paragraph.\n\n\nThird paragraph."
+        display, offset_map = with_paragraph_spacing_mapped(text)
+        assert display == with_paragraph_spacing(text)
+        assert offset_map[len(text)] == len(display)
+        for marker in ("One", "Second", "Third"):
+            original = text.index(marker)
+            assert display[offset_map[original] :].startswith(marker)
+
+    def test_search_uses_structured_display_text(self):
+        edition = self._edition()
+        matches = search_pages(
+            edition,
+            "substantial progress",
+            render=lambda _edition, page_number: render_page_display(
+                edition, page_number
+            ).text,
+        )
+        assert matches == [(1, 16, 36)]
+        # The quoted phrase is searchable without its old delimiters.
+        matches = search_pages(
+            edition,
+            '"substantial progress"',
+            render=lambda _edition, page_number: render_page_display(
+                edition, page_number
+            ).text,
+        )
+        assert matches == []
+
+    def test_legacy_edition_structured_display_raises(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root, summary_path, _pages = _build_edition(Path(temporary))
+            edition = _load(root, summary_path)
+            with pytest.raises(SummaryEditionError):
+                render_page_display(edition, 1)
+
+    def test_emphasis_match_text_reinserts_links_and_maps_offsets(self):
+        edition = self._edition()
+        display = render_page_display(edition, 2)
+        match_text, offset_map = emphasis_match_text(display)
+        assert match_text == "Second [paragraph](page:4210)."
+        assert display.text[offset_map[7] :] .startswith("paragraph")
+        # The syntax characters clamp into the label's display span.
+        assert offset_map[6] == 6  # space before "["
+        assert offset_map[7] == 7  # "["
+        assert offset_map[17] == 16  # "](page:...)"
+        assert offset_map[len(match_text)] == len(display.text)
+
+    def test_paged_display_uses_structured_path_for_v2_editions(self):
+        pages_spec = _v3_pages_spec()
+        edition = self._edition(pages_spec)
+        harness = PagedHarness(edition)
+        harness._display_summary_page(1)
+        assert harness.structured_displays, "structured display path used"
+        assert not harness.link_applied
+        display = harness.structured_displays[-1]
+        assert harness._summary_raw == display.text
+        assert (16, 36, "substantial progress") in display.phrase_spans
+        # Legacy editions keep the established pipeline.
+        legacy_root, legacy_path, _pages = _build_edition(Path(tempfile.mkdtemp()))
+        legacy = _load(legacy_root, legacy_path)
+        legacy_harness = PagedHarness(legacy)
+        legacy_harness._display_summary_page(1)
+        assert not legacy_harness.structured_displays
+        assert legacy_harness.link_applied

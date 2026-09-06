@@ -17,13 +17,22 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 PAGE_MAP_ARTIFACT = "recordprep-summary-pages"
-PAGE_MAP_SCHEMA_VERSION = 1
-# Focus consumes editions produced by any supported RecordPrep layout. v2 is
-# the denser current Letter layout; v1 sidecars remain readable so bundles
-# keep working until RecordPrep rebuilds them.
+# Focus consumes editions produced by any supported RecordPrep schema/layout
+# pairing: schema v1 sidecars (layouts v1/v2, no quote spans) and schema v2
+# sidecars (layout v3, required quote-fragment spans for the bold quoted
+# phrase presentation). Unsupported pairings degrade safely to the legacy
+# continuous summary behavior.
+SUPPORTED_SCHEMA_LAYOUTS: dict[int, tuple[str, ...]] = {
+    1: (
+        "recordprep-summary-letter-v1",
+        "recordprep-summary-letter-v2",
+    ),
+    2: ("recordprep-summary-letter-v3",),
+}
 SUPPORTED_LAYOUT_IDS: tuple[str, ...] = (
     "recordprep-summary-letter-v1",
     "recordprep-summary-letter-v2",
+    "recordprep-summary-letter-v3",
 )
 
 # Focus summary sources mapped to RecordPrep page-map categories.
@@ -47,12 +56,30 @@ class SummaryEditionLink:
 
 
 @dataclass(frozen=True)
+class SummaryEditionQuote:
+    """One page's validated bold quote fragment.
+
+    ``start``/``end`` are offsets into that page's sidecar text and
+    ``label`` is exactly ``text[start:end]``. ``phrase`` is the complete
+    quote content (identical on every fragment of a quotation that wraps
+    across a paper-page boundary) used for record-wide phrase search and
+    quote clicks.
+    """
+
+    label: str
+    phrase: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
 class SummaryEditionPage:
     page: int
     text: str
     source_first_line: int
     source_last_line: int
     links: tuple[SummaryEditionLink, ...] = ()
+    quotes: tuple[SummaryEditionQuote, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -65,10 +92,16 @@ class SummaryEdition:
     pdf_sha256: str
     pages: tuple[SummaryEditionPage, ...]
     layout_id: str = ""
+    schema_version: int = 1
 
     @property
     def page_count(self) -> int:
         return len(self.pages)
+
+    @property
+    def has_quote_spans(self) -> bool:
+        """True for schema v2 editions that carry validated quote spans."""
+        return self.schema_version >= 2
 
 
 def _sha256_file(path: Path) -> str:
@@ -151,12 +184,18 @@ def load_summary_edition(
     problems: list[str] = []
     if page_map.get("artifact") != PAGE_MAP_ARTIFACT:
         problems.append("artifact identifier mismatch")
-    if page_map.get("schema_version") != PAGE_MAP_SCHEMA_VERSION:
+    schema_version = page_map.get("schema_version")
+    if schema_version not in SUPPORTED_SCHEMA_LAYOUTS:
         problems.append("unsupported schema version")
     if page_map.get("kind") != edition_kind:
         problems.append("category mismatch")
     layout = page_map.get("layout")
-    if not isinstance(layout, dict) or layout.get("id") not in SUPPORTED_LAYOUT_IDS:
+    supported_layouts = (
+        SUPPORTED_SCHEMA_LAYOUTS.get(schema_version, ())
+        if isinstance(schema_version, int)
+        else ()
+    )
+    if not isinstance(layout, dict) or layout.get("id") not in supported_layouts:
         problems.append("layout mismatch")
     if problems:
         raise SummaryEditionError(
@@ -243,6 +282,42 @@ def load_summary_edition(
             if ns < pe:
                 raise SummaryEditionError("Page map link spans overlap.")
 
+        quotes: list[SummaryEditionQuote] = []
+        raw_quotes = entry.get("quotes") if schema_version == 2 else None
+        if schema_version == 2:
+            if not isinstance(raw_quotes, list):
+                raise SummaryEditionError("Page map quote spans are missing.")
+            quote_spans: list[tuple[int, int]] = []
+            for quote in raw_quotes:
+                if not isinstance(quote, dict):
+                    raise SummaryEditionError("Page map quote entry is malformed.")
+                q_start, q_end = quote.get("start"), quote.get("end")
+                q_label, phrase = quote.get("label"), quote.get("phrase")
+                if (
+                    not isinstance(q_start, int)
+                    or not isinstance(q_end, int)
+                    or q_start < 0
+                    or q_end > len(text)
+                    or q_start >= q_end
+                ):
+                    raise SummaryEditionError("Page map quote span is out of bounds.")
+                if not isinstance(q_label, str) or text[q_start:q_end] != q_label:
+                    raise SummaryEditionError(
+                        "Page map quote span does not match its label."
+                    )
+                if not isinstance(phrase, str) or not phrase:
+                    raise SummaryEditionError("Page map quote phrase is missing.")
+                quote_spans.append((q_start, q_end))
+                quotes.append(
+                    SummaryEditionQuote(
+                        label=q_label, phrase=phrase, start=q_start, end=q_end
+                    )
+                )
+            ordered_quotes = sorted(quote_spans)
+            for (ps, pe), (ns, _ne) in zip(ordered_quotes, ordered_quotes[1:]):
+                if ns < pe:
+                    raise SummaryEditionError("Page map quote spans overlap.")
+
         validated.append(
             SummaryEditionPage(
                 page=index + 1,
@@ -250,6 +325,7 @@ def load_summary_edition(
                 source_first_line=first_line,
                 source_last_line=last_line,
                 links=tuple(links),
+                quotes=tuple(quotes),
             )
         )
 
@@ -262,6 +338,7 @@ def load_summary_edition(
         pdf_sha256=pdf_sha.lower(),
         pages=tuple(validated),
         layout_id=layout_id,
+        schema_version=schema_version if isinstance(schema_version, int) else 1,
     )
 
 
@@ -286,6 +363,49 @@ def render_page_text(edition: SummaryEdition, page_number: int) -> str:
 
 
 _NEWLINE_RUN_RE = re.compile(r"\n+")
+
+
+def with_paragraph_spacing_mapped(text: str) -> tuple[str, list[int]]:
+    """Paragraph-spaced display text plus an original-offset map.
+
+    Applies exactly the :func:`with_paragraph_spacing` transformation while
+    also returning ``offset_map`` where ``offset_map[i]`` is the display
+    offset of original offset ``i`` (clamped into the display text, so
+    offsets inside collapsed newline runs map to the spacing boundary and
+    offsets of stripped leading/trailing newlines clamp to the edges).
+    """
+    if not text:
+        return text, [0]
+    pieces: list[str] = []
+    offset_map = [0] * (len(text) + 1)
+    out_length = 0
+    cursor = 0
+    for match in _NEWLINE_RUN_RE.finditer(text):
+        before = text[cursor : match.start()]
+        for index in range(cursor, match.start()):
+            offset_map[index] = out_length + (index - cursor)
+        pieces.append(before)
+        out_length += len(before)
+        offset_map[match.start()] = out_length
+        pieces.append("\n\n")
+        out_length += 2
+        offset_map[match.end()] = out_length
+        cursor = match.end()
+    for index in range(cursor, len(text)):
+        offset_map[index] = out_length + (index - cursor)
+    pieces.append(text[cursor:])
+    out_length += len(text) - cursor
+    offset_map[len(text)] = out_length
+
+    joined = "".join(pieces)
+    stripped_lead = len(joined) - len(joined.lstrip("\n"))
+    display = joined.strip("\n")
+    if stripped_lead or len(display) != out_length:
+        offset_map = [
+            min(max(mapped - stripped_lead, 0), len(display))
+            for mapped in offset_map
+        ]
+    return display, offset_map
 
 
 def with_paragraph_spacing(text: str) -> str:
@@ -356,3 +476,107 @@ def search_pages(
             matches.append((page.page, found, found + len(needle)))
             start = found + len(needle)
     return matches
+
+
+@dataclass(frozen=True)
+class SummaryPageDisplay:
+    """Structured display form of one schema v2 edition page.
+
+    ``text`` is the exact display text (quote-free, link-free, paragraph
+    spaced) that the summary buffer must show and that paginated search,
+    selection, and highlight offsets must use. Phrase spans (bold quoted
+    content, clickable for record-wide phrase search with the full stored
+    phrase) and page-link spans are validated spans remapped onto ``text``.
+    """
+
+    text: str
+    phrase_spans: tuple[tuple[int, int, str], ...] = ()
+    page_link_spans: tuple[tuple[int, int, str], ...] = ()
+
+
+def render_page_display(edition: SummaryEdition, page_number: int) -> SummaryPageDisplay:
+    """Structured display representation for a schema v2 edition page.
+
+    Applies the validated quote and page-link spans directly — the display
+    text is never reparsed for quotation marks and never has Markdown
+    delimiters injected. Raises ``SummaryEditionError`` for legacy editions;
+    those keep the established ``render_page_text`` pipeline.
+    """
+    if not edition.has_quote_spans:
+        raise SummaryEditionError(
+            "Structured page display requires a schema v2 edition with quote spans."
+        )
+    if page_number < 1 or page_number > edition.page_count:
+        raise SummaryEditionError("Summary page number is out of range.")
+    page = edition.pages[page_number - 1]
+    text, offset_map = with_paragraph_spacing_mapped(page.text)
+
+    def mapped(start: int, end: int) -> tuple[int, int]:
+        mapped_start = offset_map[min(max(start, 0), len(offset_map) - 1)]
+        mapped_end = offset_map[min(max(end, 0), len(offset_map) - 1)]
+        return (mapped_start, mapped_end) if mapped_end > mapped_start else (mapped_start, mapped_start)
+
+    phrase_spans = [
+        (*mapped(quote.start, quote.end), quote.phrase)
+        for quote in page.quotes
+    ]
+    page_link_spans = [
+        (*mapped(link.start, link.end), str(link.target_page))
+        for link in page.links
+    ]
+    return SummaryPageDisplay(
+        text=text,
+        phrase_spans=tuple(phrase_spans),
+        page_link_spans=tuple(page_link_spans),
+    )
+
+
+def emphasis_match_text(display: SummaryPageDisplay) -> tuple[str, list[int]]:
+    """Match text for legacy entry-emphasis patterns plus its offset map.
+
+    Reinserts the trusted page-link syntax at the validated page-link spans
+    (never quote delimiters, never parsed from display text) so the existing
+    summary-entry emphasis regexes apply unchanged. Returns the match text
+    and ``offset_map`` where ``offset_map[i]`` maps match-text offset ``i``
+    to a display-text offset (syntax characters clamp to the link span's
+    display boundaries).
+    """
+    spans = sorted(
+        (span for span in display.page_link_spans),
+        key=lambda span: (span[0], span[1]),
+    )
+    parts: list[str] = []
+    display_cursor = 0
+    for start, end, page_str in spans:
+        if start < display_cursor or end > len(display.text) or start >= end:
+            continue
+        parts.append(display.text[display_cursor:start])
+        parts.append(f"[{display.text[start:end]}](page:{page_str})")
+        display_cursor = end
+    parts.append(display.text[display_cursor:])
+    match_text = "".join(parts)
+
+    offset_map = [0] * (len(match_text) + 1)
+    match_length = 0
+    display_cursor = 0
+    for start, end, page_str in spans:
+        if start < display_cursor or end > len(display.text) or start >= end:
+            continue
+        for index in range(start - display_cursor):
+            offset_map[match_length + index] = display_cursor + index
+        match_length += start - display_cursor
+        label = display.text[start:end]
+        syntax = f"[{label}](page:{page_str})"
+        # "[" and the trailing "](page:N)" clamp into the label's display
+        # span; label characters map one-to-one.
+        offset_map[match_length] = start
+        for index in range(len(label)):
+            offset_map[match_length + 1 + index] = start + index
+        for index in range(len(syntax) - len(label) - 1):
+            offset_map[match_length + 1 + len(label) + index] = end
+        match_length += len(syntax)
+        display_cursor = end
+    for index in range(len(display.text) - display_cursor):
+        offset_map[match_length + index] = display_cursor + index
+    offset_map[len(match_text)] = len(display.text)
+    return match_text, offset_map
