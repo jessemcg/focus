@@ -161,6 +161,14 @@ def test_missing_minute_does_not_change_state(tmp_path, missing):
 
 
 @pytest.mark.parametrize("dark", [False, True])
+def test_category_tint_leaves_text_nodes_transparent(dark):
+    # Opaque inner text nodes paint square corners over the rounded scroller.
+    css = category_css(dark=dark, high_contrast=False)
+    assert "#page-text" not in css
+    assert "background-color: mix(white," in css
+
+
+@pytest.mark.parametrize("dark", [False, True])
 def test_high_contrast_suppresses_palette_but_preserves_indicators(dark):
     css = category_css(dark=dark, high_contrast=True)
     assert "mix(" not in css

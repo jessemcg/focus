@@ -2463,9 +2463,7 @@ def category_css(*, dark: bool, high_contrast: bool) -> str:
             """
             continue
         css += f"""
-        .focus-category-surface.{name}, .focus-category-surface.{name} > viewport,
-        .focus-category-surface.{name} #page-text,
-        .focus-category-surface.{name} #page-text text {{
+        .focus-category-surface.{name}, .focus-category-surface.{name} > viewport {{
           background-color: mix(white, {light}, 0.10); }}
         .focus-category-surface.{name} {{ border-left-color: {light}; }}
         .focus-sidebar-row.{name}, .focus-sidebar-row.{name}:hover,

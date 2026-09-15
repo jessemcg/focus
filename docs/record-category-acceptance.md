@@ -16,6 +16,8 @@ Agent policy, summary behavior, or private configuration were changed.
 | Form | `#78618F` | `#B6A1CD` |
 
 Reader paper is white mixed with 10% light accent; its rail is 4px.
+The existing 16px rounded reader corners are preserved by tinting only the
+scroller/viewport, leaving inner text nodes transparent.
 TOC rails are 3px, headings have stronger fills than bookmarks, and labels use
 normal theme foregrounds. Active-page bold text and keyboard-focus outline
 are separate from category color. Active-row box outlines were removed at the
@@ -58,10 +60,11 @@ uv run python scripts/preview-record-categories.py --check --screenshots --high-
 Each invocation creates a new temporary HOME/XDG/config/bundle and unique app ID.
 It prints its artifact path. No API calls or real case data are used. Xvfb may
 print DRI3 software-rendering warnings; both assertion runs exit successfully.
-Final run artifacts after removing the category bar and active-row boxes:
-`/tmp/focus-categories-1grlnmem` and `/tmp/focus-categories-wq8cuoue`
+Final run artifacts after restoring rounded reader corners:
+`/tmp/focus-categories-hrgp4fu8` and `/tmp/focus-categories-barl_4j5`
 (temporary, not required to reproduce). Retained screenshots were refreshed.
-The box-removal follow-up passed all 41 category tests and both GUI harness runs.
+The rounded-corner follow-up passed all 43 category tests and both GUI harness
+runs; the dark screenshot confirms all four reader corners are rounded.
 
 ## Visual evidence and limits
 
