@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 from .core import *  # noqa: F401,F403
+from .record_categories import Classification, load_category_index, with_toc_fallback
 from .summary_editions import (
     SummaryEdition,
     SummaryEditionError,
@@ -60,6 +61,7 @@ class Focus(Adw.Application):
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
             style_manager.connect("notify::color-scheme", self._on_color_scheme_changed)
             style_manager.connect("notify::dark", self._on_color_scheme_changed)
+            style_manager.connect("notify::high-contrast", self._on_color_scheme_changed)
         except Exception:
             pass
         self.connect("activate", self.on_activate)
@@ -75,6 +77,9 @@ class Focus(Adw.Application):
         self._record_font_family_name = load_record_font_family_name()
         self._record_font_family_css = _record_font_css_for_name(self._record_font_family_name)
 
+        self._category_base_index: dict[int, Classification] = {}
+        self._category_index: dict[int, Classification] = {}
+        self._category_provider: Gtk.CssProvider | None = None
         self.pages: list[int] = []
         self.page_to_path: dict[int, Path] = {}
         self._transcript_page_index = TranscriptPageIndex({}, {}, {})
@@ -341,8 +346,14 @@ class Focus(Adw.Application):
             pass
 
     def _scan_pages(self) -> None:
+        self._category_base_index = {}
+        self._category_index = {}
+        self._toc_categories = []
+        self._toc_load_generation += 1
         self.page_to_path.clear()
         self.pages.clear()
+        self._refresh_category_appearance()
+        self._rebuild_toc_sidebar()
         self._page_cache.clear()
         self._page_search_cache.clear()
         self._page_search_map_cache.clear()
@@ -368,6 +379,8 @@ class Focus(Adw.Application):
                 num = int(m.group("num"))
                 self.page_to_path[num] = p
         self.pages = sorted(self.page_to_path.keys())
+        self._category_base_index = load_category_index(self._record_layout, self.pages)
+        self._category_index = dict(self._category_base_index)
         self._ai_range_autofilled = True
         self._maybe_prefill_sum_range_for_current_page()
 
@@ -404,6 +417,8 @@ class Focus(Adw.Application):
 
     def _update_toc_from_text(self, text: str) -> None:
         self._toc_categories = parse_toc_text(text)
+        self._category_index = with_toc_fallback(self._category_base_index, self._toc_categories)
+        self._refresh_category_appearance()
         self._rebuild_toc_sidebar()
 
     def on_toc_text_updated(self, text: str) -> None:
@@ -1341,6 +1356,8 @@ class Focus(Adw.Application):
         self._update_show_image_toggle_button()
         self._update_page_nav_buttons()
 
+        self.scroller.add_css_class("focus-category-surface")
+        self._refresh_category_theme()
         content_box.append(self._content_overlay)
 
         self._split_view = Adw.NavigationSplitView()
@@ -2129,7 +2146,7 @@ class Focus(Adw.Application):
             self._sync_sidebar_active_page()
             return
         for category in self._toc_categories:
-            item = FocusSidebarItem.from_category(category)
+            item = FocusSidebarItem.from_category(category, self._category_index)
             self._toc_sidebar_root_store.append(item)
         self._update_sidebar_placeholder(True)
         self._apply_sidebar_expansion_state(self._current_view_state())
@@ -2216,6 +2233,7 @@ class Focus(Adw.Application):
         depth = max(tree_row.get_depth(), 0)
         row_box.set_margin_start(depth * SIDEBAR_TREE_INDENT)
         item = tree_row.get_item()
+        self._set_category_class(row_box, Classification())
         if not isinstance(item, FocusSidebarItem):
             title_label.set_text("")
             arrow_button.set_visible(False)
@@ -2232,6 +2250,7 @@ class Focus(Adw.Application):
             row_box.add_css_class("focus-sidebar-bookmark")
         if depth == 0:
             row_box.add_css_class("focus-sidebar-top-level")
+        self._set_category_class(row_box, Classification(item.document_category))
         title_label.set_text(item.title)
         self._update_sidebar_row_expand_widgets(list_row, tree_row)
         self._update_sidebar_row_active_state(list_row)
@@ -2907,8 +2926,6 @@ class Focus(Adw.Application):
             self._hearing_boundaries,
             self._minute_boundaries,
         )
-        if boundary is None or boundary.start_page not in self.page_to_path:
-            return None
         return boundary
 
     def _viewing_return_minute_order(self) -> bool:
@@ -2939,6 +2956,7 @@ class Focus(Adw.Application):
             self._minute_order_button.set_tooltip_text(
                 "Return to the RT page you came from (Ctrl+Shift+M)"
             )
+            self._set_accessible_label(self._minute_order_button, "Return to hearing text")
             self._minute_order_button.set_sensitive(True)
             self._minute_order_button.add_css_class("focus-minute-order-return-active")
             return
@@ -2950,8 +2968,9 @@ class Focus(Adw.Application):
             self._build_header_icon("text-x-generic-symbolic", "document-open-symbolic")
         )
         self._minute_order_button.set_tooltip_text(
-            "Open the minute order for this RT page (Ctrl+Shift+M)"
+            "Open minute-order text for this RT page (Ctrl+Shift+M)"
         )
+        self._set_accessible_label(self._minute_order_button, "Open minute-order text")
         self._minute_order_button.set_sensitive(target is not None)
 
     def _refresh_record_boundary_date_label(self) -> None:
@@ -3396,10 +3415,38 @@ class Focus(Adw.Application):
             if state.raw:
                 self._apply_ai_output_links(state.raw, state)
 
+    @staticmethod
+    def _set_category_class(widget: Gtk.Widget, result: Classification) -> None:
+        for category in PALETTE:
+            widget.remove_css_class(f"focus-doc-{category.value}")
+        if result.category in PALETTE:
+            widget.add_css_class(f"focus-doc-{result.category.value}")
+
+    def _refresh_category_appearance(self) -> None:
+        page = self._current_page_number()
+        path = self.page_to_path.get(page)
+        result = self._category_index.get(page, Classification()) if path and path.is_file() else Classification()
+        if self.scroller is not None:
+            self._set_category_class(self.scroller, result)
+
+    def _refresh_category_theme(self) -> None:
+        display = Gdk.Display.get_default()
+        if display is None:
+            return
+        if self._category_provider is None:
+            self._category_provider = Gtk.CssProvider()
+            Gtk.StyleContext.add_provider_for_display(
+                display, self._category_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
+        manager = Adw.StyleManager.get_default()
+        self._category_provider.load_from_data(category_css(
+            dark=manager.get_dark(), high_contrast=manager.get_high_contrast()).encode())
+        self._refresh_category_appearance()
+
     def _on_color_scheme_changed(self, *_args: object) -> None:
         GLib.idle_add(self._refresh_ai_quote_colors_idle)
 
     def _refresh_ai_quote_colors_idle(self) -> bool:
+        self._refresh_category_theme()
         self._refresh_ai_quote_colors()
         return False
 
@@ -4893,6 +4940,7 @@ class Focus(Adw.Application):
         return content, adjusted if adjusted else None
 
     def _load_current(self) -> None:
+        self._refresh_category_appearance()
         if not self.pages:
             self._clear_image_preview()
             self._set_show_image(False, silent=True)
@@ -6049,8 +6097,8 @@ class Focus(Adw.Application):
             return_page = self._minute_order_return_page
             self._minute_order_return_page = None
             self._minute_order_return_boundary = None
-            self._show_page_from_link(str(return_page))
             self._set_show_image(False, silent=True)
+            self._show_page_from_link(str(return_page))
             return
 
         current_page = self._current_page_number()
@@ -6058,10 +6106,14 @@ class Focus(Adw.Application):
         if current_page is None or target is None:
             self._transient_toast("No matching minute order for this page.")
             return
+        target_path = self.page_to_path.get(target.start_page)
+        if target.start_page not in self.pages or target_path is None or not target_path.is_file():
+            self._transient_toast("Minute-order text is unavailable.")
+            return
         self._minute_order_return_page = current_page
         self._minute_order_return_boundary = target
+        self._set_show_image(False, silent=True)
         self._show_page_from_link(str(target.start_page))
-        self._set_show_image(True)
 
     def _on_page_number_activate(self, entry: Gtk.Entry) -> None:
         if not self.pages:

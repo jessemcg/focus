@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
+from .record_categories import Category, Classification, PALETTE, heading_category
+
 import gi
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
@@ -2407,11 +2409,13 @@ class FocusSidebarItem(GObject.GObject):
         *,
         kind: str,
         children: list["FocusSidebarItem"] | None = None,
+        document_category: Category = Category.UNKNOWN,
     ) -> None:
         super().__init__()
         self.title = title
         self.page = page
         self.kind = kind
+        self.document_category = document_category
         self._children_store: Gio.ListStore | None = None
         if children:
             store = Gio.ListStore(item_type=FocusSidebarItem)
@@ -2423,12 +2427,57 @@ class FocusSidebarItem(GObject.GObject):
         return self._children_store
 
     @classmethod
-    def from_category(cls, category: TocCategory) -> "FocusSidebarItem":
+    def from_category(cls, category: TocCategory,
+                      index: dict[int, Classification] | None = None) -> "FocusSidebarItem":
+        index = index or {}
         children = [
-            cls(title=bookmark.title, page=bookmark.page, kind="bookmark")
+            cls(title=bookmark.title, page=bookmark.page, kind="bookmark",
+                document_category=index.get(bookmark.page, Classification()).category)
             for bookmark in category.bookmarks
         ]
-        return cls(title=category.title, page=category.page, kind="category", children=children or None)
+        return cls(title=category.title, page=category.page, kind="category",
+                   document_category=heading_category(category.title), children=children or None)
+
+
+def category_css(*, dark: bool, high_contrast: bool) -> str:
+    """Appearance only: no text tags, overlays, or model rebuilds."""
+    css = """
+    .focus-category-surface { border-left: 4px solid transparent; }
+    .focus-sidebar-row { border-left: 3px solid transparent; }
+    .focus-sidebar-row .focus-sidebar-title { color: @window_fg_color; }
+    .focus-sidebar-row.focus-sidebar-category-active .focus-sidebar-title,
+    .focus-sidebar-row.focus-sidebar-bookmark-active .focus-sidebar-title {
+      font-weight: 700; color: @window_fg_color; }
+    .focus-sidebar-listbox-row:focus-visible {
+      outline: 2px solid @window_fg_color; outline-offset: -2px; }
+    .focus-sidebar-expand-button:focus-visible {
+      outline: 2px solid @window_fg_color; }
+    """
+    for category, (light, chrome_dark) in PALETTE.items():
+        name = f"focus-doc-{category.value}"
+        chrome = chrome_dark if dark else light
+        if high_contrast:
+            css += f"""
+            .focus-category-surface.{name} {{ border-left-color: #242424; }}
+            .focus-sidebar-row.{name} {{ border-left-color: @window_fg_color; }}
+            """
+            continue
+        css += f"""
+        .focus-category-surface.{name}, .focus-category-surface.{name} > viewport,
+        .focus-category-surface.{name} #page-text,
+        .focus-category-surface.{name} #page-text text {{
+          background-color: mix(white, {light}, 0.10); }}
+        .focus-category-surface.{name} {{ border-left-color: {light}; }}
+        .focus-sidebar-row.{name}, .focus-sidebar-row.{name}:hover,
+        .focus-sidebar-row.{name}.focus-sidebar-bookmark-active {{
+          border-left-color: {chrome};
+          background-color: alpha({chrome}, {0.12 if dark else 0.08}); }}
+        .focus-sidebar-row.{name}.focus-sidebar-category,
+        .focus-sidebar-row.{name}.focus-sidebar-category:hover,
+        .focus-sidebar-row.{name}.focus-sidebar-category.focus-sidebar-category-expanded {{
+          background-color: alpha({chrome}, {0.24 if dark else 0.17}); }}
+        """
+    return css
 
 APP_CHROME_CSS = (
     """

@@ -7,6 +7,7 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 ## Features
 
 - Page-by-page transcript reading with TOC navigation, page images, printing, and bookmarks.
+- Metadata-backed hearing, report, minute-order, and form colors.
 - Fast Python-only record search with Unicode/OCR normalization, hit navigation, and configurable highlighting.
 - Official transcript-page/citation lookup from RecordPrep metadata.
 - Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
@@ -101,6 +102,41 @@ case_bundle/
 
 Only `text_pages` is required for basic browsing. Source-resolved Agent answers require `artifacts/source_map.json`. Source-map v1 remains searchable; participant-aware scopes and attribution require RecordPrep source-map v2.
 
+## Record category display
+
+The reader uses a 10% paper tint and 4px rail: **hearing blue**, **report teal**,
+**minute-order bronze**, and **form violet**. There is no category label bar above
+the page. Unknown/index pages remain neutral. Paper stays light even with dark
+application chrome. High contrast removes category colors while retaining neutral
+rails/outlines.
+
+Classification is read-only and keyed by physical file page, in this order:
+
+1. `transcript_page_numbers.json` per-page `page_type`.
+2. `source_map.json` per-page `page_type`.
+3. Hearing/report/minute boundary ranges, independent of dates.
+4. Exact bookmark pages beneath canonical TOC headings: Hearings, Reports,
+   Minute orders, Forms. No propagation to following pages.
+5. Neutral when metadata is absent, unknown, or conflicting.
+
+Explicit unknown types block weaker fallbacks. Conflicting selected-tier types,
+overlapping different boundary categories, or contradictory RT/CT metadata remain
+neutral. RT is not assumed to be a hearing, CT is not assumed to be a minute order,
+and no form ranges are inferred. Canonical TOC headings have stronger tints than
+bookmarks; bookmark colors use the same page classifier as the reader. Active rows
+use bold text without a box outline; keyboard focus retains its own outline.
+Theme changes update appearance without replacing the reader buffer or TOC model.
+These display categories do not change citations, navigation targets, Agent tools,
+summaries, or record metadata.
+
+**Ctrl+Shift+M** (or the minute-order toolbar button) opens the matching existing
+minute-order **text**, even when an image was visible. Press again to return to the
+originating hearing text, including after browsing elsewhere. Missing exact target
+text produces an unavailable message rather than jumping to a neighboring page.
+**Ctrl+I** remains the independent manual image toggle.
+
+See [category acceptance and screenshots](docs/record-category-acceptance.md).
+
 ## Configuration
 
 Focus stores local application settings in `config.json` (ignored by Git). Settings include:
@@ -189,6 +225,7 @@ Important shortcuts:
 - Ctrl+Q: focus Agent Q&A.
 - Ctrl+Shift+A: toggle case tools and focus Agent Q&A when opened.
 - Ctrl+I: toggle the page image.
+- Ctrl+Shift+M: open matching minute-order text / return to originating hearing text.
 - F1: keyboard shortcuts.
 
 Public question actions:
@@ -212,6 +249,7 @@ gdbus call --session \
 
 - `focus/app.py`: GTK application, transcript browsing, summaries, and Agent orchestration.
 - `focus/core.py`: shared config, record layout, citation, and rendering helpers.
+- `focus/record_categories.py`: read-only file-page display classifier and palette.
 - `focus/agent_helper.py`: compact context, targeted map, lookup, document, and ranked search CLI for Agent sessions.
 - `focus/agent_answer.py`: answer-artifact transport checks and non-blocking category linter.
 - `focus/agent_trace.py`: embedded-Agent session-log discovery, validated atomic trace snapshots, and the Copy Trace clipboard path.
