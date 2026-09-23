@@ -15,6 +15,7 @@ def _fake_agent(tmp_path: Path) -> Path:
 set -euo pipefail
 {
   printf 'cwd=%s\\n' "$PWD"
+  printf 'metrics_root=%s\\n' "$PI_RUN_METRICS_ROOT"
   printf 'arg=%s\\n' "$@"
   if [[ -f .pi/settings.json ]]; then
     printf 'settings=staged\\n'
@@ -84,6 +85,8 @@ def _run_wrapper(
     runtime_dir.mkdir(parents=True)
     executable = _fake_agent(tmp_path)
     env = os.environ.copy()
+    for key in ("PI_RUN_METRICS_ROOT", "PI_RUN_METRICS_COLLECTOR", "PI_RUN_METRICS_ENABLED", "PI_CODING_AGENT_SESSION_DIR"):
+        env.pop(key, None)
     env.update(
         {
             "XDG_CACHE_HOME": str(tmp_path / "cache"),
@@ -119,6 +122,7 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
     assert completed.returncode == 0
     assert output == [
         f"cwd={workspace}",
+        f"metrics_root={tmp_path}/.run-metrics/runs",
         "arg=--approve",
         "arg=--no-session",
         "arg=--no-extensions",
@@ -162,6 +166,27 @@ def test_pi_wrapper_loads_shared_observer_without_changing_tools(tmp_path) -> No
     assert not any(line.startswith("session_dir=") for line in output)
     assert not workspace.exists()
     assert not prompt_path.exists()
+
+
+def test_pi_wrapper_preserves_absolute_metrics_root_override(tmp_path) -> None:
+    archive = tmp_path / "alternate archive" / "runs"
+    output, _, _, completed = _run_wrapper(
+        tmp_path, {"PI_RUN_METRICS_ROOT": str(archive)}
+    )
+    assert completed.returncode == 0
+    assert f"metrics_root={archive}" in output
+
+
+def test_project_metrics_are_git_ignored(tmp_path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text(
+        (WRAPPER.parents[1] / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    completed = subprocess.run(
+        ["git", "check-ignore", "--no-index", ".run-metrics/runs/2099-01-01/test.jsonl"],
+        cwd=tmp_path, text=True, capture_output=True,
+    )
+    assert completed.returncode == 0
 
 
 def test_pi_wrapper_missing_observer_is_nonfatal(tmp_path) -> None:

@@ -169,9 +169,11 @@ Short continuous two-to-five-word record quotes, punctuation outside quotes, no 
 
 ### Operational metrics pilot
 
-Copy Trace is removed; Answer and Session remain. New embedded sessions explicitly load `../PiRunMetrics/run-collector.ts` with `app=focus`, `workflow=record_question`. Content-free records stay in machine-local XDG state, never in case bundles or shared configuration. Run `python3 ../PiRunMetrics/analyze_runs.py --app focus --days 14` for an on-demand batch report; Jesse alone judges answer quality.
+Copy Trace is removed; Answer and Session remain. New embedded sessions explicitly load `../PiRunMetrics/run-collector.ts` with `app=focus`, `workflow=record_question`. Content-free records are stored at `Focus/.run-metrics/runs/YYYY-MM-DD/<run-uuid>.jsonl`. The entire `.run-metrics/` directory is ignored by Git. Because the project is under Dropbox, these records may sync through Dropbox; Git ignore is not a sync exclusion. Permissions remain private (`0700` directories, `0600` files). Existing XDG-state records are not moved or deleted.
 
-Set `PI_RUN_METRICS_ENABLED=0` to disable collection, or `PI_RUN_METRICS_COLLECTOR` to an absolute collector path for isolated deployment. Missing code warns without preventing questions. See PiRunMetrics README for archive controls, privacy boundaries, validation status, and rollback. Old saved traces are untouched.
+From the Focus directory, run `python3 ../PiRunMetrics/analyze_runs.py --root "$PWD/.run-metrics/runs" --app focus --days 14` for an on-demand batch report. Reports still go to private XDG state; Jesse alone judges answer quality.
+
+Set `PI_RUN_METRICS_ROOT` to an absolute archive path to override the project default, `PI_RUN_METRICS_ENABLED=0` to disable collection, or `PI_RUN_METRICS_COLLECTOR` to an absolute collector path for isolated deployment. Missing code warns without preventing questions. See PiRunMetrics README for archive controls, privacy boundaries, validation status, and rollback. Old saved traces are untouched.
 
 The case overview, map metadata, snippets, participant entries, and summaries remain navigation leads rather than proof. The Agent verifies material claims from source text pages. If handwriting, checkboxes, layout, signatures, or unresolved OCR cannot be established from extracted text, it states that limitation instead of opening an image or guessing.
 

@@ -2,6 +2,7 @@
 /.codex
 __pycache__/
 /.pytest_cache/
+/.run-metrics/
 /uv.lock
 /.venv/
 /legacy_versions/

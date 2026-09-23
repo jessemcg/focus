@@ -94,6 +94,7 @@ mkdir -p "$workspace/.pi"
 cp -a "$pi_project_dir/." "$workspace/.pi/"
 metrics_args=()
 project_root="$(cd "$pi_project_dir/.." && pwd)"
+export PI_RUN_METRICS_ROOT="${PI_RUN_METRICS_ROOT:-$project_root/.run-metrics/runs}"
 collector="${PI_RUN_METRICS_COLLECTOR:-$project_root/../PiRunMetrics/run-collector.ts}"
 if [[ "${PI_RUN_METRICS_ENABLED:-1}" != 0 ]]; then
   if [[ "$collector" = /* && -r "$collector" ]]; then

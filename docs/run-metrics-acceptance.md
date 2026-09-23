@@ -2,6 +2,10 @@
 
 2026-09-22, home desktop; Pi 0.87.1, Node 22.23.1.
 
+## Storage follow-up
+
+Jesse subsequently requested project-local, Git-ignored metrics. New sessions now default to `.run-metrics/runs/` beneath Focus, preserving an explicit absolute `PI_RUN_METRICS_ROOT` override. Old XDG archives are untouched. This location may synchronize via Dropbox; it is no longer machine-local by default. Seven wrapper/ignore tests pass, including the default path and an override containing spaces; shell syntax and diff checks pass. Report commands use an explicit archive root.
+
 ## Changes
 
 Copy Trace control/callback/module/export tests, trace polling, preserved-session paths, and wrapper preservation are removed. The wrapper explicitly loads the sibling PiRunMetrics observer when available, keeps `--no-extensions` and exactly `read,focus_record,submit_focus_answer`, and uses `--no-session`. App-owned artifacts and live follow-ups are unchanged. No private configuration/model changes or old-trace deletion.
