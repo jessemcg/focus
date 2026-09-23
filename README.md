@@ -153,7 +153,7 @@ Obsolete embedding/vector-question credentials and settings are removed when con
 
 Open **Case Tools** from the labeled header control and select **Agent Q&A**. The question composer provides an explicit **Ask** action and inline activity feedback. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
 
-The initial **Ask** action creates one private disposable workspace, stages its short system prompt, canonical record-question skill, settings, and sole trusted Focus extension, then launches PI with its session log scoped to the workspace's private `pi-sessions` directory. Global and project extension discovery stays disabled, no case-content JSONL is written to PI's global session directory, and credentials remain in PI's global auth store.
+The initial **Ask** action creates one private disposable workspace and stages its system prompt, skill, settings, and Focus extension. PI uses `--no-session`; live interactive follow-ups and app-owned answer artifacts remain available without persisted transcripts. Extension discovery stays disabled. The sibling PiRunMetrics observer is explicitly loaded when available, with the same tool allowlist and model selection. Credentials remain in PI's global auth store.
 
 The checked-in default is Fireworks DeepSeek V4 Pro 0813 at low reasoning. Focus disables auto-compaction for these embedded sessions and keeps transient provider retry enabled. Focus does not override the model/provider's native output limit; any response ceiling comes from Pi's model definition or the provider.
 
@@ -167,21 +167,11 @@ After the initial **Ask**, the live **Session** terminal keeps the same non-pers
 
 Short continuous two-to-five-word record quotes, punctuation outside quotes, no record labels, and no bold remain preferred because they improve clickable links. They are not acceptance gates: a useful answer with a long quote, metadata, bold text, or imperfect paragraph support is displayed unchanged.
 
-### Copy Trace
+### Operational metrics pilot
 
-The **Copy Trace** button in the Agent output header exports the current embedded Agent session for diagnostic review. It becomes available as soon as the run's PI session JSONL is discovered — including for failed or stopped runs — and a click snapshots the session through the latest complete JSONL record, so it can be used while a session is still active and clicked again later to pick up newer records. While the terminal is alive the trace source is the live workspace session log; after the wrapper exits it is the preserved copy under Focus's private runtime directory, so the trace stays exportable until the next **Ask** starts a fresh run.
+Copy Trace is removed; Answer and Session remain. New embedded sessions explicitly load `../PiRunMetrics/run-collector.ts` with `app=focus`, `workflow=record_question`. Content-free records stay in machine-local XDG state, never in case bundles or shared configuration. Run `python3 ../PiRunMetrics/analyze_runs.py --app focus --days 14` for an on-demand batch report; Jesse alone judges answer quality.
 
-The snapshot is written to private per-user XDG state and atomically replaces the previous one, so only a single latest snapshot is retained:
-
-```text
-$XDG_STATE_HOME/focus/traces/latest_trace.jsonl
-```
-
-falling back to `~/.local/state/focus/traces/latest_trace.jsonl` when `XDG_STATE_HOME` is unset. Set `FOCUS_TRACE_PATH` to an absolute file path to publish the snapshot somewhere else, such as synchronized storage; a relative value is rejected. The destination directory is created with `0700` permissions and the snapshot file is `0600`. If a snapshot cannot be validated or written, the previous trace and the clipboard are left untouched.
-
-After publishing the snapshot, Copy Trace places the snapshot's absolute path on the clipboard — nothing else. Paste that path into a fresh PI coding session and compose your own review request; the trace is meant as diagnostic evidence to review, not a conversation to resume.
-
-The trace is the **full persisted PI session JSONL**: the asked question, assistant thinking blocks when the provider supplies them, tool calls and results (record page reads and searches), final answers, model metadata, costs, and errors. It can contain confidential case material, so it stays in private local state — never in the repository, case bundles, configuration, or logs — and it is not redacted, because redaction could remove the evidence needed to diagnose a failure. Reviewing the trace as a file is intentionally different from resuming or forking the PI session: Focus never launches or forks PI from the snapshot.
+Set `PI_RUN_METRICS_ENABLED=0` to disable collection, or `PI_RUN_METRICS_COLLECTOR` to an absolute collector path for isolated deployment. Missing code warns without preventing questions. See PiRunMetrics README for archive controls, privacy boundaries, validation status, and rollback. Old saved traces are untouched.
 
 The case overview, map metadata, snippets, participant entries, and summaries remain navigation leads rather than proof. The Agent verifies material claims from source text pages. If handwriting, checkboxes, layout, signatures, or unresolved OCR cannot be established from extracted text, it states that limitation instead of opening an image or guessing.
 
@@ -252,10 +242,9 @@ gdbus call --session \
 - `focus/record_categories.py`: read-only file-page display classifier and palette.
 - `focus/agent_helper.py`: compact context, targeted map, lookup, document, and ranked search CLI for Agent sessions.
 - `focus/agent_answer.py`: answer-artifact transport checks and non-blocking category linter.
-- `focus/agent_trace.py`: embedded-Agent session-log discovery, validated atomic trace snapshots, and the Copy Trace clipboard path.
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
-- `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, exactly one explicit Focus extension, a workspace-scoped session log preserved for Copy Trace, and the strict `read,focus_record,submit_focus_answer` tool allowlist.
+- `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, explicit Focus and optional sibling metrics extensions, `--no-session`, and the strict `read,focus_record,submit_focus_answer` tool allowlist.
 - `.pi/`: checked-in PI system prompt, canonical Agent Skill, settings, and Focus record/answer extension.
 - `tests/`: pytest coverage.
 
@@ -267,7 +256,7 @@ uv run python -m compileall -q focus tests
 bash -n scripts/focus-agent-vte.sh
 ```
 
-For a sanitized manual smoke test, confirm Pro 0813 / low, then ask an affirmative identity/reason question, a negative-finding question, an attribution question, and a text-insufficient visual question. Confirm the first useful answer appears without a formatting retry; representative short quotes resolve, while longer or imperfect quotes do not suppress the answer. Verify best-effort and partial statuses are unobtrusive, no compaction occurs, no Focus JSONL appears in PI's global session directory, and Copy Trace exports a valid snapshot with a session header while the terminal is live and again after the run ends.
+For a sanitized manual smoke test, confirm Pro 0813 / low, then ask an affirmative identity/reason question, a negative-finding question, an attribution question, and a text-insufficient visual question. Confirm the first useful answer appears without a formatting retry; representative short quotes resolve, while longer or imperfect quotes do not suppress the answer. Verify best-effort and partial statuses are unobtrusive, no compaction occurs, no Focus JSONL appears in PI's global session directory, and each settled question creates a separate content-free metrics record when collection is enabled.
 
 ## License
 

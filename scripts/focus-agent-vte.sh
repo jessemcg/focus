@@ -8,7 +8,6 @@ answer_artifact="${FOCUS_AGENT_ANSWER_ARTIFACT:-}"
 run_id="${FOCUS_AGENT_RUN_ID:-}"
 runtime_dir="${FOCUS_AGENT_RUNTIME_DIR:-}"
 answer_protocol="${FOCUS_AGENT_ANSWER_PROTOCOL:-}"
-session_preserve_dir="${FOCUS_AGENT_SESSION_PRESERVE_DIR:-}"
 agent_argc="${FOCUS_AGENT_COMMAND_ARGC:-0}"
 cache_root="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
 agent_command=()
@@ -37,16 +36,6 @@ else
 fi
 
 cleanup() {
-  # Preserve the session JSONL for post-run Copy Trace diagnostics before the
-  # disposable workspace is removed. Best-effort: a failure here must not block
-  # workspace cleanup.
-  if [[ -n "$session_preserve_dir" && -n "$run_id" && -d "$workspace/pi-sessions" ]]; then
-    mkdir -p "$session_preserve_dir" 2>/dev/null || true
-    latest_session="$(ls -t "$workspace/pi-sessions"/*.jsonl 2>/dev/null | head -n 1 || true)"
-    if [[ -n "$latest_session" ]]; then
-      mv -f "$latest_session" "$session_preserve_dir/${run_id}.jsonl" 2>/dev/null || true
-    fi
-  fi
   rm -rf "$workspace"
   rm -f "$prompt_file"
 }
@@ -102,15 +91,36 @@ fi
 
 mkdir -p "$workspace/tmp"
 mkdir -p "$workspace/.pi"
-mkdir -p "$workspace/pi-sessions"
 cp -a "$pi_project_dir/." "$workspace/.pi/"
+metrics_args=()
+project_root="$(cd "$pi_project_dir/.." && pwd)"
+collector="${PI_RUN_METRICS_COLLECTOR:-$project_root/../PiRunMetrics/run-collector.ts}"
+if [[ "${PI_RUN_METRICS_ENABLED:-1}" != 0 ]]; then
+  if [[ "$collector" = /* && -r "$collector" ]]; then
+    metrics_args=(--extension "$collector")
+  else
+    printf 'Pi run metrics: collector unavailable; continuing without collection.\n' >&2
+  fi
+fi
+export PI_RUN_METRICS_APP=focus PI_RUN_METRICS_WORKFLOW=record_question
+export PI_RUN_METRICS_REVISION="$(git -C "$project_root" rev-parse HEAD 2>/dev/null || true)"
+if git -C "$project_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [[ -n "$(git -C "$project_root" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+    export PI_RUN_METRICS_DIRTY=1
+  else
+    export PI_RUN_METRICS_DIRTY=0
+  fi
+else
+  unset PI_RUN_METRICS_DIRTY
+fi
 cd "$workspace"
 export TMPDIR="$workspace/tmp"
-export PI_CODING_AGENT_SESSION_DIR="$workspace/pi-sessions"
 prompt="$(cat "$prompt_file")"
 "${agent_command[@]}" \
   --approve \
+  --no-session \
   --no-extensions \
+  "${metrics_args[@]}" \
   --extension "$workspace/.pi/extensions/focus-record-agent.ts" \
   --no-skills \
   --no-prompt-templates \

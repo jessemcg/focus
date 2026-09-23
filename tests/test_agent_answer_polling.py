@@ -73,7 +73,6 @@ class AgentAnswerPollHarness:
         self._agent_answer_poll_id = 123
         self._agent_workspace_path: Path | None = None
         self._agent_session_log_path: Path | None = None
-        self._agent_session_preserve_path: Path | None = None
         self.header_syncs = 0
         self._output_state = AiOutputView()
         self._ai_outputs = {AI_VIEW_AGENT_QA: self._output_state}
@@ -170,7 +169,7 @@ def test_poll_does_not_replace_answer_on_stale_revision(tmp_path) -> None:
     assert harness.link_calls == [first_markdown]
 
 
-def test_poll_discovers_live_session_log_once(tmp_path) -> None:
+def test_poll_uses_answer_artifact_without_reading_session_logs(tmp_path) -> None:
     run_id = create_focus_run_id()
     path = focus_answer_artifact_path(run_id, tmp_path)
     harness = AgentAnswerPollHarness(run_id, path)
@@ -186,14 +185,11 @@ def test_poll_discovers_live_session_log_once(tmp_path) -> None:
     harness._agent_workspace_path = workspace
 
     assert harness._poll_agent_answer() is True
-    assert harness._agent_session_log_path == session_log
-    # Discovery resynchronizes the output header exactly once.
-    assert harness.header_syncs == 1
-
-    # A later poll keeps the already-discovered log and does not re-sync.
+    assert harness._agent_session_log_path is None
+    assert harness._agent_last_answer_text == "Answer text."
+    assert harness.header_syncs == 0
     assert harness._poll_agent_answer() is True
-    assert harness._agent_session_log_path == session_log
-    assert harness.header_syncs == 1
+    assert harness.header_syncs == 0
 
 
 def test_poll_without_workspace_skips_session_discovery(tmp_path) -> None:

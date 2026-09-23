@@ -82,7 +82,6 @@ def _run_wrapper(
     answer_protocol.write_text("# test protocol\n", encoding="utf-8")
     runtime_dir = tmp_path / "runtime" / "focus" / "agent-answers"
     runtime_dir.mkdir(parents=True)
-    session_preserve_dir = tmp_path / "runtime" / "focus" / "agent-sessions"
     executable = _fake_agent(tmp_path)
     env = os.environ.copy()
     env.update(
@@ -93,7 +92,6 @@ def _run_wrapper(
             "FOCUS_AGENT_WORKSPACE": str(workspace),
             "FOCUS_AGENT_RUN_ID": "abcdefghijklmnopqrstuvwx",
             "FOCUS_AGENT_RUNTIME_DIR": str(runtime_dir),
-            "FOCUS_AGENT_SESSION_PRESERVE_DIR": str(session_preserve_dir),
             "FOCUS_AGENT_ANSWER_ARTIFACT": str(runtime_dir / "answer.json"),
             "FOCUS_AGENT_ANSWER_PROTOCOL": str(answer_protocol),
             "FOCUS_PI_PROJECT_DIR": str(pi_project_dir),
@@ -122,6 +120,7 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
     assert output == [
         f"cwd={workspace}",
         "arg=--approve",
+        "arg=--no-session",
         "arg=--no-extensions",
         "arg=--extension",
         f"arg={workspace}/.pi/extensions/focus-record-agent.ts",
@@ -142,49 +141,37 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "thinking=staged",
         "system=staged",
         "skill=staged",
-        f"session_dir={workspace}/pi-sessions",
     ]
     assert output.count("arg=--extension") == 1
-    assert "arg=--no-session" not in output
+    assert "arg=--no-session" in output
     assert "arg=read,bash,grep,find,ls" not in output
     assert not workspace.exists()
     assert not prompt_path.exists()
 
 
-def test_pi_wrapper_preserves_session_trace_and_removes_workspace(tmp_path) -> None:
-    output, workspace, prompt_path, completed = _run_wrapper(tmp_path)
-
+def test_pi_wrapper_loads_shared_observer_without_changing_tools(tmp_path) -> None:
+    collector = tmp_path / "collector.ts"
+    collector.write_text("// synthetic observer\n")
+    output, workspace, prompt_path, completed = _run_wrapper(
+        tmp_path, {"PI_RUN_METRICS_COLLECTOR": str(collector)}
+    )
     assert completed.returncode == 0
-    assert f"session_dir={workspace}/pi-sessions" in output
-    preserved = (
-        tmp_path / "runtime" / "focus" / "agent-sessions"
-        / "abcdefghijklmnopqrstuvwx.jsonl"
-    )
-    assert preserved.is_file()
-    assert (
-        preserved.read_text(encoding="utf-8")
-        == f'{{"type":"session","cwd":"{workspace}"}}\n'
-    )
-    # The disposable workspace and prompt file are still fully cleaned up.
+    assert output.count("arg=--extension") == 2
+    assert f"arg={collector}" in output
+    assert "arg=read,focus_record,submit_focus_answer" in output
+    assert not any(line.startswith("session_dir=") for line in output)
     assert not workspace.exists()
     assert not prompt_path.exists()
-    assert not (tmp_path / "cache").exists() or not any(
-        (tmp_path / "cache").glob("focus-agent-workspaces/*")
+
+
+def test_pi_wrapper_missing_observer_is_nonfatal(tmp_path) -> None:
+    output, workspace, _, completed = _run_wrapper(
+        tmp_path, {"PI_RUN_METRICS_COLLECTOR": "/nonexistent/collector.ts"}
     )
-
-
-def test_pi_wrapper_tolerates_missing_session_preserve_dir(tmp_path) -> None:
-    output, workspace, _prompt_path, completed = _run_wrapper(
-        tmp_path,
-        extra_env={"FOCUS_AGENT_SESSION_PRESERVE_DIR": ""},
-    )
-
     assert completed.returncode == 0
-    assert f"session_dir={workspace}/pi-sessions" in output
-    # Without a preserve directory the session trace is not retained, but the
-    # workspace cleanup still completes cleanly.
+    assert "collector unavailable" in completed.stderr
+    assert "arg=--no-session" in output
     assert not workspace.exists()
-    assert not (tmp_path / "runtime" / "focus" / "agent-sessions").exists()
 
 
 def test_pi_wrapper_rejects_missing_system_prompt(tmp_path) -> None:
