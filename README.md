@@ -1,5 +1,7 @@
 # Focus
 
+The passive metrics wrapper now delegates to sibling `PiRunMetrics/launch_adapter.py` using system Python, with bounded executable-only version/Git probes. Collection requires Pi >=0.87.1; unavailable/incompatible collection warns and fails open without upgrading Pi. The source-project archive default and code-owned tags no longer depend on a staged configuration root or inherited parent-app tags. Existing answer artifacts, model/tools and `--no-session` remain unchanged. New embedded launches use the updated wrapper; use sibling **Pi Run Metrics** for readiness, reports and an existing-session PiPlanner request. No archived data is moved or removed.
+
 <img src="focus.png" alt="Focus icon" width="128" align="left">
 
 Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and page images, navigating official RT/CT citations, searching extracted text, viewing RecordPrep summaries, and asking record-grounded questions through an embedded PI Agent.

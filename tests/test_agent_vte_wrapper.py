@@ -13,6 +13,7 @@ def _fake_agent(tmp_path: Path) -> Path:
     executable.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == --version ]]; then printf '0.87.1\\n'; exit 0; fi
 {
   printf 'cwd=%s\\n' "$PWD"
   printf 'metrics_root=%s\\n' "$PI_RUN_METRICS_ROOT"
@@ -117,12 +118,12 @@ def _run_wrapper(
 
 
 def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
-    output, workspace, prompt_path, completed = _run_wrapper(tmp_path)
+    output, workspace, prompt_path, completed = _run_wrapper(tmp_path, {"PI_RUN_METRICS_ENABLED": "0"})
 
     assert completed.returncode == 0
     assert output == [
         f"cwd={workspace}",
-        f"metrics_root={tmp_path}/.run-metrics/runs",
+        f"metrics_root={WRAPPER.parents[1]}/.run-metrics/runs",
         "arg=--approve",
         "arg=--no-session",
         "arg=--no-extensions",
@@ -194,7 +195,7 @@ def test_pi_wrapper_missing_observer_is_nonfatal(tmp_path) -> None:
         tmp_path, {"PI_RUN_METRICS_COLLECTOR": "/nonexistent/collector.ts"}
     )
     assert completed.returncode == 0
-    assert "collector unavailable" in completed.stderr
+    assert "collection incomplete or unavailable" in completed.stderr
     assert "arg=--no-session" in output
     assert not workspace.exists()
 

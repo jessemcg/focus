@@ -93,26 +93,22 @@ mkdir -p "$workspace/tmp"
 mkdir -p "$workspace/.pi"
 cp -a "$pi_project_dir/." "$workspace/.pi/"
 metrics_args=()
-project_root="$(cd "$pi_project_dir/.." && pwd)"
-export PI_RUN_METRICS_ROOT="${PI_RUN_METRICS_ROOT:-$project_root/.run-metrics/runs}"
-collector="${PI_RUN_METRICS_COLLECTOR:-$project_root/../PiRunMetrics/run-collector.ts}"
-if [[ "${PI_RUN_METRICS_ENABLED:-1}" != 0 ]]; then
-  if [[ "$collector" = /* && -r "$collector" ]]; then
-    metrics_args=(--extension "$collector")
-  else
-    printf 'Pi run metrics: collector unavailable; continuing without collection.\n' >&2
-  fi
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# NUL-delimited metadata only; never eval shell text or pass prompt content.
+metrics_values=()
+helper="$project_root/../PiRunMetrics/launch_adapter.py"
+if [[ -r "$helper" && -x /usr/bin/python3 ]]; then
+  mapfile -d '' -t metrics_values < <(/usr/bin/python3 "$helper" --shell \
+    --project "$project_root" --app focus --workflow record_question -- "${agent_command[@]}")
 fi
-export PI_RUN_METRICS_APP=focus PI_RUN_METRICS_WORKFLOW=record_question
-export PI_RUN_METRICS_REVISION="$(git -C "$project_root" rev-parse HEAD 2>/dev/null || true)"
-if git -C "$project_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  if [[ -n "$(git -C "$project_root" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
-    export PI_RUN_METRICS_DIRTY=1
-  else
-    export PI_RUN_METRICS_DIRTY=0
-  fi
+if (( ${#metrics_values[@]} )); then
+  [[ -z "${metrics_values[0]}" ]] || metrics_args=(--extension "${metrics_values[0]}")
+  for entry in "${metrics_values[@]:1}"; do export "$entry"; done
 else
-  unset PI_RUN_METRICS_DIRTY
+  unset PI_RUN_METRICS_APP PI_RUN_METRICS_WORKFLOW PI_RUN_METRICS_REVISION PI_RUN_METRICS_DIRTY PI_RUN_METRICS_PI_VERSION
+  if [[ "${PI_RUN_METRICS_ENABLED:-1}" != 0 ]]; then
+    printf 'Pi run metrics: collection incomplete or unavailable.\n' >&2
+  fi
 fi
 cd "$workspace"
 export TMPDIR="$workspace/tmp"
