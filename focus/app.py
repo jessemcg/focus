@@ -40,6 +40,8 @@ from .agent_followup import (
     text_transport_error,
 )
 from .answer_metadata import parse_answer_metadata
+from .answer_presentation import answer_context_label
+from .reading_position import AnswerPositionCache
 from .saved_answers import (
     AgentAnswerSnapshot,
     SavedAnswer,
@@ -326,6 +328,17 @@ class Focus(Adw.Application):
         self._saved_answers_generation = 0
         self._saved_answers_queue: "queue.Queue[Any]" = queue.Queue()
         self._saved_answers_worker: threading.Thread | None = None
+        self._answer_positions = AnswerPositionCache(ANSWER_POSITION_MAX_CAPACITY)
+        self._case_generation = 0
+        self._answer_position_generation = 0
+        self._answer_navigation_generation = 0
+        self._answer_position_restore_source_id: int | None = None
+        self._answer_position_pending: tuple[int, str, int, float, int] | None = None
+        self._answer_position_restore_attempts = 0
+        self._answer_position_restore_geometry: tuple[float, float, float] | None = None
+        self._answer_position_restore_stable_passes = 0
+        self._agent_context_label: Gtk.Label | None = None
+        self._scroller_height_bounds: dict[int, tuple[int, int]] = {}
         self._view_state = FocusViewState()
 
     @property
@@ -1007,7 +1020,7 @@ class Focus(Adw.Application):
         self._agent_submit_button = None
         self._refresh_agent_followup_state()
 
-        agent_output_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        agent_output_header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         agent_output_header.add_css_class("focus-agent-output-header")
         agent_output_header.set_hexpand(True)
         agent_output_header.set_visible(False)
@@ -1051,6 +1064,17 @@ class Focus(Adw.Application):
         self._latest_answer_button.connect("clicked", self._on_latest_answer_clicked)
         agent_subview_strip.append(self._latest_answer_button)
         agent_output_header.append(agent_subview_strip)
+
+        # Compact context for the *displayed* snapshot. It lives with the
+        # answer header rather than the shared transient status label so
+        # switching to summaries and back cannot erase it.
+        self._agent_context_label = Gtk.Label(label="", xalign=0)
+        self._agent_context_label.add_css_class("focus-agent-answer-context")
+        self._agent_context_label.set_hexpand(True)
+        self._agent_context_label.set_wrap(True)
+        self._agent_context_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self._agent_context_label.set_visible(False)
+        agent_output_header.append(self._agent_context_label)
 
         self._agent_output_header = agent_output_header
         agent_view.append(agent_output_header)
@@ -1560,14 +1584,20 @@ class Focus(Adw.Application):
             scroller.set_visible(True)
             scroller.set_size_request(-1, -1)
             scroller.set_propagate_natural_height(True)
-            scroller.set_min_content_height(EMBEDDED_AI_OUTPUT_MIN_HEIGHT)
-            scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
+            self._apply_scroller_bounds(
+                scroller,
+                EMBEDDED_AI_OUTPUT_MIN_HEIGHT,
+                AI_OUTPUT_MAX_HEIGHT,
+            )
         if self._summary_scroller:
             self._summary_scroller.set_visible(True)
             self._summary_scroller.set_size_request(-1, -1)
             self._summary_scroller.set_propagate_natural_height(True)
-            self._summary_scroller.set_min_content_height(EMBEDDED_AI_OUTPUT_MIN_HEIGHT)
-            self._summary_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
+            self._apply_scroller_bounds(
+                self._summary_scroller,
+                EMBEDDED_AI_OUTPUT_MIN_HEIGHT,
+                AI_OUTPUT_MAX_HEIGHT,
+            )
 
     def _reset_embedded_ai_panel_sizing(self) -> None:
         if self._ai_panel_revealer:
@@ -1644,9 +1674,29 @@ class Focus(Adw.Application):
         min_height: int,
         max_height: int,
     ) -> None:
+        # Clear the minimum before raising the maximum: an inactive scroller
+        # can have a maximum of zero, so setting the minimum first would
+        # violate GTK's min <= max invariant and emit a critical.
         scroller.set_min_content_height(-1)
         scroller.set_max_content_height(max_height)
         scroller.set_min_content_height(min_height)
+
+    def _apply_scroller_bounds(
+        self,
+        scroller: Gtk.ScrolledWindow | None,
+        min_height: int,
+        max_height: int,
+    ) -> None:
+        """Apply bounds through the invariant-safe helper, skipping no-ops."""
+        if scroller is None:
+            return
+        min_height = max(0, int(min_height))
+        max_height = max(min_height, int(max_height))
+        bounds = (min_height, max_height)
+        if self._scroller_height_bounds.get(id(scroller)) == bounds:
+            return
+        self._scroller_height_bounds[id(scroller)] = bounds
+        self._set_scroller_content_height_bounds(scroller, min_height, max_height)
 
     def _sync_embedded_ai_output_scrollers(self, max_height: int) -> None:
         active_scroller, has_output = self._active_ai_output_scroller()
@@ -1658,13 +1708,9 @@ class Focus(Adw.Application):
             scroller.set_size_request(-1, -1)
             if show_output:
                 min_height = self._embedded_ai_output_min_height(max_height)
-                self._set_scroller_content_height_bounds(
-                    scroller,
-                    min_height,
-                    max(min_height, max_height),
-                )
+                self._apply_scroller_bounds(scroller, min_height, max_height)
             else:
-                self._set_scroller_content_height_bounds(
+                self._apply_scroller_bounds(
                     scroller,
                     AI_OUTPUT_COLLAPSED_HEIGHT,
                     AI_OUTPUT_COLLAPSED_HEIGHT,
@@ -1677,13 +1723,13 @@ class Focus(Adw.Application):
             self._summary_scroller.set_size_request(-1, -1)
             if show_output:
                 min_height = self._embedded_ai_output_min_height(max_height)
-                self._set_scroller_content_height_bounds(
+                self._apply_scroller_bounds(
                     self._summary_scroller,
                     min_height,
-                    max(min_height, max_height),
+                    max_height,
                 )
             else:
-                self._set_scroller_content_height_bounds(
+                self._apply_scroller_bounds(
                     self._summary_scroller,
                     AI_OUTPUT_COLLAPSED_HEIGHT,
                     AI_OUTPUT_COLLAPSED_HEIGHT,
@@ -1747,12 +1793,13 @@ class Focus(Adw.Application):
     def _embedded_ai_panel_chrome_height(self) -> int:
         if not self._ai_panel_root or not self._ai_view_stack:
             return 0
-        body_was_visible = self._ai_view_stack.get_visible()
-        self._ai_view_stack.set_visible(False)
-        try:
-            return self._widget_natural_height(self._ai_panel_root)
-        finally:
-            self._ai_view_stack.set_visible(body_was_visible)
+        # Measure the chrome without hiding the body: the body height is
+        # simply the remainder of the panel's natural height. Toggling the
+        # view stack's visibility would unmap and remap every child and
+        # trigger spurious text renders.
+        total = self._widget_natural_height(self._ai_panel_root)
+        body = self._widget_natural_height(self._ai_view_stack)
+        return max(0, total - body)
 
     def _active_ai_body_fixed_height(self, active_scroller: Gtk.ScrolledWindow) -> int:
         if not self._ai_view_stack:
@@ -1760,17 +1807,12 @@ class Focus(Adw.Application):
         active_child = self._ai_view_stack.get_visible_child()
         if not active_child or not active_scroller.get_visible():
             return 0
-        active_scroller.set_visible(False)
-        try:
-            fixed_height = self._widget_natural_height(active_child)
-        finally:
-            active_scroller.set_visible(True)
-        if fixed_height <= 0:
-            return 0
-        parent = active_scroller.get_parent()
-        if isinstance(parent, Gtk.Box):
-            fixed_height += max(0, parent.get_spacing())
-        return fixed_height
+        # The fixed body height is the active view's natural height minus the
+        # scrolling output; measuring both while visible avoids unmapping the
+        # scroller and rebuilding its buffer.
+        total = self._widget_natural_height(active_child)
+        body = self._widget_natural_height(active_scroller)
+        return max(0, total - body)
 
     def _update_embedded_ai_panel_height(self, *, force: bool = False) -> None:
         if not self.win or not self._ai_panel_root or not self._ai_view_stack:
@@ -1869,6 +1911,7 @@ class Focus(Adw.Application):
         self._stop_agent_answer_polling()
         self._cleanup_agent_answer_artifact()
         self._reset_saved_answers_state()
+        self._clear_answer_reading_positions()
         self._cancel_pending_summary_scroll_restore()
         self._page_citation_range_start = None
         self._sync_citation_buttons()
@@ -1916,6 +1959,11 @@ class Focus(Adw.Application):
 
     def _persist_active_view_state(self) -> None:
         state = self._current_view_state()
+        if (
+            self._ai_active_view == AI_VIEW_AGENT_QA
+            and self._agent_subview_name == AGENT_SUBVIEW_ANSWER
+        ):
+            self._capture_agent_answer_position()
         if (
             self._ai_active_view == AI_VIEW_FILE
             and self._summary_scroller
@@ -2874,14 +2922,19 @@ class Focus(Adw.Application):
             if subview_name in {AGENT_SUBVIEW_ANSWER, AGENT_SUBVIEW_SESSION}
             else AGENT_SUBVIEW_SESSION
         )
+        if target != AGENT_SUBVIEW_ANSWER and self._agent_subview_name == AGENT_SUBVIEW_ANSWER:
+            self._capture_agent_answer_position()
         self._agent_subview_name = target
+        if target == AGENT_SUBVIEW_ANSWER:
+            self._sync_agent_answer_buffer()
         if self._agent_answer_scroller:
             self._agent_answer_scroller.set_visible(target == AGENT_SUBVIEW_ANSWER)
             if target == AGENT_SUBVIEW_ANSWER:
-                self._agent_answer_scroller.set_min_content_height(
-                    EMBEDDED_AI_OUTPUT_MIN_HEIGHT
+                self._apply_scroller_bounds(
+                    self._agent_answer_scroller,
+                    EMBEDDED_AI_OUTPUT_MIN_HEIGHT,
+                    AI_OUTPUT_MAX_HEIGHT,
                 )
-                self._agent_answer_scroller.set_max_content_height(AI_OUTPUT_MAX_HEIGHT)
         self._sync_agent_session_widget_visibility()
         self._agent_subview_toggle_guard = True
         try:
@@ -2899,8 +2952,11 @@ class Focus(Adw.Application):
                     button.remove_css_class("focus-ai-view-active")
         finally:
             self._agent_subview_toggle_guard = False
+        if target == AGENT_SUBVIEW_ANSWER:
+            self._restore_agent_answer_position_if_current()
         if self._ai_panel_revealer and self._ai_panel_revealer.get_reveal_child():
             self._update_embedded_ai_panel_height(force=True)
+        self._refresh_answer_action_state()
         self._refresh_search_highlighted_button()
 
     def _on_agent_subview_button_toggled(
@@ -3475,11 +3531,44 @@ class Focus(Adw.Application):
             buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_iter_at_offset(end))
 
     def _refresh_ai_quote_colors(self) -> None:
-        if self._summary_view and self._summary_raw:
-            self._apply_summary_links(self._summary_raw)
+        # Theme changes update the existing span tag colors in place. Rebuilding
+        # the buffers here would discard selection, search highlights, and the
+        # validated structured spans of a schema-v2 summary.
+        if self._summary_view and self._summary_buffer:
+            self._recolor_link_tags(
+                self._summary_link_tags,
+                self._summary_link_tag_lookup,
+                self._resolve_ai_quote_color(self._summary_view),
+            )
+            self._ensure_summary_emphasis_tag(self._summary_buffer)
         for state in self._ai_outputs.values():
-            if state.raw:
-                self._apply_ai_output_links(state.raw, state)
+            if state.buffer:
+                self._recolor_link_tags(
+                    state.link_tags,
+                    state.link_lookup,
+                    self._resolve_ai_quote_color(state.view),
+                )
+
+    @staticmethod
+    def _recolor_link_tags(
+        link_tags: list[Gtk.TextTag],
+        link_lookup: dict[Gtk.TextTag, tuple[str, str]],
+        quote_color: Gdk.RGBA,
+    ) -> None:
+        if not link_tags:
+            return
+        page_link_color = Gdk.RGBA()
+        brighten = 0.18
+        page_link_color.red = min(1.0, quote_color.red + brighten)
+        page_link_color.green = min(1.0, quote_color.green + brighten)
+        page_link_color.blue = min(1.0, quote_color.blue + brighten)
+        page_link_color.alpha = 1.0
+        for tag in link_tags:
+            kind = link_lookup.get(tag, ("", ""))[0]
+            tag.set_property(
+                "foreground-rgba",
+                page_link_color if kind == "page" else quote_color,
+            )
 
     @staticmethod
     def _set_category_class(widget: Gtk.Widget, result: Classification) -> None:
@@ -3517,15 +3606,17 @@ class Focus(Adw.Application):
         return False
 
     def _on_ai_output_view_mapped(self, _view: Gtk.TextView, view_name: str) -> None:
+        # Mapping must not rebuild content. The buffer was rendered when the
+        # output changed; only restore any reading position and cursor state.
         state = self._ai_outputs.get(view_name)
-        if not state or not state.raw:
+        if not state:
             return
-        self._apply_ai_output_links(state.raw, state)
+        if view_name == AI_VIEW_AGENT_QA:
+            self._restore_agent_answer_position_if_current()
 
     def _on_summary_view_mapped(self, _view: Gtk.TextView) -> None:
-        if not self._summary_raw:
-            return
-        self._apply_summary_links(self._summary_raw)
+        # Mapping must not rebuild the summary buffer. Schema-v2 spans were
+        # rendered with the page; only the reading position is restored here.
         if self._summary_loaded_path:
             self._restore_summary_position(self._summary_loaded_path)
 
@@ -4166,7 +4257,16 @@ class Focus(Adw.Application):
             return
         state = self._current_view_state()
         if self._summary_is_paged():
-            if state.summary_loaded_path == path and state.summary_current_page:
+            if (
+                state.summary_loaded_path == path
+                and state.summary_current_page
+                and (
+                    state.summary_current_page != self._summary_edition_page
+                    or not self._summary_has_text()
+                )
+            ):
+                # Only render when the current page differs; re-showing the
+                # view must not rebuild an unchanged structured page.
                 self._display_summary_page(state.summary_current_page)
             return
         if state.summary_loaded_path == path and state.summary_scroll_fraction is not None:
@@ -6069,6 +6169,7 @@ class Focus(Adw.Application):
         self._cleanup_agent_answer_artifact()
         self._stop_ai_panel_resize_tracking()
         self._cancel_pending_summary_scroll_restore()
+        self._cancel_agent_answer_position_restore()
         if self._image_print_window:
             self._image_print_window.destroy()
             self._image_print_window = None
@@ -6530,6 +6631,8 @@ class Focus(Adw.Application):
             self._ai_panel_revealer
             and self._ai_panel_revealer.get_reveal_child()
         )
+        if not visible and was_visible and self._ai_active_view == AI_VIEW_AGENT_QA:
+            self._capture_agent_answer_position()
         if not visible and was_visible and self._ai_active_view == AI_VIEW_FILE:
             self._capture_summary_scroll_position()
             fraction = self._current_view_state().summary_scroll_fraction
@@ -6547,6 +6650,8 @@ class Focus(Adw.Application):
                 self._reset_embedded_ai_panel_sizing()
         if visible and self._ai_active_view == AI_VIEW_FILE:
             self._restore_summary_scroll_position(self._summary_loaded_path)
+        elif visible and self._ai_active_view == AI_VIEW_AGENT_QA:
+            self._restore_agent_answer_position_if_current()
         self._current_view_state().ai_panel_visible = visible
         self._update_ai_panel_toggle(visible)
         self._refresh_search_highlighted_button()
@@ -6593,6 +6698,9 @@ class Focus(Adw.Application):
         if target not in self._ai_outputs and target != AI_VIEW_FILE:
             target = AI_VIEW_SUMMARIZE
         previous = self._ai_active_view
+        if previous == AI_VIEW_AGENT_QA and target != AI_VIEW_AGENT_QA:
+            # Capture before the answer scroller is collapsed.
+            self._capture_agent_answer_position()
         if previous == AI_VIEW_FILE and target != AI_VIEW_FILE:
             # Capture before the outgoing summary scroller is collapsed.
             self._capture_summary_scroll_position()
@@ -6623,6 +6731,8 @@ class Focus(Adw.Application):
         if target == AI_VIEW_FILE:
             self._restore_summary_scroll_position(self._summary_loaded_path)
             self._update_summary_progress_label()
+        elif target == AI_VIEW_AGENT_QA:
+            self._restore_agent_answer_position_if_current()
         elif target == AI_VIEW_SUMMARIZE:
             self._maybe_prefill_sum_range_for_current_page()
         self._refresh_search_highlighted_button()
@@ -7154,6 +7264,7 @@ class Focus(Adw.Application):
         return Path(tempfile.mkdtemp(prefix="workspace.", dir=parent))
 
     def _clear_agent_answer(self) -> None:
+        self._capture_agent_answer_position()
         self._agent_last_answer_text = ""
         self._agent_answer_status = ""
         self._agent_live_snapshot = None
@@ -7215,6 +7326,10 @@ class Focus(Adw.Application):
         *,
         is_saved: bool,
     ) -> None:
+        # Capture the outgoing snapshot's reading position before its content
+        # is replaced, then invalidate any pending delayed navigation.
+        self._capture_agent_answer_position()
+        self._answer_navigation_generation += 1
         self._agent_displayed_snapshot = snapshot
         self._agent_displayed_is_saved = is_saved
         state = self._get_ai_output_state(AI_VIEW_AGENT_QA)
@@ -7222,7 +7337,11 @@ class Focus(Adw.Application):
         self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = snapshot.markdown
         self._apply_ai_output_links(snapshot.markdown, state)
         self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
-        self._scroll_agent_answer_to_top()
+        position = self._answer_positions.get(snapshot.answer_id)
+        if position is not None:
+            self._restore_agent_answer_position(snapshot.answer_id, position=position)
+        else:
+            self._scroll_agent_answer_to_top()
         self._sync_agent_output_header_state()
         self._refresh_answer_action_state()
         self._queue_embedded_ai_panel_height_update(after_render=True)
@@ -7234,6 +7353,224 @@ class Focus(Adw.Application):
         adjustment = state.scroller.get_vadjustment()
         if adjustment is not None:
             GLib.idle_add(adjustment.set_value, adjustment.get_lower())
+
+    # -- answer reading positions ---------------------------------------
+
+    def _capture_text_position(
+        self,
+        view: Gtk.TextView | None,
+        scroller: Gtk.ScrolledWindow | None,
+    ) -> tuple[int, float]:
+        anchor = 0
+        fraction = 0.0
+        if view is not None:
+            buffer = view.get_buffer()
+            if buffer is not None:
+                result = view.get_iter_at_location(0, 0)
+                if isinstance(result, tuple):
+                    success, iter_ = result
+                else:
+                    success, iter_ = True, result
+                if success and iter_ is not None:
+                    anchor = max(0, int(iter_.get_offset()))
+        if scroller is not None:
+            vadj = scroller.get_vadjustment()
+            if vadj is not None:
+                total = vadj.get_upper() - vadj.get_lower() - vadj.get_page_size()
+                if total > 0:
+                    fraction = (vadj.get_value() - vadj.get_lower()) / total
+        return anchor, fraction
+
+    def _agent_answer_position_value(self) -> tuple[int, float] | None:
+        if self._agent_subview_name != AGENT_SUBVIEW_ANSWER:
+            return None
+        snapshot = self._agent_displayed_snapshot
+        if snapshot is None:
+            return None
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        if state is None:
+            return None
+        return self._capture_text_position(state.view, state.scroller)
+
+    def _sync_agent_answer_buffer(self) -> None:
+        """Render the displayed snapshot only when its content actually differs."""
+        snapshot = self._agent_displayed_snapshot
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        if snapshot is None or state is None or state.raw == snapshot.markdown:
+            return
+        state.raw = snapshot.markdown
+        self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = snapshot.markdown
+        self._apply_ai_output_links(snapshot.markdown, state)
+
+    def _capture_agent_answer_position(self) -> None:
+        snapshot = self._agent_displayed_snapshot
+        if snapshot is None:
+            return
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        if state is None or state.raw != snapshot.markdown:
+            # The buffer still shows a different snapshot (for example after a
+            # Session choice adopted the live identity); do not record its
+            # scroll position under the wrong answer ID.
+            return
+        captured = self._agent_answer_position_value()
+        if captured is None:
+            return
+        anchor, fraction = captured
+        self._answer_positions.capture(
+            snapshot.answer_id,
+            anchor_offset=anchor,
+            scroll_fraction=fraction,
+        )
+
+    def _cancel_agent_answer_position_restore(self) -> None:
+        if self._answer_position_restore_source_id is not None:
+            GLib.source_remove(self._answer_position_restore_source_id)
+        self._answer_position_restore_source_id = None
+        self._answer_position_pending = None
+        self._answer_position_restore_attempts = 0
+        self._answer_position_restore_geometry = None
+        self._answer_position_restore_stable_passes = 0
+
+    def _restore_agent_answer_position(self, answer_id: str, *, position: Any = None) -> None:
+        if position is None:
+            position = self._answer_positions.get(answer_id)
+        if position is None:
+            return
+        pending = self._answer_position_pending
+        if (
+            pending is not None
+            and pending[0] == self._case_generation
+            and pending[1] == answer_id
+        ):
+            return
+        self._cancel_agent_answer_position_restore()
+        self._answer_position_generation += 1
+        self._answer_position_pending = (
+            self._case_generation,
+            answer_id,
+            position.anchor_offset,
+            position.scroll_fraction,
+            self._answer_position_generation,
+        )
+        self._answer_position_restore_source_id = GLib.timeout_add(
+            ANSWER_POSITION_RESTORE_INTERVAL_MS,
+            self._apply_pending_agent_answer_position_restore,
+        )
+
+    def _restore_agent_answer_position_if_current(self) -> None:
+        snapshot = self._agent_displayed_snapshot
+        if snapshot is None or self._agent_subview_name != AGENT_SUBVIEW_ANSWER:
+            return
+        self._restore_agent_answer_position(snapshot.answer_id)
+
+    def _apply_pending_agent_answer_position_restore(self) -> bool:
+        pending = self._answer_position_pending
+        if pending is None:
+            self._answer_position_restore_source_id = None
+            return False
+        case_generation, answer_id, anchor, fraction, nav_generation = pending
+        snapshot = self._agent_displayed_snapshot
+        if (
+            case_generation != self._case_generation
+            or nav_generation != self._answer_position_generation
+            or snapshot is None
+            or snapshot.answer_id != answer_id
+            or self._agent_subview_name != AGENT_SUBVIEW_ANSWER
+        ):
+            self._cancel_agent_answer_position_restore()
+            return False
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        scroller = state.scroller if state else None
+        view = state.view if state else None
+        if (
+            scroller is None
+            or view is None
+            or not scroller.get_visible()
+            or not view.get_mapped()
+        ):
+            self._answer_position_restore_attempts += 1
+            if (
+                self._answer_position_restore_attempts
+                >= ANSWER_POSITION_RESTORE_MAX_ATTEMPTS
+            ):
+                self._cancel_agent_answer_position_restore()
+                return False
+            return True
+
+        vadj = scroller.get_vadjustment()
+        lower = upper = page_size = 0.0
+        if vadj is not None:
+            lower = vadj.get_lower()
+            upper = vadj.get_upper()
+            page_size = vadj.get_page_size()
+        geometry = (lower, upper, page_size)
+        if geometry == self._answer_position_restore_geometry:
+            self._answer_position_restore_stable_passes += 1
+        else:
+            self._answer_position_restore_geometry = geometry
+            self._answer_position_restore_stable_passes = 1
+        self._answer_position_restore_attempts += 1
+
+        applied_anchor = False
+        buffer = view.get_buffer()
+        if buffer is not None and anchor > 1:
+            char_count = buffer.get_char_count()
+            if char_count > 0:
+                target = min(anchor, char_count - 1)
+                iter_ = buffer.get_iter_at_offset(target)
+                view.scroll_to_iter(iter_, 0.0, True, 0.0, 0.0)
+                applied_anchor = True
+        if not applied_anchor and vadj is not None:
+            total = upper - lower - page_size
+            if total > 0:
+                vadj.set_value(lower + fraction * total)
+
+        complete = (
+            self._answer_position_restore_stable_passes
+            >= ANSWER_POSITION_RESTORE_STABLE_PASSES
+        )
+        exhausted = (
+            self._answer_position_restore_attempts
+            >= ANSWER_POSITION_RESTORE_MAX_ATTEMPTS
+        )
+        if not complete and not exhausted:
+            return True
+        self._answer_position_restore_source_id = None
+        self._answer_position_pending = None
+        self._answer_position_restore_geometry = None
+        self._answer_position_restore_stable_passes = 0
+        self._answer_position_restore_attempts = 0
+        return False
+
+    def _clear_answer_reading_positions(self) -> None:
+        self._cancel_agent_answer_position_restore()
+        self._answer_positions.clear()
+        self._case_generation += 1
+
+    def _update_agent_context_line(self) -> None:
+        label = self._agent_context_label
+        if label is None:
+            return
+        snapshot = self._agent_displayed_snapshot
+        if snapshot is None or self._agent_subview_name != AGENT_SUBVIEW_ANSWER:
+            label.set_visible(False)
+            return
+        text = answer_context_label(
+            is_saved=self._agent_displayed_is_saved,
+            saved_at=snapshot.saved_at,
+            status=snapshot.status,
+            stop_reason=snapshot.stop_reason,
+            capture=snapshot.capture,
+        )
+        label.set_text(text)
+        label.set_visible(bool(text))
+        question = (snapshot.question or "").strip()
+        if question:
+            label.set_tooltip_text(question)
+            self._set_accessible_label(label, f"{text}. Original question: {question}")
+        else:
+            label.set_tooltip_text(None)
+            self._set_accessible_label(label, text)
 
     def _refresh_answer_action_state(self) -> None:
         snapshot = self._agent_displayed_snapshot
@@ -7252,6 +7589,14 @@ class Focus(Adw.Application):
             else:
                 button.set_label("Saved" if is_saved else "Save Answer")
                 button.set_sensitive(has_answer and not is_saved)
+        answer_button = getattr(self, "_agent_answer_button", None)
+        if answer_button is not None:
+            if self._agent_displayed_is_saved:
+                tooltip = "Show the saved Agent answer currently being read"
+            else:
+                tooltip = "Show the latest linked Agent final answer"
+            answer_button.set_tooltip_text(tooltip)
+            self._set_accessible_label(answer_button, tooltip)
         latest = getattr(self, "_latest_answer_button", None)
         if latest is not None:
             live = self._agent_live_snapshot
@@ -7263,12 +7608,25 @@ class Focus(Adw.Application):
             else:
                 latest.set_tooltip_text("Return to the latest live Agent answer")
             latest.set_label(label)
+        self._update_agent_context_line()
 
     def _leave_saved_answer_view(self) -> None:
         if not self._agent_displayed_is_saved:
             return
-        self._agent_displayed_is_saved = False
         self._latest_answer_pending = False
+        live = self._agent_live_snapshot
+        if live is None:
+            # Nothing live to synchronize to; keep the historical identity
+            # intact so Answer cannot mislabel it as the latest answer.
+            self._refresh_answer_action_state()
+            return
+        # Explicitly returning to the live workflow synchronizes the displayed
+        # snapshot and its action state together.
+        self._capture_agent_answer_position()
+        self._answer_navigation_generation += 1
+        self._agent_displayed_is_saved = False
+        self._agent_displayed_snapshot = live
+        # The buffer is synchronized lazily when Answer is shown again.
         self._refresh_answer_action_state()
 
     def _on_latest_answer_clicked(self, _button: Gtk.Button) -> None:
@@ -7379,6 +7737,9 @@ class Focus(Adw.Application):
     def _on_saved_answer_selected(self, answer_id: str) -> None:
         if self._saved_answers_popover is not None:
             self._saved_answers_popover.close()
+        # Any later user choice invalidates this selection's delayed load.
+        self._answer_navigation_generation += 1
+        navigation = self._answer_navigation_generation
         for answer in self._saved_answers_listing.answers:
             if answer.answer_id == answer_id:
                 self._reveal_agent_answer_view()
@@ -7386,13 +7747,13 @@ class Focus(Adw.Application):
                     AgentAnswerSnapshot.from_saved(answer),
                     is_saved=True,
                 )
-                self._update_ai_status(
-                    f"Saved answer from {answer.saved_at}.", spinning=False
-                )
                 return
         root = self._record_layout.root
 
         def _apply(result: SavedAnswerResult, error: BaseException | None) -> None:
+            if navigation != self._answer_navigation_generation:
+                # A later navigation choice already superseded this load.
+                return
             if error is not None or result is None or result.answer is None:
                 self._ai_transient_toast("That saved answer could not be opened.")
                 return
@@ -7442,6 +7803,7 @@ class Focus(Adw.Application):
                 self._ai_transient_toast("The saved answer could not be deleted.")
                 return
             self._agent_saved_ids.discard(answer_id)
+            self._answer_positions.discard(answer_id)
             self._reload_saved_answers()
             displayed = self._agent_displayed_snapshot
             if displayed is not None and displayed.origin == "saved" and displayed.answer_id == answer_id:

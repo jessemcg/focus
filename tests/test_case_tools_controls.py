@@ -303,6 +303,87 @@ class SummaryActionHarness:
         self.page_control_updates += 1
 
 
+class FakeMeasureWidget:
+    def __init__(self, natural: int, *, visible: bool = True) -> None:
+        self.natural = natural
+        self.visible = visible
+        self.measure_calls = 0
+
+    def get_visible(self) -> bool:
+        return self.visible
+
+    def set_visible(self, visible: bool) -> None:
+        self.visible = visible
+
+    def get_width(self) -> int:
+        return 100
+
+    def get_height(self) -> int:
+        return self.natural
+
+    def measure(self, _orientation: object, _for_size: int) -> tuple[int, int, int, int]:
+        self.measure_calls += 1
+        return (0, self.natural, -1, -1)
+
+
+class FakeVisibleChildStack:
+    def __init__(self, child: FakeMeasureWidget) -> None:
+        self._child = child
+
+    def get_visible_child(self) -> FakeMeasureWidget:
+        return self._child
+
+
+class EnforcedScrollerBounds:
+    """A fake scroller that enforces GTK's min <= max invariant."""
+
+    def __init__(self) -> None:
+        self.minimum = 0
+        self.maximum = -1
+        self.calls: list[tuple[str, int]] = []
+
+    def set_min_content_height(self, height: int) -> None:
+        if height >= 0 and self.maximum >= 0:
+            assert height <= self.maximum, (height, self.maximum)
+        self.calls.append(("min", height))
+        self.minimum = height
+
+    def set_max_content_height(self, height: int) -> None:
+        if height >= 0 and self.minimum >= 0:
+            assert self.minimum <= height, (self.minimum, height)
+        self.calls.append(("max", height))
+        self.maximum = height
+
+
+class ScrollerBoundsHarness:
+    _apply_scroller_bounds = Focus._apply_scroller_bounds
+    _set_scroller_content_height_bounds = staticmethod(
+        Focus._set_scroller_content_height_bounds
+    )
+
+    def __init__(self) -> None:
+        self._scroller_height_bounds: dict[int, tuple[int, int]] = {}
+
+
+class ChromeMeasureHarness:
+    _embedded_ai_panel_chrome_height = Focus._embedded_ai_panel_chrome_height
+    _widget_natural_height = staticmethod(Focus._widget_natural_height)
+
+    def __init__(self) -> None:
+        self._ai_panel_root = FakeMeasureWidget(320)
+        self._ai_view_stack = FakeMeasureWidget(200)
+
+
+class BodyMeasureHarness:
+    _active_ai_body_fixed_height = Focus._active_ai_body_fixed_height
+    _widget_natural_height = staticmethod(Focus._widget_natural_height)
+
+    def __init__(self) -> None:
+        self.child = FakeMeasureWidget(260)
+        self._ai_view_stack = FakeVisibleChildStack(self.child)
+        self.scroller = FakeMeasureWidget(150)
+
+
 class BodyVisibilityHarness:
     _active_ai_body_has_content = Focus._active_ai_body_has_content
 
@@ -615,6 +696,51 @@ def test_scroller_bounds_clear_the_minimum_before_changing_the_maximum() -> None
     Focus._set_scroller_content_height_bounds(scroller, 36, 207)
 
     assert scroller.calls == [("min", -1), ("max", 207), ("min", 36)]
+
+
+def test_scroller_bounds_never_violate_gtk_invariant() -> None:
+    harness = ScrollerBoundsHarness()
+    scroller = EnforcedScrollerBounds()
+
+    # Simulate the reported defect path: an inactive scroller whose maximum
+    # is currently zero, then a request to raise the minimum above it.
+    Focus._set_scroller_content_height_bounds(scroller, 0, 0)
+    harness._apply_scroller_bounds(scroller, 36, 480)
+    harness._apply_scroller_bounds(scroller, 140, 140)
+
+    assert (scroller.minimum, scroller.maximum) == (140, 140)
+
+
+def test_scroller_bounds_skip_unchanged_repeated_writes() -> None:
+    harness = ScrollerBoundsHarness()
+    scroller = EnforcedScrollerBounds()
+
+    harness._apply_scroller_bounds(scroller, 36, 207)
+    calls_after_first = list(scroller.calls)
+    harness._apply_scroller_bounds(scroller, 36, 207)
+
+    assert scroller.calls == calls_after_first
+    assert calls_after_first == [("min", -1), ("max", 207), ("min", 36)]
+
+
+def test_panel_chrome_measurement_does_not_hide_the_body() -> None:
+    harness = ChromeMeasureHarness()
+
+    chrome = harness._embedded_ai_panel_chrome_height()
+
+    assert chrome == 120
+    assert harness._ai_view_stack.visible is True
+    assert harness._ai_view_stack.measure_calls >= 1
+
+
+def test_body_fixed_height_measurement_does_not_hide_the_scroller() -> None:
+    harness = BodyMeasureHarness()
+
+    fixed = harness._active_ai_body_fixed_height(harness.scroller)
+
+    assert fixed == 110
+    assert harness.scroller.visible is True
+    assert harness.scroller.measure_calls >= 1
 
 
 def test_post_render_resize_queues_layout_then_measures_once() -> None:

@@ -325,6 +325,10 @@ EMBEDDED_AI_OUTPUT_MIN_HEIGHT = 36
 SUMMARY_SCROLL_RESTORE_INTERVAL_MS = 25
 SUMMARY_SCROLL_RESTORE_MAX_ATTEMPTS = 16
 SUMMARY_SCROLL_RESTORE_STABLE_PASSES = 2
+ANSWER_POSITION_MAX_CAPACITY = 100
+ANSWER_POSITION_RESTORE_INTERVAL_MS = 25
+ANSWER_POSITION_RESTORE_MAX_ATTEMPTS = 16
+ANSWER_POSITION_RESTORE_STABLE_PASSES = 2
 AI_OUTPUT_LINE_HEIGHT = 1.25
 PAGE_LINK_COLOR = "#1a5fb4"
 AI_BLOCKQUOTE_LEFT_MARGIN = 24
@@ -2807,6 +2811,11 @@ button.focus-agent-submit-button {
 
 box.focus-agent-output-header {
   margin-top: 2px;
+}
+
+label.focus-agent-answer-context {
+  color: alpha(@window_fg_color, 0.62);
+  font-size: 0.9rem;
 }
 
 .focus-agent-terminal-frame {

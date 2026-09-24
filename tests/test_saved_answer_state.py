@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 
 from focus.app import Focus
-from focus.saved_answers import AgentAnswerSnapshot, SavedAnswerListing, new_answer_id
+from focus.core import AGENT_SUBVIEW_ANSWER
+from focus.saved_answers import (
+    AgentAnswerSnapshot,
+    SavedAnswerListing,
+    SavedAnswerResult,
+    new_answer_id,
+)
 from test_agent_answer_polling import (
     AgentAnswerPollHarness,
     _artifact_payload,
@@ -43,10 +51,15 @@ class StateHarness(AgentAnswerPollHarness):
         self._latest_answer_button = _FakeButton()
         self._saved_answers_popover = None
         self._saved_answers_listing = SavedAnswerListing()
+        self._record_layout = SimpleNamespace(root=Path("/tmp/focus-synthetic"))
         self.revealed = 0
+        self.submitted: list[tuple[str, object]] = []
 
     def _reveal_agent_answer_view(self) -> None:
         self.revealed += 1
+
+    def _submit_saved_answers_task(self, kind, operation, callback) -> None:  # type: ignore[no-untyped-def]
+        self.submitted.append((kind, callback))
 
 
 def _saved_snapshot(markdown: str = "Saved answer text.\n") -> AgentAnswerSnapshot:
@@ -117,6 +130,77 @@ def test_save_button_tracks_displayed_snapshot(tmp_path) -> None:
     harness._display_agent_snapshot(_saved_snapshot(), is_saved=True)
     assert harness._save_answer_button.label == "Saved"
     assert harness._save_answer_button.sensitive is False
+
+
+def test_session_selection_synchronizes_to_live_without_mislabeling(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    saved = _saved_snapshot()
+    harness._display_agent_snapshot(saved, is_saved=True)
+    live = replace(
+        saved,
+        answer_id=new_answer_id(),
+        markdown="Live revision.\n",
+        origin="live",
+        saved_at=None,
+    )
+    harness._agent_live_snapshot = live
+
+    harness._leave_saved_answer_view()
+
+    assert harness._agent_displayed_snapshot is live
+    assert harness._agent_displayed_is_saved is False
+    # The buffer is synchronized lazily; it must not keep the saved text.
+    harness._sync_agent_answer_buffer()
+    assert harness._output_state.raw == live.markdown
+
+
+def test_session_selection_without_live_keeps_saved_identity(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    saved = _saved_snapshot()
+    harness._display_agent_snapshot(saved, is_saved=True)
+    harness._agent_live_snapshot = None
+
+    harness._leave_saved_answer_view()
+
+    assert harness._agent_displayed_snapshot is saved
+    assert harness._agent_displayed_is_saved is True
+
+
+def test_late_saved_answer_load_is_rejected(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    harness._on_saved_answer_selected("f" * 32)
+    assert harness.submitted
+    _kind, callback = harness.submitted[0]
+
+    # A later user choice supersedes the queued load.
+    harness._answer_navigation_generation += 1
+    callback(SavedAnswerResult(answer=_saved_snapshot().to_saved()), None)
+
+    assert harness.revealed == 0
+    assert harness._output_state.raw == ""
+
+
+def test_applied_saved_answer_load_still_displays(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    harness._on_saved_answer_selected("f" * 32)
+    _kind, callback = harness.submitted[0]
+    saved = _saved_snapshot().to_saved()
+    callback(SavedAnswerResult(answer=saved), None)
+
+    assert harness.revealed == 1
+    assert harness._output_state.raw == saved.markdown
 
 
 def test_selecting_saved_answer_reveals_agent_view(tmp_path) -> None:

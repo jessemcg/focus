@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from focus.agent_answer import create_focus_run_id, focus_answer_artifact_path
 from focus.app import Focus
+from focus.reading_position import AnswerPositionCache
 from focus.core import (
     AGENT_SUBVIEW_ANSWER,
     AI_VIEW_AGENT_QA,
@@ -65,9 +67,21 @@ class AgentAnswerPollHarness:
     _display_agent_snapshot = Focus._display_agent_snapshot
     _scroll_agent_answer_to_top = Focus._scroll_agent_answer_to_top
     _refresh_answer_action_state = Focus._refresh_answer_action_state
+    _capture_text_position = Focus._capture_text_position
+    _agent_answer_position_value = Focus._agent_answer_position_value
+    _capture_agent_answer_position = Focus._capture_agent_answer_position
+    _sync_agent_answer_buffer = Focus._sync_agent_answer_buffer
+    _update_agent_context_line = Focus._update_agent_context_line
     _pop_agent_question_for_revision = Focus._pop_agent_question_for_revision
 
     def __init__(self, run_id: str, artifact_path: Path) -> None:
+        self._agent_subview_name = AGENT_SUBVIEW_ANSWER
+        self._agent_context_label = None
+        self._agent_answer_button = None
+        self._case_generation = 0
+        self._answer_navigation_generation = 0
+        self._answer_positions = AnswerPositionCache()
+        self.answer_position_restores: list[str] = []
         self._agent_run_id = run_id
         self._agent_answer_artifact_path = artifact_path
         self._agent_answer_revision = 0
@@ -105,6 +119,15 @@ class AgentAnswerPollHarness:
 
     def _apply_ai_output_links(self, text: str, state: AiOutputView) -> None:
         self.link_calls.append(text)
+
+    def _restore_agent_answer_position(self, answer_id: str, *, position: Any = None) -> None:
+        self.answer_position_restores.append(answer_id)
+
+    def _restore_agent_answer_position_if_current(self) -> None:
+        pass
+
+    def _cancel_agent_answer_position_restore(self) -> None:
+        pass
 
     def _set_agent_subview(self, subview_name: str) -> None:
         self.subview_calls.append(subview_name)

@@ -12,6 +12,8 @@
 - `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
 - `focus/agent_followup.py`: GTK-independent client and protocol types for the bounded Unix-socket follow-up bridge; creates/removes the application-owned runtime directory, validates path/token/type, and raises typed busy/unavailable/uncertain/protocol failures without queueing or replaying prompts.
 - `focus/answer_metadata.py`: GTK-independent recognition of the leading `# Title` / `*Subtitle*` answer metadata, normalized labels, and the protected metadata-prefix offset used to keep those labels out of transcript-search link targets.
+- `focus/answer_presentation.py`: GTK-independent saved-date and quality-status formatting shared by the displayed answer context line and the saved-answer popover rows; malformed dates degrade to readable text.
+- `focus/reading_position.py`: bounded least-recently-used in-memory cache of per-answer viewport anchors plus scroll fractions; eviction only loses a reading position.
 - `focus/saved_answers.py`: durable per-case saved-answer store at `<record-layout-root>/.focus/saved-answers/<answer-uuid>.json`, with typed GTK-independent list/load/save/delete results, atomic private publication, and safe handling of malformed, unknown-schema, symlinked, hard-linked, special, or broad-permission entries.
 - `focus/ui/`: secondary Libadwaita windows such as settings, the saved-answer popover menu, and the D-Bus command reference.
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
@@ -45,6 +47,7 @@
 ## Testing Guidelines
 - Add or update coverage under `tests/` using `pytest` when introducing non-trivial logic.
 - For UI changes, exercise core flows manually: open a transcript, step pages, run grep, toggle TOC sidebar, switch views, try image view, and verify summary/extraction plus Agent Q&A flows.
+- For Agent answer switching, run the bounded synthetic acceptance harness: `uv run python tests/acceptance_answer_switching.py` (optionally under `G_DEBUG=fatal-criticals`). It uses a temporary HOME/XDG, a unique application id, synthetic saved answers plus a paginated schema-v2 hearing edition and a continuous report summary, and exits non-zero on any GTK critical, wrong final view, or identity mismatch. It makes no model calls and never touches a real case.
 - Document any manual test steps in PR descriptions until automated coverage exists.
 
 ## Commit & Pull Request Guidelines
