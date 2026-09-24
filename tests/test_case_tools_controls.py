@@ -465,17 +465,57 @@ class AgentFollowupResultHarness:
         self.statuses.append((text, spinning))
 
 
-def test_followup_submission_reveals_session_and_clears_acknowledged_draft() -> None:
+def test_followup_submission_reveals_session_and_keeps_question() -> None:
     harness = AgentFollowupResultHarness()
 
     assert harness._on_agent_followup_result(5, "And the father?", "busy", "") is False
 
     assert harness.subviews == [AGENT_SUBVIEW_SESSION]
     assert harness._agent_terminal.focused
-    assert harness._agent_followup_entry.get_text() == ""
+    assert harness._agent_followup_entry.get_text() == "And the father?"
+    assert harness._agent_followup_draft == "And the father?"
     assert harness._agent_question_queue == ["And the father?"]
     assert harness.statuses[-1][1] is True
     assert not harness._agent_followup_pending
+
+
+class SpeechFollowupHarness:
+    _submit_speech_agent_followup = Focus._submit_speech_agent_followup
+    _agent_followup_session_active = Focus._agent_followup_session_active
+
+    def __init__(self, entry_text: str) -> None:
+        self._agent_followup_entry = FakeEntry(entry_text)
+        self._agent_followup_draft = entry_text
+        self._agent_followup_status = ""
+        self._agent_followup_pending = False
+        self._agent_displayed_is_saved = False
+        self._agent_terminal_active = True
+        self._agent_followup_endpoint = object()
+        self.submitted: list[str] = []
+
+    def _focus_agent_followup_entry(self) -> None:
+        return None
+
+    def _set_agent_followup_message(self, text: str) -> None:
+        self._agent_followup_status = text
+
+    def _submit_agent_followup(self, text: str) -> None:
+        self.submitted.append(text)
+
+
+def test_spoken_followup_replaces_existing_question(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "speech.txt"
+    source.write_text("What about the mother?\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "focus.app.load_ai_settings",
+        lambda: SimpleNamespace(speech_agent_source_file=str(source)),
+    )
+
+    harness = SpeechFollowupHarness("And the father?")
+    harness._submit_speech_agent_followup()
+
+    assert harness.submitted == ["What about the mother?"]
+    assert harness._agent_followup_entry.get_text() == "What about the mother?"
 
 
 def test_followup_result_ignores_stale_generation() -> None:

@@ -7084,10 +7084,10 @@ class Focus(Adw.Application):
         self._agent_followup_pending = False
         if not error:
             self._agent_question_queue.append(text)
-            entry = self._agent_followup_entry
-            if entry is not None and normalize_submit_text(entry.get_text()) == text:
-                entry.set_text("")
-                self._agent_followup_draft = ""
+            # Keep the submitted question visible in the input field, matching the
+            # initial-question field. It stays until a new question replaces it.
+            if self._agent_followup_entry is not None:
+                self._agent_followup_draft = self._agent_followup_entry.get_text()
             self._agent_followup_status = "live Agent session"
             # Reveal the live Session immediately so the user can watch the
             # follow-up run for obvious problems; the answer artifact switches
@@ -7922,18 +7922,14 @@ class Focus(Adw.Application):
                 "Agent is still working; press Enter when it finishes."
             )
             return
-        entry = self._agent_followup_entry
-        existing = normalize_submit_text(entry.get_text()) if entry is not None else ""
-        if existing and existing != question:
-            self._set_agent_followup_message(
-                "The follow-up box already holds a different draft; clear it or send it first."
-            )
-            return
         if text_transport_error(question):
             self._set_agent_followup_message(
                 "That follow-up question is too long to send."
             )
             return
+        # A new spoken question replaces whatever the field currently holds,
+        # matching how the initial-question field behaves.
+        entry = self._agent_followup_entry
         if entry is not None:
             entry.set_text(question)
         self._submit_agent_followup(question)
