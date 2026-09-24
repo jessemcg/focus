@@ -7191,36 +7191,8 @@ class Focus(Adw.Application):
         )
 
     def _on_saved_answer_delete_requested(self, answer_id: str) -> None:
-        answer: SavedAnswer | None = None
-        for candidate in self._saved_answers_listing.answers:
-            if candidate.answer_id == answer_id:
-                answer = candidate
-                break
-        title = answer.title if answer is not None else "this saved answer"
-        if self.win is None:
-            return
-        dialog = Adw.MessageDialog(
-            transient_for=self.win,
-            modal=True,
-            heading="Delete saved answer?",
-            body=f"\u201c{title}\u201d will be permanently deleted from this case.",
-        )
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("delete", "Delete")
-        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.set_default_response("cancel")
-        dialog.set_close_response("cancel")
-        dialog.connect("response", self._on_delete_saved_answer_response, answer_id)
-        dialog.present()
-
-    def _on_delete_saved_answer_response(
-        self,
-        _dialog: Adw.MessageDialog,
-        response: str,
-        answer_id: str,
-    ) -> None:
-        if response != "delete":
-            return
+        # Deletion is immediate: one click on the row's trash control removes
+        # only that saved-answer file, with no confirmation dialog.
         root = self._record_layout.root
 
         def _apply(result: SavedAnswerResult, error: BaseException | None) -> None:
