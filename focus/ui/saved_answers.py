@@ -8,10 +8,10 @@ blocking I/O.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
 
 from gi.repository import Adw, GLib, Gtk, Pango
 
+from ..answer_presentation import answer_quality_label, format_saved_at
 from ..saved_answers import SavedAnswer, SavedAnswerListing
 
 PREFERRED_CONTENT_WIDTH = 480
@@ -19,24 +19,17 @@ LIST_MAX_HEIGHT = 320
 _POPULATE_BATCH = 40
 
 
-def _format_saved_at(value: str) -> str:
-    if not value:
-        return ""
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return value
-    return parsed.strftime("%Y-%m-%d %H:%M")
-
-
 def _row_labels(answer: SavedAnswer) -> tuple[str, str]:
     title = answer.title.strip() or "Saved record answer"
     subtitle = answer.subtitle.strip() or "Saved answer"
-    if answer.status == "partial" or answer.stop_reason in {"length", "error", "aborted"}:
-        subtitle = f"{subtitle} · Partial"
-    elif answer.capture == "assistant_fallback":
-        subtitle = f"{subtitle} · Best-effort"
-    saved = _format_saved_at(answer.saved_at)
+    quality = answer_quality_label(
+        status=answer.status,
+        stop_reason=answer.stop_reason,
+        capture=answer.capture,
+    )
+    if quality:
+        subtitle = f"{subtitle} · {quality}"
+    saved = format_saved_at(answer.saved_at)
     if saved:
         subtitle = f"{subtitle} · Saved {saved}"
     return title, subtitle
