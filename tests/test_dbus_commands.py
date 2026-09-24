@@ -49,6 +49,8 @@ def test_focus_command_items_cover_shortcut_actions_once() -> None:
         "toggle_ai_panel",
         "focus_agent_question",
         "submit_speech_agent_question",
+        "focus_agent_followup",
+        "submit_speech_agent_followup",
         "show_shortcuts",
     ]
 

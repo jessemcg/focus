@@ -26,6 +26,19 @@ from .agent_answer import (
     read_focus_answer_artifact,
     remove_focus_answer_artifact,
 )
+from .agent_followup import (
+    FollowUpBusy,
+    FollowUpClient,
+    FollowUpEndpoint,
+    FollowUpError,
+    FollowUpProtocolError,
+    FollowUpUnavailable,
+    FollowUpUncertain,
+    create_followup_runtime,
+    normalize_submit_text,
+    remove_followup_runtime,
+    text_transport_error,
+)
 from .answer_metadata import parse_answer_metadata
 from .saved_answers import (
     AgentAnswerSnapshot,
@@ -267,7 +280,16 @@ class Focus(Adw.Application):
         self._ai_in_flight = False
         self._ai_request_generation = 0
         self._agent_question_entry: Gtk.Entry | None = None
+        self._agent_followup_entry: Gtk.Entry | None = None
+        self._agent_ask_row: Gtk.Box | None = None
         self._agent_submit_button: Gtk.Button | None = None
+        self._agent_followup_endpoint: FollowUpEndpoint | None = None
+        self._agent_followup_runtime_dir: Path | None = None
+        self._agent_followup_generation = 0
+        self._agent_followup_pending = False
+        self._agent_followup_draft = ""
+        self._agent_followup_status = ""
+        self._agent_question_queue: list[str] = []
         self._agent_output_header: Gtk.Widget | None = None
         self._agent_subview_host: Gtk.Box | None = None
         self._agent_subview_name = AGENT_SUBVIEW_SESSION
@@ -946,22 +968,44 @@ class Focus(Adw.Application):
         agent_header_controls.set_hexpand(True)
         agent_header_controls.set_valign(Gtk.Align.CENTER)
 
+        agent_ask_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        agent_ask_row.add_css_class("focus-agent-composer-row")
+        agent_ask_row.set_hexpand(True)
+        agent_ask_row.set_homogeneous(True)
+        agent_ask_row.set_valign(Gtk.Align.CENTER)
+
         self._agent_question_entry = Gtk.Entry()
         self._agent_question_entry.set_hexpand(True)
-        self._agent_question_entry.set_width_chars(24)
-        self._agent_question_entry.set_placeholder_text("Ask a question about this record")
+        self._agent_question_entry.set_width_chars(12)
+        self._agent_question_entry.set_placeholder_text("New question…")
+        self._agent_question_entry.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["New Agent question"]
+        )
+        self._agent_question_entry.set_tooltip_text(
+            "Enter starts a new Agent query and replaces the current conversation"
+        )
         self._agent_question_entry.connect("activate", self._on_agent_question_activate)
         self._agent_question_entry.connect("changed", self._on_agent_question_changed)
-        agent_header_controls.append(self._agent_question_entry)
+        agent_ask_row.append(self._agent_question_entry)
 
-        self._agent_submit_button = Gtk.Button(label="Ask")
-        self._agent_submit_button.add_css_class("flat")
-        self._agent_submit_button.add_css_class("focus-agent-submit-button")
-        self._agent_submit_button.set_valign(Gtk.Align.CENTER)
-        self._agent_submit_button.set_sensitive(False)
-        self._agent_submit_button.set_tooltip_text("Ask the embedded Agent about the record")
-        self._agent_submit_button.connect("clicked", self._on_agent_question_submit_clicked)
-        agent_header_controls.append(self._agent_submit_button)
+        self._agent_followup_entry = Gtk.Entry()
+        self._agent_followup_entry.set_hexpand(True)
+        self._agent_followup_entry.set_width_chars(12)
+        self._agent_followup_entry.set_placeholder_text("Follow up…")
+        self._agent_followup_entry.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Agent follow-up question"]
+        )
+        self._agent_followup_entry.set_tooltip_text(
+            "Enter continues the live Pi conversation. Available after a question starts a session."
+        )
+        self._agent_followup_entry.connect("activate", self._on_agent_followup_activate)
+        self._agent_followup_entry.connect("changed", self._on_agent_followup_changed)
+        agent_ask_row.append(self._agent_followup_entry)
+        self._agent_ask_row = agent_ask_row
+        agent_header_controls.append(agent_ask_row)
+
+        self._agent_submit_button = None
+        self._refresh_agent_followup_state()
 
         agent_output_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         agent_output_header.add_css_class("focus-agent-output-header")
@@ -2809,6 +2853,7 @@ class Focus(Adw.Application):
             self._agent_answer_button.set_sensitive(has_answer)
         if self._agent_session_button:
             self._agent_session_button.set_sensitive(has_session)
+        self._refresh_agent_followup_state()
 
     def _sync_agent_session_widget_visibility(self) -> None:
         if self._agent_session_widget:
@@ -5520,6 +5565,22 @@ class Focus(Adw.Application):
         )
         self.add_action(submit_speech_agent_question)
 
+        focus_agent_followup = Gio.SimpleAction.new("focus_agent_followup", None)
+        focus_agent_followup.connect(
+            "activate",
+            lambda _a, _p: self._focus_agent_followup_entry(),
+        )
+        self.add_action(focus_agent_followup)
+
+        submit_speech_agent_followup = Gio.SimpleAction.new(
+            "submit_speech_agent_followup", None
+        )
+        submit_speech_agent_followup.connect(
+            "activate",
+            lambda _a, _p: self._submit_speech_agent_followup(),
+        )
+        self.add_action(submit_speech_agent_followup)
+
         focus_page_number = Gio.SimpleAction.new("focus_page_number", None)
         focus_page_number.connect("activate", lambda _a, _p: self._focus_page_number_entry())
         self.add_action(focus_page_number)
@@ -6887,19 +6948,6 @@ class Focus(Adw.Application):
             self._current_view_state().agent_question_text = (
                 self._agent_question_entry.get_text()
             )
-        self._refresh_agent_submit_state()
-
-    def _on_agent_question_submit_clicked(self, _button: Gtk.Button) -> None:
-        self._launch_agent_question()
-
-    def _refresh_agent_submit_state(self) -> None:
-        if not self._agent_submit_button:
-            return
-        has_question = bool(
-            self._agent_question_entry
-            and self._agent_question_entry.get_text().strip()
-        )
-        self._agent_submit_button.set_sensitive(has_question)
 
     def _focus_agent_question_entry(self) -> None:
         self._ensure_ai_panel_visible()
@@ -6907,6 +6955,177 @@ class Focus(Adw.Application):
         if self._agent_question_entry:
             self._agent_question_entry.grab_focus()
             self._agent_question_entry.select_region(0, -1)
+
+    # -- live follow-up channel -----------------------------------------
+
+    def _agent_followup_session_active(self) -> bool:
+        return bool(
+            self._agent_terminal_active and self._agent_followup_endpoint is not None
+        )
+
+    def _refresh_agent_followup_state(self) -> None:
+        entry = self._agent_followup_entry
+        if entry is None:
+            return
+        active = self._agent_followup_session_active()
+        saved_view = bool(self._agent_displayed_is_saved)
+        if not active:
+            entry.set_sensitive(False)
+            entry.set_tooltip_text(
+                "Follow-ups are available after a question starts a live Agent session."
+            )
+            return
+        entry.set_sensitive(not saved_view)
+        if saved_view:
+            entry.set_tooltip_text(
+                "Return to Latest Answer before submitting a follow-up."
+            )
+        else:
+            entry.set_tooltip_text(
+                "Enter continues the live Pi conversation. "
+                "Available after the current question finishes."
+            )
+
+    def _on_agent_followup_changed(self, entry: Gtk.Entry) -> None:
+        self._agent_followup_draft = entry.get_text()
+
+    def _set_agent_followup_message(self, text: str) -> None:
+        self._agent_followup_status = text
+        self._update_ai_status(text, spinning=False)
+
+    def _on_agent_followup_activate(self, _entry: Gtk.Entry) -> None:
+        if not self._agent_followup_session_active():
+            self._set_agent_followup_message(
+                "Follow-ups are unavailable until a live Agent session starts."
+            )
+            return
+        if self._agent_displayed_is_saved:
+            self._set_agent_followup_message(
+                "Return to Latest Answer before submitting a follow-up."
+            )
+            return
+        if self._agent_followup_pending:
+            self._set_agent_followup_message(
+                "Agent is still working; press Enter when it finishes."
+            )
+            return
+        entry = self._agent_followup_entry
+        if entry is None:
+            return
+        text = normalize_submit_text(entry.get_text())
+        if not text:
+            self._set_agent_followup_message("Enter a follow-up question.")
+            return
+        transport_error = text_transport_error(text)
+        if transport_error:
+            self._set_agent_followup_message(
+                "That follow-up question is too long to send."
+            )
+            return
+        self._submit_agent_followup(text)
+
+    def _submit_agent_followup(self, text: str) -> None:
+        endpoint = self._agent_followup_endpoint
+        if endpoint is None:
+            self._set_agent_followup_message(
+                "Follow-ups are unavailable for this session."
+            )
+            return
+        generation = self._agent_followup_generation
+        self._agent_followup_pending = True
+        entry = self._agent_followup_entry
+        if entry is not None:
+            entry.set_sensitive(False)
+        self._update_ai_status("Submitting follow-up…", spinning=True)
+        threading.Thread(
+            target=self._agent_followup_worker,
+            args=(endpoint, generation, text),
+            daemon=True,
+            name="focus-agent-followup",
+        ).start()
+
+    def _agent_followup_worker(
+        self,
+        endpoint: FollowUpEndpoint,
+        generation: int,
+        text: str,
+    ) -> None:
+        state = ""
+        error = ""
+        try:
+            state = FollowUpClient(endpoint).submit(text)
+        except FollowUpBusy:
+            error = "busy"
+        except FollowUpUncertain:
+            error = "uncertain"
+        except FollowUpUnavailable:
+            error = "unavailable"
+        except FollowUpProtocolError:
+            error = "protocol"
+        except FollowUpError:
+            error = "error"
+        GLib.idle_add(
+            self._on_agent_followup_result,
+            generation,
+            text,
+            state,
+            error,
+        )
+
+    def _on_agent_followup_result(
+        self,
+        generation: int,
+        text: str,
+        state: str,
+        error: str,
+    ) -> bool:
+        if generation != self._agent_followup_generation:
+            return False
+        self._agent_followup_pending = False
+        if not error:
+            self._agent_question_queue.append(text)
+            entry = self._agent_followup_entry
+            if entry is not None and normalize_submit_text(entry.get_text()) == text:
+                entry.set_text("")
+                self._agent_followup_draft = ""
+            self._agent_followup_status = "live Agent session"
+            self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
+            self._update_ai_status(
+                "Follow-up submitted—Agent is working…", spinning=True
+            )
+        elif error == "busy":
+            self._set_agent_followup_message(
+                "Agent is still working; press Enter when it finishes."
+            )
+        elif error == "uncertain":
+            self._set_agent_followup_message(
+                "Could not confirm the follow-up. Check Session before retrying."
+            )
+        elif error == "unavailable":
+            self._invalidate_agent_followup()
+            self._set_agent_followup_message(
+                "The follow-up channel for this session is no longer available."
+            )
+        else:
+            self._set_agent_followup_message(
+                "The follow-up could not be delivered. Check Session before retrying."
+            )
+        self._refresh_agent_followup_state()
+        return False
+
+    def _invalidate_agent_followup(self) -> None:
+        self._agent_followup_generation += 1
+        self._agent_followup_endpoint = None
+        self._agent_followup_pending = False
+        self._refresh_agent_followup_state()
+
+    def _focus_agent_followup_entry(self) -> None:
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_AGENT_QA)
+        self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
+        if self._agent_followup_entry:
+            self._agent_followup_entry.grab_focus()
+            self._agent_followup_entry.select_region(0, -1)
 
     def _agent_terminal_unavailable(self) -> None:
         self._ensure_ai_panel_visible()
@@ -6945,19 +7164,28 @@ class Focus(Adw.Application):
         self._refresh_answer_action_state()
         self._queue_embedded_ai_panel_height_update()
 
+    def _pop_agent_question_for_revision(self, revision: int) -> str | None:
+        """Return the accepted question frozen to one answer revision.
+
+        Questions are recorded in submission order and consumed only when a
+        new artifact revision arrives, so a pending follow-up cannot relabel
+        the answer that was already displayed.
+        """
+        if self._agent_question_queue:
+            return self._agent_question_queue.pop(0)
+        if revision == 1:
+            return self._agent_initial_question or None
+        return None
+
     def _build_live_snapshot(
         self,
         artifact: Any,
         *,
         revision: int,
+        question: str | None = None,
     ) -> AgentAnswerSnapshot:
         stop_reason = str(artifact.diagnostics.get("stop_reason") or "")
         partial = artifact.status == "partial" or stop_reason in {"length", "error", "aborted"}
-        # Follow-up revisions do not expose their exact question, so only the
-        # initial answer carries the submitted question label.
-        question = self._agent_initial_question or None
-        if revision != 1:
-            question = None
         metadata = parse_answer_metadata(
             artifact.markdown,
             question=question,
@@ -7272,7 +7500,9 @@ class Focus(Adw.Application):
             if answer:
                 self._agent_last_answer_text = answer
                 snapshot = self._build_live_snapshot(
-                    artifact, revision=artifact.revision
+                    artifact,
+                    revision=artifact.revision,
+                    question=self._pop_agent_question_for_revision(artifact.revision),
                 )
                 self._agent_live_snapshot = snapshot
                 if self._agent_displayed_is_saved:
@@ -7340,6 +7570,10 @@ class Focus(Adw.Application):
         self._ai_settings = load_ai_settings()
         self._current_view_state().agent_question_text = question
         self._agent_initial_question = question
+        self._agent_followup_draft = ""
+        self._agent_followup_status = ""
+        if self._agent_followup_entry is not None:
+            self._agent_followup_entry.set_text("")
         prompt_path = self._write_agent_prompt_file(
             self._compose_agent_prompt(question)
         )
@@ -7404,6 +7638,11 @@ class Focus(Adw.Application):
                 "Focus PI settings, prompt, skill, extension, or answer protocol is missing."
             )
             return
+        followup_extension = FOCUS_PI_FOLLOWUP_EXTENSION_FILE
+        if not followup_extension.is_file():
+            self._ai_transient_toast(
+                "Follow-up bridge is missing; initial questions and Session remain available."
+            )
 
         try:
             workspace = self._create_agent_workspace()
@@ -7424,6 +7663,26 @@ class Focus(Adw.Application):
         self._agent_answer_artifact_path = answer_artifact
         self._agent_answer_revision = 0
         self._agent_answer_diagnostics = {}
+        followup_runtime = None
+        if followup_extension.is_file():
+            try:
+                self._agent_followup_generation += 1
+                followup_runtime = create_followup_runtime(
+                    generation=self._agent_followup_generation
+                )
+                self._agent_followup_endpoint = followup_runtime.endpoint
+                self._agent_followup_runtime_dir = followup_runtime.directory
+            except OSError:
+                followup_runtime = None
+                self._agent_followup_endpoint = None
+                self._agent_followup_runtime_dir = None
+        else:
+            self._agent_followup_endpoint = None
+            self._agent_followup_runtime_dir = None
+        self._agent_followup_pending = False
+        self._agent_question_queue = (
+            [self._agent_initial_question] if self._agent_initial_question else []
+        )
         env = os.environ.copy()
         env.update(
             {
@@ -7440,6 +7699,18 @@ class Focus(Adw.Application):
                 "FOCUS_AGENT_COMMAND_ARGC": str(len(command_argv)),
             }
         )
+        if self._agent_followup_endpoint is not None:
+            env.update(
+                {
+                    "FOCUS_AGENT_FOLLOWUP_SOCKET": str(
+                        self._agent_followup_endpoint.socket_path
+                    ),
+                    "FOCUS_AGENT_FOLLOWUP_TOKEN": self._agent_followup_endpoint.token,
+                    "FOCUS_AGENT_FOLLOWUP_RUNTIME_DIR": str(
+                        self._agent_followup_runtime_dir
+                    ),
+                }
+            )
         for index, arg in enumerate(command_argv):
             env[f"FOCUS_AGENT_COMMAND_ARG_{index}"] = arg
         if os.path.sep in command_argv[0]:
@@ -7510,6 +7781,11 @@ class Focus(Adw.Application):
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
         self._agent_terminal_closing = False
+        self._agent_question_queue = []
+        self._agent_followup_pending = False
+        self._invalidate_agent_followup()
+        remove_followup_runtime(self._agent_followup_runtime_dir)
+        self._agent_followup_runtime_dir = None
         if self._agent_answer_poll_id is not None:
             GLib.source_remove(self._agent_answer_poll_id)
             self._agent_answer_poll_id = None
@@ -7559,6 +7835,11 @@ class Focus(Adw.Application):
                 pass
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
+        self._agent_question_queue = []
+        self._agent_followup_pending = False
+        self._invalidate_agent_followup()
+        remove_followup_runtime(self._agent_followup_runtime_dir)
+        self._agent_followup_runtime_dir = None
         self._stop_agent_answer_polling()
         self._cleanup_agent_answer_artifact()
         self._sync_agent_session_widget_visibility()
@@ -7594,6 +7875,63 @@ class Focus(Adw.Application):
         if self._agent_question_entry:
             self._agent_question_entry.set_text(question)
         self._launch_agent_question()
+
+    def _submit_speech_agent_followup(self) -> None:
+        settings = load_ai_settings()
+        raw_path = settings.speech_agent_source_file.strip()
+        if not raw_path:
+            self._ai_transient_toast(
+                "Set the speech-to-text question file in Settings."
+            )
+            self._focus_agent_followup_entry()
+            return
+        source_path = Path(raw_path).expanduser().resolve(strict=False)
+        if not source_path.exists() or not source_path.is_file():
+            self._ai_transient_toast(f"Speech question file not found: {source_path}")
+            self._focus_agent_followup_entry()
+            return
+        try:
+            raw_question = source_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            self._ai_transient_toast(f"Could not read speech question file: {exc}")
+            self._focus_agent_followup_entry()
+            return
+        question = _normalize_speech_agent_question_text(raw_question)
+        if not question:
+            self._ai_transient_toast("Speech question file is empty.")
+            self._focus_agent_followup_entry()
+            return
+        self._focus_agent_followup_entry()
+        if not self._agent_followup_session_active():
+            self._set_agent_followup_message(
+                "Follow-ups are unavailable until a live Agent session starts."
+            )
+            return
+        if self._agent_displayed_is_saved:
+            self._set_agent_followup_message(
+                "Return to Latest Answer before submitting a follow-up."
+            )
+            return
+        if self._agent_followup_pending:
+            self._set_agent_followup_message(
+                "Agent is still working; press Enter when it finishes."
+            )
+            return
+        entry = self._agent_followup_entry
+        existing = normalize_submit_text(entry.get_text()) if entry is not None else ""
+        if existing and existing != question:
+            self._set_agent_followup_message(
+                "The follow-up box already holds a different draft; clear it or send it first."
+            )
+            return
+        if text_transport_error(question):
+            self._set_agent_followup_message(
+                "That follow-up question is too long to send."
+            )
+            return
+        if entry is not None:
+            entry.set_text(question)
+        self._submit_agent_followup(question)
 
     def _find_summary_in_dir(
         self,

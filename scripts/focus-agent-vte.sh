@@ -112,6 +112,10 @@ else
 fi
 cd "$workspace"
 export TMPDIR="$workspace/tmp"
+followup_args=()
+if [[ -f "$workspace/.pi/extensions/focus-followup-bridge.ts" ]]; then
+  followup_args=(--extension "$workspace/.pi/extensions/focus-followup-bridge.ts")
+fi
 prompt="$(cat "$prompt_file")"
 "${agent_command[@]}" \
   --approve \
@@ -119,6 +123,7 @@ prompt="$(cat "$prompt_file")"
   --no-extensions \
   "${metrics_args[@]}" \
   --extension "$workspace/.pi/extensions/focus-record-agent.ts" \
+  "${followup_args[@]}" \
   --no-skills \
   --no-prompt-templates \
   --no-themes \

@@ -49,6 +49,8 @@ if [[ "${1:-}" == --version ]]; then printf '0.87.1\\n'; exit 0; fi
 def _run_wrapper(
     tmp_path: Path,
     extra_env: dict[str, str] | None = None,
+    *,
+    with_bridge: bool = False,
 ) -> tuple[list[str], Path, Path, subprocess.CompletedProcess[str]]:
     case_root = tmp_path / "case"
     case_root.mkdir()
@@ -68,6 +70,10 @@ def _run_wrapper(
     (extension_dir / "focus-record-agent.ts").write_text(
         "// Focus test extension\n", encoding="utf-8"
     )
+    if with_bridge:
+        (extension_dir / "focus-followup-bridge.ts").write_text(
+            "// Focus follow-up bridge\n", encoding="utf-8"
+        )
     (pi_project_dir / "settings.json").write_text(
         '{"defaultProvider":"fireworks","defaultModel":"test-model",'
         '"defaultThinkingLevel":"medium"}',
@@ -165,6 +171,20 @@ def test_pi_wrapper_loads_shared_observer_without_changing_tools(tmp_path) -> No
     assert f"arg={collector}" in output
     assert "arg=read,focus_record,submit_focus_answer" in output
     assert not any(line.startswith("session_dir=") for line in output)
+    assert not workspace.exists()
+    assert not prompt_path.exists()
+
+
+def test_pi_wrapper_loads_followup_bridge_when_staged(tmp_path) -> None:
+    output, workspace, prompt_path, completed = _run_wrapper(
+        tmp_path,
+        {"PI_RUN_METRICS_ENABLED": "0"},
+        with_bridge=True,
+    )
+    assert completed.returncode == 0
+    assert output.count("arg=--extension") == 2
+    assert f"arg={workspace}/.pi/extensions/focus-followup-bridge.ts" in output
+    assert "arg=read,focus_record,submit_focus_answer" in output
     assert not workspace.exists()
     assert not prompt_path.exists()
 

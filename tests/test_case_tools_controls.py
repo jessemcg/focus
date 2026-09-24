@@ -49,9 +49,20 @@ class FakeVisibility:
 class FakeEntry:
     def __init__(self, text: str = "") -> None:
         self.text = text
+        self.sensitive = True
+        self.tooltip = ""
 
     def get_text(self) -> str:
         return self.text
+
+    def set_text(self, text: str) -> None:
+        self.text = text
+
+    def set_sensitive(self, sensitive: bool) -> None:
+        self.sensitive = sensitive
+
+    def set_tooltip_text(self, tooltip: str) -> None:
+        self.tooltip = tooltip
 
 
 class FakeViewStack:
@@ -194,7 +205,8 @@ class ToggleHarness:
 class AgentControlsHarness:
     _agent_answer_has_content = Focus._agent_answer_has_content
     _sync_agent_output_header_state = Focus._sync_agent_output_header_state
-    _refresh_agent_submit_state = Focus._refresh_agent_submit_state
+    _refresh_agent_followup_state = Focus._refresh_agent_followup_state
+    _agent_followup_session_active = Focus._agent_followup_session_active
 
     def __init__(self) -> None:
         self._agent_last_answer_text = ""
@@ -202,8 +214,11 @@ class AgentControlsHarness:
         self._agent_output_header = FakeVisibility()
         self._agent_answer_button = FakeButton()
         self._agent_session_button = FakeButton()
-        self._agent_submit_button = FakeButton()
         self._agent_question_entry = FakeEntry()
+        self._agent_followup_entry = FakeEntry()
+        self._agent_terminal_active = False
+        self._agent_followup_endpoint = None
+        self._agent_displayed_is_saved = False
         self.has_session = False
 
     def _agent_session_has_content(self) -> bool:
@@ -397,15 +412,22 @@ def test_agent_output_controls_appear_only_for_available_output() -> None:
     assert not harness._agent_session_button.sensitive
 
 
-def test_agent_ask_button_tracks_question_text() -> None:
+def test_agent_followup_entry_tracks_live_session_availability() -> None:
     harness = AgentControlsHarness()
 
-    harness._refresh_agent_submit_state()
-    assert not harness._agent_submit_button.sensitive
+    harness._refresh_agent_followup_state()
+    assert not harness._agent_followup_entry.sensitive
+    assert "starts a live Agent session" in harness._agent_followup_entry.tooltip
 
-    harness._agent_question_entry.text = "  What did the court order?  "
-    harness._refresh_agent_submit_state()
-    assert harness._agent_submit_button.sensitive
+    harness._agent_terminal_active = True
+    harness._agent_followup_endpoint = object()
+    harness._refresh_agent_followup_state()
+    assert harness._agent_followup_entry.sensitive
+
+    harness._agent_displayed_is_saved = True
+    harness._refresh_agent_followup_state()
+    assert not harness._agent_followup_entry.sensitive
+    assert "Latest Answer" in harness._agent_followup_entry.tooltip
 
 
 def test_case_tool_descriptions_follow_the_active_source() -> None:

@@ -153,9 +153,9 @@ Obsolete embedding/vector-question credentials and settings are removed when con
 
 ## Agent questions
 
-Open **Case Tools** from the labeled header control and select **Agent Q&A**. The question composer provides an explicit **Ask** action and inline activity feedback. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
+Open **Case Tools** from the labeled header control and select **Agent Q&A**. The composer has two equal-width question fields with inline activity feedback. **New question…** starts a new query when you press Enter and replaces the current conversation. **Follow up…** continues the live Pi conversation when you press Enter, never starts a new query, and becomes available only after a question has started a live session. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
 
-The initial **Ask** action creates one private disposable workspace and stages its system prompt, skill, settings, and Focus extension. PI uses `--no-session`; live interactive follow-ups and app-owned answer artifacts remain available without persisted transcripts. Extension discovery stays disabled. The sibling PiRunMetrics observer is explicitly loaded when available, with the same tool allowlist and model selection. Credentials remain in PI's global auth store.
+Starting a new question creates one private disposable workspace and stages its system prompt, skill, settings, Focus extension, and explicit follow-up bridge. PI uses `--no-session`; live interactive follow-ups and app-owned answer artifacts remain available without persisted transcripts. Extension discovery stays disabled. The sibling PiRunMetrics observer is explicitly loaded when available, with the same tool allowlist and model selection. Credentials remain in PI's global auth store.
 
 The checked-in default is Fireworks DeepSeek V4 Pro 0813 at low reasoning. Focus disables auto-compaction for these embedded sessions and keeps transient provider retry enabled. Focus does not override the model/provider's native output limit; any response ceiling comes from Pi's model definition or the provider.
 
@@ -165,7 +165,7 @@ The preferred workflow is one context call that exposes the nonauthoritative ove
 
 `submit_focus_answer` atomically writes an app-owned mode-600 runtime artifact and terminates without another model turn. If the model omits the tool, Focus captures one final plain assistant message as a best-effort fallback; `toolUse` narration is never treated as final. Output-limit and interrupted answers with usable text remain visible as partial answers. Formatting diagnostics are category-only and never reject, alter, suppress, or rerun an answer.
 
-After the initial **Ask**, the live **Session** terminal keeps the same non-persisted workspace and context, so follow-up questions typed directly into PI reuse the active record, staged prompt, skill, and extension. Each completed follow-up submits a newer revision of the answer artifact rather than replacing the transport; Focus re-runs the same Markdown cleanup, GTK4 text styling, clickable short-quote links, and page links, then returns to **Answer** showing the latest final answer. Intermediate answers remain in the **Session** transcript. Stopping the terminal or choosing a new **Ask** closes the old workspace and starts a fresh transport/artifact lifecycle.
+After the first question, the live **Session** terminal keeps the same non-persisted workspace and context. The **Follow up…** field submits literal text to that same live session through a private Unix-socket bridge loaded inside Pi; slash commands and control characters are sent as ordinary user text and never expanded. Each completed follow-up submits a newer revision of the answer artifact rather than replacing the transport; Focus re-runs the same Markdown cleanup, GTK4 text styling, clickable short-quote links, and page links, then returns to **Answer** showing the latest final answer. The previous formatted answer stays visible while the new one is generated. Intermediate answers remain in the **Session** transcript. Follow-ups reject while the Agent is still working without queueing or steering the current answer, and a draft is cleared only once its delivery is acknowledged. While a historical saved answer is displayed, return to **Latest Answer** (or **Session**) before submitting a follow-up. Stopping the terminal, switching case, or starting a new question invalidates the channel and cleans up the application-owned runtime directory.
 
 Answers now open with a compact `# Title` and `*Subtitle*` (specific to the question, with the bottom line and its uncertainty) before the body. The title/subtitle are presentation metadata: a missing or imperfect one never suppresses, delays, or retries an otherwise useful answer, and recognized metadata is never turned into a transcript-search link target.
 
@@ -237,7 +237,11 @@ Public question actions:
 ```text
 focus_agent_question
 submit_speech_agent_question
+focus_agent_followup
+submit_speech_agent_followup
 ```
+
+`focus_agent_followup` reveals the composer and focuses the follow-up field without submitting. `submit_speech_agent_followup` reads the configured speech question file, normalizes it, and submits it through the same live-session controller as Enter; the existing `submit_speech_agent_question` keeps starting a new session. A successful `gdbus` activation only means the app received the action; the app reports delivery acceptance or failure, and an ambiguous delivery tells you to inspect **Session** before retrying.
 
 Example:
 
@@ -247,6 +251,12 @@ gdbus call --session \
   --object-path /com/mcglaw/Focus \
   --method org.gtk.Actions.Activate \
   submit_speech_agent_question '[]' '{}'
+
+gdbus call --session \
+  --dest com.mcglaw.Focus \
+  --object-path /com/mcglaw/Focus \
+  --method org.gtk.Actions.Activate \
+  submit_speech_agent_followup '[]' '{}'
 ```
 
 ## Project layout
@@ -257,12 +267,13 @@ gdbus call --session \
 - `focus/agent_helper.py`: compact context, targeted map, lookup, document, and ranked search CLI for Agent sessions.
 - `focus/agent_answer.py`: answer-artifact transport checks and non-blocking category linter.
 - `focus/answer_metadata.py`: GTK-independent title/subtitle recognition and protected-prefix offsets.
+- `focus/agent_followup.py`: bounded GTK-independent Unix-socket client and protocol types for live follow-up delivery.
 - `focus/saved_answers.py`: durable per-case saved-answer store with typed list/load/save/delete operations.
 - `focus/ui/saved_answers.py`: the Saved Answers popover menu.
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
-- `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, explicit Focus and optional sibling metrics extensions, `--no-session`, and the strict `read,focus_record,submit_focus_answer` tool allowlist.
-- `.pi/`: checked-in PI system prompt, canonical Agent Skill, settings, and Focus record/answer extension.
+- `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, explicit Focus record/bridge and optional sibling metrics extensions, `--no-session`, and the strict `read,focus_record,submit_focus_answer` tool allowlist.
+- `.pi/`: checked-in PI system prompt, canonical Agent Skill, settings, the Focus record/answer extension, and the explicitly loaded live follow-up bridge extension.
 - `tests/`: pytest coverage.
 
 ## Tests

@@ -139,6 +139,9 @@ FOCUS_PI_SYSTEM_PROMPT_FILE = FOCUS_PI_PROJECT_DIR / "SYSTEM.md"
 FOCUS_PI_EXTENSION_FILE = (
     FOCUS_PI_PROJECT_DIR / "extensions" / "focus-record-agent.ts"
 )
+FOCUS_PI_FOLLOWUP_EXTENSION_FILE = (
+    FOCUS_PI_PROJECT_DIR / "extensions" / "focus-followup-bridge.ts"
+)
 FOCUS_AGENT_ANSWER_PROTOCOL_FILE = PROJECT_DIR / "focus" / "agent_answer.py"
 FOCUS_PI_SKILL_NAME = "focus-answer-record-questions"
 FOCUS_PI_SKILL_FILE = (
@@ -507,7 +510,21 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
                 "Submit speech Agent question",
                 "submit_speech_agent_question",
                 "D-Bus",
-                "Read the configured speech text file and submit it as an Agent question.",
+                "Read the configured speech text file and submit it as an Agent question (new session).",
+            ),
+            FocusCommand(
+                "AI Panel",
+                "Focus follow-up question box",
+                "focus_agent_followup",
+                "D-Bus",
+                "Reveal the Agent composer and focus the follow-up question box without submitting.",
+            ),
+            FocusCommand(
+                "AI Panel",
+                "Submit speech Agent follow-up",
+                "submit_speech_agent_followup",
+                "D-Bus",
+                "Read the configured speech text file and submit it to the live Agent session.",
             ),
         ),
     ),

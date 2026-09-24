@@ -65,6 +65,7 @@ class AgentAnswerPollHarness:
     _display_agent_snapshot = Focus._display_agent_snapshot
     _scroll_agent_answer_to_top = Focus._scroll_agent_answer_to_top
     _refresh_answer_action_state = Focus._refresh_answer_action_state
+    _pop_agent_question_for_revision = Focus._pop_agent_question_for_revision
 
     def __init__(self, run_id: str, artifact_path: Path) -> None:
         self._agent_run_id = run_id
@@ -86,6 +87,7 @@ class AgentAnswerPollHarness:
         self.status_calls: list[tuple[str, bool]] = []
         self.height_updates = 0
         self._agent_initial_question = ""
+        self._agent_question_queue: list[str] = []
         self._agent_live_snapshot = None
         self._agent_displayed_snapshot = None
         self._agent_displayed_is_saved = False
@@ -204,6 +206,45 @@ def test_poll_uses_answer_artifact_without_reading_session_logs(tmp_path) -> Non
     assert harness.header_syncs == 1
     assert harness._poll_agent_answer() is True
     assert harness.header_syncs == 1
+
+
+def test_poll_freezes_initial_and_followup_questions_per_revision(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = AgentAnswerPollHarness(run_id, path)
+    harness._agent_initial_question = "Initial question?"
+    harness._agent_question_queue = ["Initial question?"]
+
+    _write(path, _artifact_payload(run_id, 1, "First answer."))
+    assert harness._poll_agent_answer() is True
+    assert harness._agent_live_snapshot is not None
+    assert harness._agent_live_snapshot.question == "Initial question?"
+
+    # A pending follow-up must not relabel the previous answer.
+    harness._agent_question_queue.append("Follow-up question?")
+    assert harness._agent_live_snapshot.question == "Initial question?"
+
+    _write(path, _artifact_payload(run_id, 2, "Second answer."))
+    assert harness._poll_agent_answer() is True
+    assert harness._agent_live_snapshot.question == "Follow-up question?"
+    assert harness._poll_agent_answer() is True
+
+
+class QueueOnlyHarness:
+    _pop_agent_question_for_revision = Focus._pop_agent_question_for_revision
+
+    def __init__(self) -> None:
+        self._agent_question_queue: list[str] = []
+        self._agent_initial_question = ""
+
+
+def test_pop_agent_question_falls_back_to_initial_revision_only() -> None:
+    harness = QueueOnlyHarness()
+    assert harness._pop_agent_question_for_revision(1) is None
+    assert harness._pop_agent_question_for_revision(2) is None
+    harness._agent_initial_question = "Only initial"
+    assert harness._pop_agent_question_for_revision(1) == "Only initial"
+    assert harness._pop_agent_question_for_revision(2) is None
 
 
 def test_poll_without_workspace_skips_session_discovery(tmp_path) -> None:
