@@ -89,10 +89,15 @@ def prepare():
     application._saved_answers_popover.popover.popup()
 
     def _select_newest() -> bool:
+        # Exercise the reported bug path: make a summary view visible first,
+        # then select a saved answer and confirm Focus returns to Agent Q&A.
+        application._set_ai_view(core.AI_VIEW_FILE)
         listing = application._saved_answers_listing
         if listing.answers:
             application._on_saved_answer_selected(listing.answers[0].answer_id)
-            print("SELECTED newest saved answer", flush=True)
+            visible = application._ai_view_stack.get_visible_child_name()
+            assert visible == core.AI_VIEW_AGENT_QA, visible
+            print(f"SELECTED newest saved answer; view={visible}", flush=True)
         return False
 
     core.GLib.timeout_add(1500, _select_newest)

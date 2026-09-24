@@ -7043,6 +7043,7 @@ class Focus(Adw.Application):
         if live is None:
             return
         self._latest_answer_pending = False
+        self._reveal_agent_answer_view()
         self._display_agent_snapshot(live, is_saved=False)
         self._update_ai_status(self._agent_answer_status, spinning=False)
 
@@ -7136,11 +7137,18 @@ class Focus(Adw.Application):
             popover.show_listing(listing)
         self._refresh_answer_action_state()
 
+    def _reveal_agent_answer_view(self) -> None:
+        # Selecting a saved answer must surface Agent Q&A even when a summary
+        # (Hearings/Reports/Minute Orders) view is currently active.
+        self._ensure_ai_panel_visible()
+        self._set_ai_view(AI_VIEW_AGENT_QA)
+
     def _on_saved_answer_selected(self, answer_id: str) -> None:
         if self._saved_answers_popover is not None:
             self._saved_answers_popover.close()
         for answer in self._saved_answers_listing.answers:
             if answer.answer_id == answer_id:
+                self._reveal_agent_answer_view()
                 self._display_agent_snapshot(
                     AgentAnswerSnapshot.from_saved(answer),
                     is_saved=True,
@@ -7155,6 +7163,7 @@ class Focus(Adw.Application):
             if error is not None or result is None or result.answer is None:
                 self._ai_transient_toast("That saved answer could not be opened.")
                 return
+            self._reveal_agent_answer_view()
             self._display_agent_snapshot(
                 AgentAnswerSnapshot.from_saved(result.answer),
                 is_saved=True,

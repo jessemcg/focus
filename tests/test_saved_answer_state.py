@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from focus.app import Focus
-from focus.saved_answers import AgentAnswerSnapshot, new_answer_id
+from focus.saved_answers import AgentAnswerSnapshot, SavedAnswerListing, new_answer_id
 from test_agent_answer_polling import (
     AgentAnswerPollHarness,
     _artifact_payload,
@@ -34,11 +34,19 @@ class _FakeButton:
 
 class StateHarness(AgentAnswerPollHarness):
     _on_latest_answer_clicked = Focus._on_latest_answer_clicked
+    _on_saved_answer_selected = Focus._on_saved_answer_selected
+    _leave_saved_answer_view = Focus._leave_saved_answer_view
 
     def __init__(self, run_id: str, artifact_path) -> None:
         super().__init__(run_id, artifact_path)
         self._save_answer_button = _FakeButton()
         self._latest_answer_button = _FakeButton()
+        self._saved_answers_popover = None
+        self._saved_answers_listing = SavedAnswerListing()
+        self.revealed = 0
+
+    def _reveal_agent_answer_view(self) -> None:
+        self.revealed += 1
 
 
 def _saved_snapshot(markdown: str = "Saved answer text.\n") -> AgentAnswerSnapshot:
@@ -109,3 +117,20 @@ def test_save_button_tracks_displayed_snapshot(tmp_path) -> None:
     harness._display_agent_snapshot(_saved_snapshot(), is_saved=True)
     assert harness._save_answer_button.label == "Saved"
     assert harness._save_answer_button.sensitive is False
+
+
+def test_selecting_saved_answer_reveals_agent_view(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    saved = _saved_snapshot().to_saved()
+    harness._saved_answers_listing = SavedAnswerListing((saved,))
+    harness._on_saved_answer_selected(saved.answer_id)
+
+    # Even if a Hearings/Reports summary was the visible view, selection
+    # switches back to Agent Q&A and shows the saved answer.
+    assert harness.revealed == 1
+    assert harness._output_state.raw == saved.markdown
+    assert harness._agent_displayed_is_saved
+    assert harness.subview_calls[-1] == "answer"
