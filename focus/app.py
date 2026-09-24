@@ -7089,7 +7089,12 @@ class Focus(Adw.Application):
                 entry.set_text("")
                 self._agent_followup_draft = ""
             self._agent_followup_status = "live Agent session"
-            self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
+            # Reveal the live Session immediately so the user can watch the
+            # follow-up run for obvious problems; the answer artifact switches
+            # back to the formatted Answer view when the run finishes.
+            self._set_agent_subview(AGENT_SUBVIEW_SESSION)
+            if self._agent_terminal is not None:
+                self._agent_terminal.grab_focus()
             self._update_ai_status(
                 "Follow-up submitted—Agent is working…", spinning=True
             )

@@ -430,6 +430,64 @@ def test_agent_followup_entry_tracks_live_session_availability() -> None:
     assert "Latest Answer" in harness._agent_followup_entry.tooltip
 
 
+class FakeFollowupTerminal:
+    def __init__(self) -> None:
+        self.focused = False
+
+    def grab_focus(self) -> None:
+        self.focused = True
+
+
+class AgentFollowupResultHarness:
+    _on_agent_followup_result = Focus._on_agent_followup_result
+    _refresh_agent_followup_state = Focus._refresh_agent_followup_state
+    _agent_followup_session_active = Focus._agent_followup_session_active
+
+    def __init__(self) -> None:
+        self._agent_followup_generation = 5
+        self._agent_followup_pending = True
+        self._agent_question_queue: list[str] = []
+        self._agent_followup_entry = FakeEntry()
+        self._agent_followup_entry.text = "And the father?"
+        self._agent_followup_draft = "And the father?"
+        self._agent_followup_status = ""
+        self._agent_terminal_active = True
+        self._agent_followup_endpoint = object()
+        self._agent_displayed_is_saved = False
+        self._agent_terminal = FakeFollowupTerminal()
+        self.subviews: list[str] = []
+        self.statuses: list[tuple[str, bool]] = []
+
+    def _set_agent_subview(self, subview_name: str) -> None:
+        self.subviews.append(subview_name)
+
+    def _update_ai_status(self, text: str, spinning: bool) -> None:
+        self.statuses.append((text, spinning))
+
+
+def test_followup_submission_reveals_session_and_clears_acknowledged_draft() -> None:
+    harness = AgentFollowupResultHarness()
+
+    assert harness._on_agent_followup_result(5, "And the father?", "busy", "") is False
+
+    assert harness.subviews == [AGENT_SUBVIEW_SESSION]
+    assert harness._agent_terminal.focused
+    assert harness._agent_followup_entry.get_text() == ""
+    assert harness._agent_question_queue == ["And the father?"]
+    assert harness.statuses[-1][1] is True
+    assert not harness._agent_followup_pending
+
+
+def test_followup_result_ignores_stale_generation() -> None:
+    harness = AgentFollowupResultHarness()
+
+    assert harness._on_agent_followup_result(4, "And the father?", "busy", "") is False
+
+    assert harness.subviews == []
+    assert harness._agent_question_queue == []
+    assert harness._agent_followup_pending
+
+
 def test_case_tool_descriptions_follow_the_active_source() -> None:
     harness = PresentationHarness()
 
