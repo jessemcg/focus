@@ -67,17 +67,14 @@ class SavedAnswersPopover:
         self.button.add_css_class("no-bold")
         self.button.add_css_class("focus-pill-segment")
         self.button.set_valign(Gtk.Align.CENTER)
-        self.button.set_tooltip_text("Browse and reopen saved Agent answers")
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        content.set_valign(Gtk.Align.CENTER)
+        self.button.set_tooltip_text("Saved Answers — browse and reopen saved Agent answers")
+        # Icon-only keeps the pinned tool strip compact; the star plus tooltip
+        # and accessible label identify the per-case saved-answer menu.
         icon = Gtk.Image.new_from_icon_name("starred-symbolic")
         icon.set_pixel_size(16)
-        content.append(icon)
-        content.append(Gtk.Label(label="Saved Answers"))
-        arrow = Gtk.Image.new_from_icon_name("pan-down-symbolic")
-        arrow.set_pixel_size(12)
-        content.append(arrow)
-        self.button.set_child(content)
+        icon.set_valign(Gtk.Align.CENTER)
+        self.button.set_child(icon)
+        self._set_accessible_label(self.button, "Saved Answers")
 
         self.popover = Gtk.Popover()
         self.popover.set_autohide(True)
