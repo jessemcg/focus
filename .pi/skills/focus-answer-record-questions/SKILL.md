@@ -23,7 +23,17 @@ The workflow is text-only. If extracted text cannot establish handwriting, check
 
 ## Preferred answer style
 
-- Lead with the direct answer and usually finish within two to four short paragraphs or list items.
+- Open the answer with a compact title and bottom-line subtitle on their own lines, before the body:
+
+  ```markdown
+  # Supervised Visits Continued
+  *Weekly visits remained supervised*
+
+  The record describes “weekly supervised visits”...
+  ```
+
+  The title is specific to the record question (about 3–8 words, at most 64 characters). The subtitle states the bottom line in about 2–5 words (at most 40 characters) and must not repeat the title, use a generic label, or overstate certainty. Both must reflect any material uncertainty accurately.
+- Lead the body directly with the direct answer and usually finish within two to four short paragraphs or list items.
 - Include only allegations, findings, or history that directly explain the event asked about; do not add merely related background.
 - Prefer a nearby continuous, verbatim two-to-five-word record quote for each substantive paragraph or list item. Distinctive three-to-five-word anchors make Focus links more reliable.
 - Put punctuation outside the closing quotation mark. Use double quotation marks only for genuine record language; do not stitch fragments or place ellipses inside a quote.
@@ -31,4 +41,4 @@ The workflow is text-only. If extracted text cannot establish handwriting, check
 - Omit record labels, citation keys, paths, filenames, page numbers, grep lines, and tool output from the answer.
 - State material uncertainty plainly and never invent a quote or fact.
 
-These are preferred linking and presentation conventions, not an acceptance gate. Substantive usefulness, factual care, and speed take priority. Submit an imperfect but useful answer unchanged rather than initiating a self-audit or corrective turn.
+These are preferred linking and presentation conventions, not an acceptance gate. A missing title/subtitle or an imperfect subtitle must never suppress, delay, or trigger a retry of an otherwise useful answer. Substantive usefulness, factual care, and speed take priority. Submit an imperfect but useful answer unchanged rather than initiating a self-audit or corrective turn.

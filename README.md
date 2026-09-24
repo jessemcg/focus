@@ -15,7 +15,7 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 - Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
 - Hearing, report, and minute-order summary views, with legacy organized-summary compatibility.
 - An organized Case Tools workspace with contextual controls for Agent Q&A, summaries, extraction, and page-range summarization.
-- Agent Q&A in an embedded VTE terminal with a mirrored final answer and short clickable record quotes.
+- Agent Q&A in an embedded VTE terminal with a mirrored final answer, short clickable record quotes, titled answers, and a per-case saved-answer library.
 - Compact nonauthoritative case orientation and source-map capability checks before targeted research over the original `text_pages`.
 - Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, safe source paths, and record citations.
 - Hearing-scoped counsel, non-counsel participant, witness, and examination context when the bundle has source-map schema v2.
@@ -167,7 +167,17 @@ The preferred workflow is one context call that exposes the nonauthoritative ove
 
 After the initial **Ask**, the live **Session** terminal keeps the same non-persisted workspace and context, so follow-up questions typed directly into PI reuse the active record, staged prompt, skill, and extension. Each completed follow-up submits a newer revision of the answer artifact rather than replacing the transport; Focus re-runs the same Markdown cleanup, GTK4 text styling, clickable short-quote links, and page links, then returns to **Answer** showing the latest final answer. Intermediate answers remain in the **Session** transcript. Stopping the terminal or choosing a new **Ask** closes the old workspace and starts a fresh transport/artifact lifecycle.
 
+Answers now open with a compact `# Title` and `*Subtitle*` (specific to the question, with the bottom line and its uncertainty) before the body. The title/subtitle are presentation metadata: a missing or imperfect one never suppresses, delays, or retries an otherwise useful answer, and recognized metadata is never turned into a transcript-search link target.
+
 Short continuous two-to-five-word record quotes, punctuation outside quotes, no record labels, and no bold remain preferred because they improve clickable links. They are not acceptance gates: a useful answer with a long quote, metadata, bold text, or imperfect paragraph support is displayed unchanged.
+
+### Saved answers
+
+A flat **Save Answer** control beside **Answer**/**Session** saves an immutable snapshot of the displayed answer only on an explicit click; answers are never archived automatically. The snapshot stores the original Markdown, status (including Partial/Best-effort), and question label, so repeated clicks do not duplicate it and each newer live revision saves separately. The control is disabled when there is no usable answer and shows **Saved** once a snapshot is stored.
+
+Saved answers live with the case at `<record-layout-root>/.focus/saved-answers/<answer-uuid>.json` (one self-contained mode-600 file per answer in a mode-700 directory) so the library follows the case through Dropbox. Browsing rebuilds the list from files with no index database, reads owned files even when synchronization broadened their modes (warning rather than hiding them), and leaves malformed, unknown-schema, or unfamiliar files untouched and reported. The directory association is authoritative: moving or copying the whole case with `.focus` keeps its library. Saved answers are historical prose, not transcripts; reopening one searches the current case text, and missing quotes fall back to the existing no-match feedback.
+
+The **Saved Answers** menu beside **Agent Q&A** lists this case's answers newest first with a search field, saved date, and Partial indicator. Selecting an entry opens it in the upper **Answer** pane; the latest live answer is retained separately, so a newly arriving revision offers **Latest Answer** instead of replacing the saved view. Choosing **Session** returns to the current live workflow. The trash control opens a confirmation and deletes only that one saved file, never transcripts, configuration, session files, or other answers. No bulk delete, pruning, editing, renaming, or export is offered.
 
 ### Operational metrics pilot
 
@@ -246,6 +256,9 @@ gdbus call --session \
 - `focus/record_categories.py`: read-only file-page display classifier and palette.
 - `focus/agent_helper.py`: compact context, targeted map, lookup, document, and ranked search CLI for Agent sessions.
 - `focus/agent_answer.py`: answer-artifact transport checks and non-blocking category linter.
+- `focus/answer_metadata.py`: GTK-independent title/subtitle recognition and protected-prefix offsets.
+- `focus/saved_answers.py`: durable per-case saved-answer store with typed list/load/save/delete operations.
+- `focus/ui/saved_answers.py`: the Saved Answers popover menu.
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
 - `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, explicit Focus and optional sibling metrics extensions, `--no-session`, and the strict `read,focus_record,submit_focus_answer` tool allowlist.

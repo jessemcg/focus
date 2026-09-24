@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import queue
 import sys
 
 from .core import *  # noqa: F401,F403
@@ -25,7 +26,20 @@ from .agent_answer import (
     read_focus_answer_artifact,
     remove_focus_answer_artifact,
 )
+from .answer_metadata import parse_answer_metadata
+from .saved_answers import (
+    AgentAnswerSnapshot,
+    SavedAnswer,
+    SavedAnswerListing,
+    SavedAnswerResult,
+    delete_saved_answer,
+    list_saved_answers,
+    load_saved_answer,
+    new_answer_id,
+    save_saved_answer,
+)
 from .ui.commands import FocusCommandsWindow
+from .ui.saved_answers import SavedAnswersPopover
 from .ui.settings import AiSettingsWindow
 
 
@@ -275,6 +289,21 @@ class Focus(Adw.Application):
         self._agent_terminal_active = False
         self._agent_terminal_closing = False
         self._agent_terminal_ignore_next_exit = False
+        self._agent_initial_question = ""
+        self._agent_live_snapshot: AgentAnswerSnapshot | None = None
+        self._agent_displayed_snapshot: AgentAnswerSnapshot | None = None
+        self._agent_displayed_is_saved = False
+        self._agent_saved_ids: set[str] = set()
+        self._saved_answers_popover: SavedAnswersPopover | None = None
+        self._saved_answers_button: Gtk.MenuButton | None = None
+        self._save_answer_button: Gtk.Button | None = None
+        self._latest_answer_button: Gtk.Button | None = None
+        self._latest_answer_pending = False
+        self._saved_answers_listing: SavedAnswerListing = SavedAnswerListing()
+        self._save_answer_in_flight = False
+        self._saved_answers_generation = 0
+        self._saved_answers_queue: "queue.Queue[Any]" = queue.Queue()
+        self._saved_answers_worker: threading.Thread | None = None
         self._view_state = FocusViewState()
 
     @property
@@ -739,6 +768,14 @@ class Focus(Adw.Application):
         )
         ai_mode_strip.append(agent_mode_button)
 
+        self._saved_answers_popover = SavedAnswersPopover(
+            on_select=self._on_saved_answer_selected,
+            on_delete=self._on_saved_answer_delete_requested,
+            on_opened=self._on_saved_answers_opened,
+        )
+        self._saved_answers_button = self._saved_answers_popover.button
+        ai_mode_strip.append(self._saved_answers_button)
+
         hearings_button = self._build_summary_mode_button(
             "Hearings",
             SUMMARY_SOURCE_HEARING,
@@ -949,6 +986,26 @@ class Focus(Adw.Application):
             "Show the embedded Agent terminal session",
         )
         agent_subview_strip.append(self._agent_session_button)
+
+        self._save_answer_button = Gtk.Button(label="Save Answer")
+        self._save_answer_button.add_css_class("flat")
+        self._save_answer_button.add_css_class("no-bold")
+        self._save_answer_button.add_css_class("focus-pill-segment")
+        self._save_answer_button.set_valign(Gtk.Align.CENTER)
+        self._save_answer_button.set_sensitive(False)
+        self._save_answer_button.set_tooltip_text("Save the displayed Agent answer for this case")
+        self._save_answer_button.connect("clicked", self._on_save_answer_clicked)
+        agent_subview_strip.append(self._save_answer_button)
+
+        self._latest_answer_button = Gtk.Button(label="Latest Answer")
+        self._latest_answer_button.add_css_class("flat")
+        self._latest_answer_button.add_css_class("no-bold")
+        self._latest_answer_button.add_css_class("focus-pill-segment")
+        self._latest_answer_button.set_valign(Gtk.Align.CENTER)
+        self._latest_answer_button.set_visible(False)
+        self._latest_answer_button.set_tooltip_text("Return to the latest live Agent answer")
+        self._latest_answer_button.connect("clicked", self._on_latest_answer_clicked)
+        agent_subview_strip.append(self._latest_answer_button)
         agent_output_header.append(agent_subview_strip)
 
         self._agent_output_header = agent_output_header
@@ -1764,8 +1821,10 @@ class Focus(Adw.Application):
     def _reset_view_states(self) -> None:
         self._stop_grep_search_if_running()
         self._cancel_all_ai_streams()
+        self._stop_agent_terminal()
         self._stop_agent_answer_polling()
         self._cleanup_agent_answer_artifact()
+        self._reset_saved_answers_state()
         self._cancel_pending_summary_scroll_restore()
         self._page_citation_range_start = None
         self._sync_citation_buttons()
@@ -1787,6 +1846,12 @@ class Focus(Adw.Application):
         self._agent_workspace_path = None
         self._agent_answer_status = ""
         self._agent_last_answer_text = ""
+        self._agent_live_snapshot = None
+        self._agent_displayed_snapshot = None
+        self._agent_displayed_is_saved = False
+        self._latest_answer_pending = False
+        self._save_answer_in_flight = False
+        self._refresh_answer_action_state()
         self._sync_show_image_action()
 
     def _cancel_all_ai_streams(self) -> None:
@@ -2804,6 +2869,10 @@ class Focus(Adw.Application):
             if self._agent_subview_name == subview_name:
                 self._set_agent_subview(subview_name)
             return
+        if subview_name == AGENT_SUBVIEW_SESSION:
+            # Explicitly choosing Session returns to the current live workflow;
+            # the saved answer stays displayed until a newer live revision.
+            self._leave_saved_answer_view()
         self._set_agent_subview(subview_name)
 
     def _build_wrapping_controls_box(self) -> Gtk.FlowBox:
@@ -3151,6 +3220,7 @@ class Focus(Adw.Application):
         link_tags: list[Gtk.TextTag],
         link_lookup: dict[Gtk.TextTag, tuple[str, str]],
         scroller: Gtk.ScrolledWindow | None,
+        protected_prefix: int = 0,
     ) -> None:
         if not buffer:
             return
@@ -3165,10 +3235,12 @@ class Focus(Adw.Application):
         link_tags.clear()
         link_lookup.clear()
 
-        rendered_text, phrase_spans = self._extract_ai_link_spans(text)
+        rendered_text, phrase_spans = self._extract_ai_link_spans(
+            text, protected_prefix
+        )
         summary_match_text = rendered_text
         rendered_text, page_spans, phrase_to_page_map = self._extract_markdown_page_link_spans(
-            rendered_text
+            rendered_text, protected_prefix
         )
         mapped_phrase_spans: list[tuple[int, int, str]] = []
         for start, end, phrase in phrase_spans:
@@ -3247,7 +3319,17 @@ class Focus(Adw.Application):
             scroller.queue_resize()
 
     def _apply_ai_output_links(self, text: str, state: AiOutputView) -> None:
-        self._apply_link_spans(text, state.buffer, state.link_tags, state.link_lookup, state.scroller)
+        protected_prefix = 0
+        if state is self._ai_outputs.get(AI_VIEW_AGENT_QA) and text:
+            protected_prefix = parse_answer_metadata(text).prefix_end
+        self._apply_link_spans(
+            text,
+            state.buffer,
+            state.link_tags,
+            state.link_lookup,
+            state.scroller,
+            protected_prefix,
+        )
 
     def _apply_summary_links(self, text: str) -> None:
         self._apply_link_spans(
@@ -3402,7 +3484,11 @@ class Focus(Adw.Application):
         if self._summary_loaded_path:
             self._restore_summary_position(self._summary_loaded_path)
 
-    def _extract_ai_link_spans(self, text: str) -> tuple[str, list[tuple[int, int, str]]]:
+    def _extract_ai_link_spans(
+        self,
+        text: str,
+        protected_prefix: int = 0,
+    ) -> tuple[str, list[tuple[int, int, str]]]:
         spans: list[tuple[int, int, str]] = []
         parts: list[str] = []
         cursor = 0
@@ -3412,6 +3498,15 @@ class Focus(Adw.Application):
             before = text[cursor:start]
             parts.append(before)
             offset += len(before)
+            if start < protected_prefix:
+                # Recognized title/subtitle metadata stays styled but must not
+                # become a transcript-search link target.  Keep it verbatim so
+                # the displayed heading is never mangled.
+                original = match.group(0)
+                parts.append(original)
+                offset += len(original)
+                cursor = end
+                continue
             phrase = (
                 match.group(1)
                 or match.group(2)
@@ -3434,6 +3529,7 @@ class Focus(Adw.Application):
     def _extract_markdown_page_link_spans(
         self,
         text: str,
+        protected_prefix: int = 0,
     ) -> tuple[str, list[tuple[int, int, str]], list[int]]:
         spans: list[tuple[int, int, str]] = []
         parts: list[str] = []
@@ -3459,7 +3555,8 @@ class Focus(Adw.Application):
             if link_label:
                 parts.append(link_label)
                 clean_offset += len(link_label)
-                spans.append((span_start, clean_offset, page_value))
+                if start >= protected_prefix:
+                    spans.append((span_start, clean_offset, page_value))
 
             for idx in range(start, end):
                 orig_to_clean[idx] = span_start
@@ -5949,6 +6046,9 @@ class Focus(Adw.Application):
         self.input_dir = normalized
         self._record_layout = _resolve_record_layout(self.input_dir)
         self._case_name = _read_case_name(self._record_layout.root)
+        if self._saved_answers_popover is not None:
+            self._saved_answers_popover.set_case_label(self._case_name or "This case")
+            self._saved_answers_popover.show_listing(SavedAnswerListing())
         save_input_dir_to_config(normalized)
         if not self.text_dir.exists():
             self._transient_toast(f"Text pages directory not found: {self.text_dir}")
@@ -6832,13 +6932,327 @@ class Focus(Adw.Application):
     def _clear_agent_answer(self) -> None:
         self._agent_last_answer_text = ""
         self._agent_answer_status = ""
+        self._agent_live_snapshot = None
+        self._agent_displayed_snapshot = None
+        self._agent_displayed_is_saved = False
+        self._latest_answer_pending = False
         state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
         if state:
             state.raw = ""
             self._apply_ai_output_links("", state)
         self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = ""
         self._sync_agent_output_header_state()
+        self._refresh_answer_action_state()
         self._queue_embedded_ai_panel_height_update()
+
+    def _build_live_snapshot(
+        self,
+        artifact: Any,
+        *,
+        revision: int,
+    ) -> AgentAnswerSnapshot:
+        stop_reason = str(artifact.diagnostics.get("stop_reason") or "")
+        partial = artifact.status == "partial" or stop_reason in {"length", "error", "aborted"}
+        # Follow-up revisions do not expose their exact question, so only the
+        # initial answer carries the submitted question label.
+        question = self._agent_initial_question or None
+        if revision != 1:
+            question = None
+        metadata = parse_answer_metadata(
+            artifact.markdown,
+            question=question,
+            partial=partial,
+        )
+        return AgentAnswerSnapshot(
+            answer_id=new_answer_id(),
+            markdown=artifact.markdown,
+            title=metadata.title,
+            subtitle=metadata.subtitle,
+            status=artifact.status,
+            capture=artifact.capture,
+            answer_kind=artifact.answer_kind,
+            stop_reason=stop_reason,
+            question=question,
+            origin="live",
+        )
+
+    def _display_agent_snapshot(
+        self,
+        snapshot: AgentAnswerSnapshot,
+        *,
+        is_saved: bool,
+    ) -> None:
+        self._agent_displayed_snapshot = snapshot
+        self._agent_displayed_is_saved = is_saved
+        state = self._get_ai_output_state(AI_VIEW_AGENT_QA)
+        state.raw = snapshot.markdown
+        self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = snapshot.markdown
+        self._apply_ai_output_links(snapshot.markdown, state)
+        self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
+        self._scroll_agent_answer_to_top()
+        self._sync_agent_output_header_state()
+        self._refresh_answer_action_state()
+        self._queue_embedded_ai_panel_height_update(after_render=True)
+
+    def _scroll_agent_answer_to_top(self) -> None:
+        state = self._ai_outputs.get(AI_VIEW_AGENT_QA)
+        if state is None or state.scroller is None:
+            return
+        adjustment = state.scroller.get_vadjustment()
+        if adjustment is not None:
+            GLib.idle_add(adjustment.set_value, adjustment.get_lower())
+
+    def _refresh_answer_action_state(self) -> None:
+        snapshot = self._agent_displayed_snapshot
+        has_answer = bool(snapshot is not None and snapshot.markdown.strip())
+        saved_ids = getattr(self, "_agent_saved_ids", set())
+        in_flight = bool(getattr(self, "_save_answer_in_flight", False))
+        is_saved = bool(
+            snapshot is not None
+            and (snapshot.origin == "saved" or snapshot.answer_id in saved_ids)
+        )
+        button = getattr(self, "_save_answer_button", None)
+        if button is not None:
+            if in_flight:
+                button.set_label("Saving…")
+                button.set_sensitive(False)
+            else:
+                button.set_label("Saved" if is_saved else "Save Answer")
+                button.set_sensitive(has_answer and not is_saved)
+        latest = getattr(self, "_latest_answer_button", None)
+        if latest is not None:
+            live = self._agent_live_snapshot
+            latest.set_visible(bool(self._agent_displayed_is_saved and live is not None))
+            label = "Latest Answer"
+            if self._latest_answer_pending:
+                label = "Latest Answer •"
+                latest.set_tooltip_text("A newer live Agent answer is ready")
+            else:
+                latest.set_tooltip_text("Return to the latest live Agent answer")
+            latest.set_label(label)
+
+    def _leave_saved_answer_view(self) -> None:
+        if not self._agent_displayed_is_saved:
+            return
+        self._agent_displayed_is_saved = False
+        self._latest_answer_pending = False
+        self._refresh_answer_action_state()
+
+    def _on_latest_answer_clicked(self, _button: Gtk.Button) -> None:
+        live = self._agent_live_snapshot
+        if live is None:
+            return
+        self._latest_answer_pending = False
+        self._display_agent_snapshot(live, is_saved=False)
+        self._update_ai_status(self._agent_answer_status, spinning=False)
+
+    # -- saved-answer library -------------------------------------------
+
+    def _ensure_saved_answers_worker(self) -> None:
+        worker = self._saved_answers_worker
+        if worker is not None and worker.is_alive():
+            return
+        worker = threading.Thread(target=self._saved_answers_worker_loop, daemon=True)
+        self._saved_answers_worker = worker
+        worker.start()
+
+    def _saved_answers_worker_loop(self) -> None:
+        while True:
+            job = self._saved_answers_queue.get()
+            if job is None:
+                return
+            kind, root, generation, operation, callback = job
+            try:
+                result: Any = operation()
+                error: BaseException | None = None
+            except BaseException as exc:  # noqa: BLE001 - reported, never fatal
+                result = None
+                error = exc
+            GLib.idle_add(
+                self._on_saved_answers_task_done,
+                kind,
+                generation,
+                root,
+                callback,
+                result,
+                error,
+            )
+
+    def _submit_saved_answers_task(
+        self,
+        kind: str,
+        operation: Any,
+        callback: Any,
+    ) -> None:
+        root = self._record_layout.root
+        generation = self._saved_answers_generation
+        self._ensure_saved_answers_worker()
+        self._saved_answers_queue.put((kind, root, generation, operation, callback))
+
+    def _on_saved_answers_task_done(
+        self,
+        kind: str,
+        generation: int,
+        root: Path,
+        callback: Any,
+        result: Any,
+        error: BaseException | None,
+    ) -> bool:
+        current_root = self._record_layout.root
+        if generation != self._saved_answers_generation or root != current_root:
+            if kind == "save":
+                self._save_answer_in_flight = False
+                self._refresh_answer_action_state()
+            return False
+        callback(result, error)
+        return False
+
+    def _on_saved_answers_opened(self) -> None:
+        self._reload_saved_answers()
+
+    def _reload_saved_answers(self) -> None:
+        root = self._record_layout.root
+        self._submit_saved_answers_task(
+            "list",
+            lambda: list_saved_answers(root),
+            self._apply_saved_answers_listing,
+        )
+
+    def _apply_saved_answers_listing(
+        self,
+        listing: Any,
+        error: BaseException | None,
+    ) -> None:
+        popover = self._saved_answers_popover
+        if error is not None or not isinstance(listing, SavedAnswerListing):
+            if popover is not None:
+                popover.set_case_label(self._case_name or "This case")
+                popover.show_load_error()
+            return
+        self._saved_answers_listing = listing
+        self._agent_saved_ids = {answer.answer_id for answer in listing.answers}
+        if popover is not None:
+            popover.set_case_label(self._case_name or "This case")
+            popover.show_listing(listing)
+        self._refresh_answer_action_state()
+
+    def _on_saved_answer_selected(self, answer_id: str) -> None:
+        if self._saved_answers_popover is not None:
+            self._saved_answers_popover.close()
+        for answer in self._saved_answers_listing.answers:
+            if answer.answer_id == answer_id:
+                self._display_agent_snapshot(
+                    AgentAnswerSnapshot.from_saved(answer),
+                    is_saved=True,
+                )
+                self._update_ai_status(
+                    f"Saved answer from {answer.saved_at}.", spinning=False
+                )
+                return
+        root = self._record_layout.root
+
+        def _apply(result: SavedAnswerResult, error: BaseException | None) -> None:
+            if error is not None or result is None or result.answer is None:
+                self._ai_transient_toast("That saved answer could not be opened.")
+                return
+            self._display_agent_snapshot(
+                AgentAnswerSnapshot.from_saved(result.answer),
+                is_saved=True,
+            )
+
+        self._submit_saved_answers_task(
+            "load", lambda: load_saved_answer(root, answer_id), _apply
+        )
+
+    def _on_save_answer_clicked(self, _button: Gtk.Button) -> None:
+        snapshot = self._agent_displayed_snapshot
+        if snapshot is None or not snapshot.markdown.strip():
+            return
+        if snapshot.origin == "saved" or snapshot.answer_id in self._agent_saved_ids:
+            return
+        self._save_answer_in_flight = True
+        self._refresh_answer_action_state()
+        saved = snapshot.to_saved()
+        root = self._record_layout.root
+
+        def _apply(result: SavedAnswerResult, error: BaseException | None) -> None:
+            self._save_answer_in_flight = False
+            if error is not None or result is None or result.answer is None:
+                self._refresh_answer_action_state()
+                self._ai_transient_toast("The answer could not be saved.")
+                return
+            self._agent_saved_ids.add(saved.answer_id)
+            self._refresh_answer_action_state()
+            self._reload_saved_answers()
+            self._ai_transient_toast("Answer saved for this case.")
+
+        self._submit_saved_answers_task(
+            "save", lambda: save_saved_answer(root, saved), _apply
+        )
+
+    def _on_saved_answer_delete_requested(self, answer_id: str) -> None:
+        answer: SavedAnswer | None = None
+        for candidate in self._saved_answers_listing.answers:
+            if candidate.answer_id == answer_id:
+                answer = candidate
+                break
+        title = answer.title if answer is not None else "this saved answer"
+        if self.win is None:
+            return
+        dialog = Adw.MessageDialog(
+            transient_for=self.win,
+            modal=True,
+            heading="Delete saved answer?",
+            body=f"\u201c{title}\u201d will be permanently deleted from this case.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_delete_saved_answer_response, answer_id)
+        dialog.present()
+
+    def _on_delete_saved_answer_response(
+        self,
+        _dialog: Adw.MessageDialog,
+        response: str,
+        answer_id: str,
+    ) -> None:
+        if response != "delete":
+            return
+        root = self._record_layout.root
+
+        def _apply(result: SavedAnswerResult, error: BaseException | None) -> None:
+            if error is not None or result is None or result.error:
+                self._ai_transient_toast("The saved answer could not be deleted.")
+                return
+            self._agent_saved_ids.discard(answer_id)
+            self._reload_saved_answers()
+            displayed = self._agent_displayed_snapshot
+            if displayed is not None and displayed.origin == "saved" and displayed.answer_id == answer_id:
+                live = self._agent_live_snapshot
+                if live is not None:
+                    self._latest_answer_pending = False
+                    self._display_agent_snapshot(live, is_saved=False)
+                else:
+                    self._clear_agent_answer()
+                    self._update_ai_status("Saved answer deleted.", spinning=False)
+
+        self._submit_saved_answers_task(
+            "delete", lambda: delete_saved_answer(root, answer_id), _apply
+        )
+
+    def _reset_saved_answers_state(self) -> None:
+        self._saved_answers_generation += 1
+        self._saved_answers_listing = SavedAnswerListing()
+        self._agent_saved_ids = set()
+        self._save_answer_in_flight = False
+        self._agent_initial_question = ""
+        popover = self._saved_answers_popover
+        if popover is not None:
+            popover.set_case_label(self._case_name or "This case")
+            popover.show_listing(SavedAnswerListing())
 
     def _stop_agent_answer_polling(self) -> None:
         if self._agent_answer_poll_id is not None:
@@ -6876,17 +7290,23 @@ class Focus(Adw.Application):
             answer = artifact.markdown
             if answer:
                 self._agent_last_answer_text = answer
-                state = self._get_ai_output_state(AI_VIEW_AGENT_QA)
-                state.raw = answer
-                self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = answer
-                self._apply_ai_output_links(answer, state)
-                self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
+                snapshot = self._build_live_snapshot(
+                    artifact, revision=artifact.revision
+                )
+                self._agent_live_snapshot = snapshot
+                if self._agent_displayed_is_saved:
+                    # A saved answer is being read; keep it displayed and offer
+                    # the contextual Latest Answer control instead.
+                    self._latest_answer_pending = True
+                    self._refresh_answer_action_state()
+                else:
+                    self._latest_answer_pending = False
+                    self._display_agent_snapshot(snapshot, is_saved=False)
                 self._agent_answer_status = focus_answer_status_message(artifact)
                 self._update_ai_status(
                     self._agent_answer_status,
                     spinning=False,
                 )
-                self._queue_embedded_ai_panel_height_update(after_render=True)
             else:
                 self._agent_answer_status = (
                     "Provider/session failure: no usable answer text."
@@ -6938,6 +7358,7 @@ class Focus(Adw.Application):
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._ai_settings = load_ai_settings()
         self._current_view_state().agent_question_text = question
+        self._agent_initial_question = question
         prompt_path = self._write_agent_prompt_file(
             self._compose_agent_prompt(question)
         )
@@ -7100,9 +7521,10 @@ class Focus(Adw.Application):
 
     def _on_agent_terminal_child_exited(self, _terminal: Any, _status: int) -> None:
         if self._agent_terminal_ignore_next_exit:
+            # The session was intentionally stopped (new Ask, case switch, or
+            # app close); do not let its exit event touch the new UI state.
             self._agent_terminal_ignore_next_exit = False
-            if self._agent_terminal_active:
-                return
+            return
         closing = self._agent_terminal_closing
         self._agent_terminal_active = False
         self._agent_terminal_pid = None

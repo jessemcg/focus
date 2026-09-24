@@ -61,6 +61,10 @@ def _write(path: Path, payload: dict, mode: int = 0o600) -> None:
 
 class AgentAnswerPollHarness:
     _poll_agent_answer = Focus._poll_agent_answer
+    _build_live_snapshot = Focus._build_live_snapshot
+    _display_agent_snapshot = Focus._display_agent_snapshot
+    _scroll_agent_answer_to_top = Focus._scroll_agent_answer_to_top
+    _refresh_answer_action_state = Focus._refresh_answer_action_state
 
     def __init__(self, run_id: str, artifact_path: Path) -> None:
         self._agent_run_id = run_id
@@ -81,6 +85,15 @@ class AgentAnswerPollHarness:
         self.subview_calls: list[str] = []
         self.status_calls: list[tuple[str, bool]] = []
         self.height_updates = 0
+        self._agent_initial_question = ""
+        self._agent_live_snapshot = None
+        self._agent_displayed_snapshot = None
+        self._agent_displayed_is_saved = False
+        self._agent_saved_ids: set[str] = set()
+        self._latest_answer_pending = False
+        self._save_answer_in_flight = False
+        self._save_answer_button = None
+        self._latest_answer_button = None
 
     def _get_ai_output_state(self, view_name: str) -> AiOutputView:
         return self._ai_outputs[view_name]
@@ -187,9 +200,10 @@ def test_poll_uses_answer_artifact_without_reading_session_logs(tmp_path) -> Non
     assert harness._poll_agent_answer() is True
     assert harness._agent_session_log_path is None
     assert harness._agent_last_answer_text == "Answer text."
-    assert harness.header_syncs == 0
+    # One header sync for the accepted answer display; the stale poll adds none.
+    assert harness.header_syncs == 1
     assert harness._poll_agent_answer() is True
-    assert harness.header_syncs == 0
+    assert harness.header_syncs == 1
 
 
 def test_poll_without_workspace_skips_session_discovery(tmp_path) -> None:
@@ -200,4 +214,4 @@ def test_poll_without_workspace_skips_session_discovery(tmp_path) -> None:
 
     assert harness._poll_agent_answer() is True
     assert harness._agent_session_log_path is None
-    assert harness.header_syncs == 0
+    assert harness.header_syncs == 1
