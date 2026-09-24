@@ -43,6 +43,7 @@ class _FakeButton:
 class StateHarness(AgentAnswerPollHarness):
     _on_latest_answer_clicked = Focus._on_latest_answer_clicked
     _on_saved_answer_selected = Focus._on_saved_answer_selected
+    _on_saved_answer_primary = Focus._on_saved_answer_primary
     _leave_saved_answer_view = Focus._leave_saved_answer_view
 
     def __init__(self, run_id: str, artifact_path) -> None:
@@ -51,15 +52,24 @@ class StateHarness(AgentAnswerPollHarness):
         self._latest_answer_button = _FakeButton()
         self._saved_answers_popover = None
         self._saved_answers_listing = SavedAnswerListing()
+        self._last_saved_answer_id = ""
         self._record_layout = SimpleNamespace(root=Path("/tmp/focus-synthetic"))
         self.revealed = 0
         self.submitted: list[tuple[str, object]] = []
+        self.toasts: list[str] = []
+        self.reloads = 0
 
     def _reveal_agent_answer_view(self) -> None:
         self.revealed += 1
 
     def _submit_saved_answers_task(self, kind, operation, callback) -> None:  # type: ignore[no-untyped-def]
         self.submitted.append((kind, callback))
+
+    def _ai_transient_toast(self, message: str) -> None:
+        self.toasts.append(message)
+
+    def _reload_saved_answers(self) -> None:
+        self.reloads += 1
 
 
 def _saved_snapshot(markdown: str = "Saved answer text.\n") -> AgentAnswerSnapshot:
@@ -170,6 +180,61 @@ def test_session_selection_without_live_keeps_saved_identity(tmp_path) -> None:
 
     assert harness._agent_displayed_snapshot is saved
     assert harness._agent_displayed_is_saved is True
+
+
+def test_primary_saved_answer_action_resumes_last_viewed(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    first = _saved_snapshot("First saved.\n").to_saved()
+    second = _saved_snapshot("Second saved.\n").to_saved()
+    harness._saved_answers_listing = SavedAnswerListing((first, second))
+    harness._last_saved_answer_id = second.answer_id
+
+    harness._on_saved_answer_primary()
+
+    assert harness._output_state.raw == second.markdown
+    assert harness._last_saved_answer_id == second.answer_id
+
+
+def test_primary_saved_answer_action_falls_back_to_newest(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    newest = _saved_snapshot("Newest saved.\n").to_saved()
+    older = _saved_snapshot("Older saved.\n").to_saved()
+    harness._saved_answers_listing = SavedAnswerListing((newest, older))
+    harness._last_saved_answer_id = "f" * 32
+
+    harness._on_saved_answer_primary()
+
+    assert harness._output_state.raw == newest.markdown
+    assert harness._last_saved_answer_id == newest.answer_id
+
+
+def test_primary_saved_answer_action_with_empty_library_toasts(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    harness._on_saved_answer_primary()
+
+    assert harness.toasts == ["No saved answers for this case yet."]
+    assert harness.reloads == 1
+
+
+def test_selecting_saved_answer_records_last_viewed(tmp_path) -> None:
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = StateHarness(run_id, path)
+
+    saved = _saved_snapshot().to_saved()
+    harness._saved_answers_listing = SavedAnswerListing((saved,))
+    harness._on_saved_answer_selected(saved.answer_id)
+
+    assert harness._last_saved_answer_id == saved.answer_id
 
 
 def test_late_saved_answer_load_is_rejected(tmp_path) -> None:

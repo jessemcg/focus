@@ -15,7 +15,7 @@
 - `focus/answer_presentation.py`: GTK-independent saved-date and quality-status formatting shared by the displayed answer context line and the saved-answer popover rows; malformed dates degrade to readable text.
 - `focus/reading_position.py`: bounded least-recently-used in-memory cache of per-answer viewport anchors plus scroll fractions; eviction only loses a reading position.
 - `focus/saved_answers.py`: durable per-case saved-answer store at `<record-layout-root>/.focus/saved-answers/<answer-uuid>.json`, with typed GTK-independent list/load/save/delete results, atomic private publication, and safe handling of malformed, unknown-schema, symlinked, hard-linked, special, or broad-permission entries.
-- `focus/ui/`: secondary Libadwaita windows such as settings, the saved-answer popover menu, and the D-Bus command reference.
+- `focus/ui/`: secondary Libadwaita widgets and windows such as the saved-answer split-button popover, settings, and the D-Bus command reference.
 - `.pi/settings.json`: project-local PI provider/model selection for embedded Agent sessions.
 - `.pi/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.
 - `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions and the canonical titled-answer style (opening `# Title` plus `*Subtitle*`, then the substantive body). `.pi/SYSTEM.md` delegates to this skill rather than duplicating the style rule; title/subtitle formatting is non-blocking and never triggers a retry.

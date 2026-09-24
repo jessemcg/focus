@@ -36,7 +36,12 @@ def _row_labels(answer: SavedAnswer) -> tuple[str, str]:
 
 
 class SavedAnswersPopover:
-    """Owns the ``Saved Answers`` menu button and its popover content."""
+    """Owns the ``Saved Answers`` split button and its popover content.
+
+    The button's main area invokes ``on_primary`` (open the most recently
+    viewed saved answer, falling back to the newest), while the dropdown
+    arrow opens the full library popover.
+    """
 
     def __init__(
         self,
@@ -44,10 +49,12 @@ class SavedAnswersPopover:
         on_select: Callable[[str], None],
         on_delete: Callable[[str], None],
         on_opened: Callable[[], None] | None = None,
+        on_primary: Callable[[], None] | None = None,
     ) -> None:
         self._on_select = on_select
         self._on_delete = on_delete
         self._on_opened = on_opened
+        self._on_primary = on_primary
         self._answers: list[SavedAnswer] = []
         self._filtered: list[SavedAnswer] = []
         self._pending: list[SavedAnswer] = []
@@ -55,19 +62,28 @@ class SavedAnswersPopover:
         self._load_error = False
         self._case_label = ""
 
-        self.button = Gtk.MenuButton()
+        # A labeled split button replaces the icon-only star: the main part
+        # resumes the last saved answer and the arrow advertises the library.
+        self.button = Adw.SplitButton()
         self.button.add_css_class("flat")
         self.button.add_css_class("no-bold")
-        self.button.add_css_class("focus-pill-segment")
         self.button.set_valign(Gtk.Align.CENTER)
-        self.button.set_tooltip_text("Saved Answers — browse and reopen saved Agent answers")
-        # Icon-only keeps the pinned tool strip compact; the star plus tooltip
-        # and accessible label identify the per-case saved-answer menu.
-        icon = Gtk.Image.new_from_icon_name("starred-symbolic")
-        icon.set_pixel_size(16)
-        icon.set_valign(Gtk.Align.CENTER)
-        self.button.set_child(icon)
-        self._set_accessible_label(self.button, "Saved Answers")
+        self.button.set_child(
+            Adw.ButtonContent(
+                label="Saved Answers",
+                icon_name="view-list-symbolic",
+            )
+        )
+        self.button.set_tooltip_text(
+            "Open the last saved answer; use the arrow to browse saved answers"
+        )
+        self.button.set_dropdown_tooltip("Browse saved answers")
+        self._set_accessible_label(
+            self.button,
+            "Saved Answers. Open the last saved answer, or use the arrow to browse.",
+        )
+        if self._on_primary is not None:
+            self.button.connect("clicked", self._on_primary_clicked)
 
         self.popover = Gtk.Popover()
         self.popover.set_autohide(True)
@@ -263,6 +279,10 @@ class SavedAnswersPopover:
             widget.update_property([Gtk.AccessibleProperty.LABEL], [label])
         except (AttributeError, TypeError):
             pass
+
+    def _on_primary_clicked(self, _button: Adw.SplitButton) -> None:
+        if self._on_primary is not None:
+            self._on_primary()
 
     def _on_row_activated(self, _listbox: Gtk.ListBox, row: Adw.ActionRow) -> None:
         answer_id = getattr(row, "answer_id", "")

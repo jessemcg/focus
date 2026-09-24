@@ -319,10 +319,11 @@ class Focus(Adw.Application):
         self._agent_displayed_is_saved = False
         self._agent_saved_ids: set[str] = set()
         self._saved_answers_popover: SavedAnswersPopover | None = None
-        self._saved_answers_button: Gtk.MenuButton | None = None
+        self._saved_answers_button: Adw.SplitButton | None = None
         self._save_answer_button: Gtk.Button | None = None
         self._latest_answer_button: Gtk.Button | None = None
         self._latest_answer_pending = False
+        self._last_saved_answer_id = ""
         self._saved_answers_listing: SavedAnswerListing = SavedAnswerListing()
         self._save_answer_in_flight = False
         self._saved_answers_generation = 0
@@ -494,6 +495,7 @@ class Focus(Adw.Application):
     def on_activate(self, app: Gio.Application) -> None:  # noqa: ARG002
         self._scan_pages()
         self._ensure_window()
+        self._reload_saved_answers()
         self._load_toc_from_disk_async()
         if self.pages:
             self.current_index = 0
@@ -789,9 +791,13 @@ class Focus(Adw.Application):
         self._ai_view_stack.set_vexpand(True)
         self._ai_view_stack.connect("notify::visible-child-name", self._on_ai_view_changed)
 
+        ai_nav_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        ai_nav_row.add_css_class("focus-case-tools-nav")
+        ai_nav_row.set_hexpand(True)
+        ai_nav_row.set_valign(Gtk.Align.CENTER)
+
         ai_mode_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         ai_mode_strip.add_css_class("focus-pill-group")
-        ai_mode_strip.add_css_class("focus-case-tools-nav")
         ai_mode_strip.set_halign(Gtk.Align.START)
         ai_mode_strip.set_valign(Gtk.Align.CENTER)
 
@@ -802,14 +808,6 @@ class Focus(Adw.Application):
             ("dialog-question-symbolic", "system-search-symbolic"),
         )
         ai_mode_strip.append(agent_mode_button)
-
-        self._saved_answers_popover = SavedAnswersPopover(
-            on_select=self._on_saved_answer_selected,
-            on_delete=self._on_saved_answer_delete_requested,
-            on_opened=self._on_saved_answers_opened,
-        )
-        self._saved_answers_button = self._saved_answers_popover.button
-        ai_mode_strip.append(self._saved_answers_button)
 
         hearings_button = self._build_summary_mode_button(
             "Hearings",
@@ -856,7 +854,24 @@ class Focus(Adw.Application):
         self._set_accessible_label(self._more_case_tools_button, "More case tools")
         self._more_case_tools_button.set_menu_model(more_case_tools_menu)
         ai_mode_strip.append(self._more_case_tools_button)
-        ai_header.append(ai_mode_strip)
+        ai_nav_row.append(ai_mode_strip)
+
+        nav_spacer = Gtk.Box()
+        nav_spacer.set_hexpand(True)
+        ai_nav_row.append(nav_spacer)
+
+        # Saved Answers is a labeled split button kept at the right end of the
+        # case-tools bar, away from the view toggles. The main part resumes the
+        # most recently viewed saved answer; the arrow opens the full library.
+        self._saved_answers_popover = SavedAnswersPopover(
+            on_select=self._on_saved_answer_selected,
+            on_delete=self._on_saved_answer_delete_requested,
+            on_opened=self._on_saved_answers_opened,
+            on_primary=self._on_saved_answer_primary,
+        )
+        self._saved_answers_button = self._saved_answers_popover.button
+        ai_nav_row.append(self._saved_answers_button)
+        ai_header.append(ai_nav_row)
 
         status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         status_row.add_css_class("focus-case-tools-status-row")
@@ -6211,6 +6226,9 @@ class Focus(Adw.Application):
         if self._saved_answers_popover is not None:
             self._saved_answers_popover.set_case_label(self._case_name or "This case")
             self._saved_answers_popover.show_listing(SavedAnswerListing())
+        # Warm the listing so the Saved Answers split button's primary action
+        # can resume an answer before the popover is ever opened.
+        self._reload_saved_answers()
         save_input_dir_to_config(normalized)
         if not self.text_dir.exists():
             self._transient_toast(f"Text pages directory not found: {self.text_dir}")
@@ -7734,6 +7752,20 @@ class Focus(Adw.Application):
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
 
+    def _on_saved_answer_primary(self) -> None:
+        """Open the most recently viewed saved answer, else the newest."""
+        listing = self._saved_answers_listing
+        last = self._last_saved_answer_id
+        if last and any(answer.answer_id == last for answer in listing.answers):
+            target = last
+        elif listing.answers:
+            target = listing.answers[0].answer_id
+        else:
+            self._ai_transient_toast("No saved answers for this case yet.")
+            self._reload_saved_answers()
+            return
+        self._on_saved_answer_selected(target)
+
     def _on_saved_answer_selected(self, answer_id: str) -> None:
         if self._saved_answers_popover is not None:
             self._saved_answers_popover.close()
@@ -7742,6 +7774,7 @@ class Focus(Adw.Application):
         navigation = self._answer_navigation_generation
         for answer in self._saved_answers_listing.answers:
             if answer.answer_id == answer_id:
+                self._last_saved_answer_id = answer_id
                 self._reveal_agent_answer_view()
                 self._display_agent_snapshot(
                     AgentAnswerSnapshot.from_saved(answer),
@@ -7757,6 +7790,7 @@ class Focus(Adw.Application):
             if error is not None or result is None or result.answer is None:
                 self._ai_transient_toast("That saved answer could not be opened.")
                 return
+            self._last_saved_answer_id = result.answer.answer_id
             self._reveal_agent_answer_view()
             self._display_agent_snapshot(
                 AgentAnswerSnapshot.from_saved(result.answer),
@@ -7825,6 +7859,7 @@ class Focus(Adw.Application):
         self._agent_saved_ids = set()
         self._save_answer_in_flight = False
         self._agent_initial_question = ""
+        self._last_saved_answer_id = ""
         popover = self._saved_answers_popover
         if popover is not None:
             popover.set_case_label(self._case_name or "This case")

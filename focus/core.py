@@ -2839,7 +2839,9 @@ label.focus-agent-answer-context {
 }
 
 menubutton.no-bold > button,
-menubutton.no-bold > button label {
+menubutton.no-bold > button label,
+splitbutton.no-bold > button,
+splitbutton.no-bold > button label {
   font-weight: normal;
 }
 
