@@ -98,6 +98,42 @@ def test_load_transcript_page_index_falls_back_to_record_type_prefix(tmp_path) -
     assert label.citation_key == "CT:606"
 
 
+def test_load_transcript_page_index_strips_page_notation(tmp_path) -> None:
+    path = tmp_path / "transcript_page_numbers.json"
+    path.write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "file_page": 3,
+                        "record_type": "RT",
+                        "transcript_page_number": 3,
+                        "citation_prefix": "RT",
+                        "citation_label": "RT p. 3",
+                        "citation_key": "RT:3",
+                        "status": "selected",
+                    },
+                    {
+                        "file_page": 104,
+                        "record_type": "CT",
+                        "transcript_page_number": 39,
+                        "citation_prefix": "CT",
+                        "citation_label": "CT pp. 39-44",
+                        "status": "selected",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    index = load_transcript_page_index(path)
+
+    assert index.by_file_page[3].citation_label == "RT 3"
+    assert index.by_file_page[104].citation_label == "CT 39-44"
+    assert index.by_file_page[104].citation_key == "CT:39"
+
+
 def test_format_toc_page_subtitle_uses_transcript_citation_label(tmp_path) -> None:
     path = tmp_path / "transcript_page_numbers.json"
     path.write_text(

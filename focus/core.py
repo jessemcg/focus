@@ -906,6 +906,22 @@ def _normalize_citation_prefix(value: Any) -> str:
     return re.sub(r"\s+", "", str(value).strip()).upper()
 
 
+def _normalize_citation_label(value: Any) -> str:
+    """Return a citation label without model-authored page notation.
+
+    RecordPrep numbers transcript pages with PI. A run can leave prose page
+    notation in ``citation_label`` (``"RT p. 3"``) even though the structured
+    ``citation_prefix``/``transcript_page_number`` pair is authoritative.
+    Normalize it here so every Focus surface (navigation, TOC, jump box,
+    clipboard insertion) reads the canonical ``"RT 3"`` form for both new and
+    older bundles.
+    """
+    text = re.sub(r"\s+", " ", str(value or "").strip())
+    if not text:
+        return ""
+    return re.sub(r"\b([A-Za-z0-9]+)\s+pp?\.\s*", r"\1 ", text).strip()
+
+
 def _coerce_positive_int(value: Any) -> int | None:
     if isinstance(value, int):
         page = value
@@ -1119,7 +1135,7 @@ def load_transcript_page_index(path: Path) -> TranscriptPageIndex:
             parts = citation_key.split(":", 1)
             if len(parts) == 2 and parts[1].strip().isdigit():
                 citation_key = _citation_key(parts[0], int(parts[1].strip()))
-        citation_label = str(entry.get("citation_label") or "").strip()
+        citation_label = _normalize_citation_label(entry.get("citation_label"))
         if not citation_label:
             citation_label = (
                 f"{citation_prefix} {transcript_page_number}"
