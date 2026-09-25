@@ -2943,6 +2943,24 @@ label.focus-search-chip {
   color: #1f2937;
 }
 
+scrolledwindow.focus-saved-answers-card {
+  background-color: alpha(@window_fg_color, 0.08);
+  border-radius: 12px;
+}
+
+scrolledwindow.focus-saved-answers-card > viewport {
+  background: transparent;
+}
+
+list.focus-saved-answers-list {
+  background: transparent;
+}
+
+list.focus-saved-answers-list > row {
+  border-radius: 10px;
+  margin: 1px 2px;
+}
+
 #page-text {
   background-color: transparent;
 }

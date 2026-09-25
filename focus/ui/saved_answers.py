@@ -114,6 +114,7 @@ class SavedAnswersPopover:
         self._scroller.set_propagate_natural_height(True)
         self._scroller.set_propagate_natural_width(False)
         self._scroller.set_max_content_height(LIST_MAX_HEIGHT)
+        self._scroller.add_css_class("focus-saved-answers-card")
         self._scroller.set_visible(False)
 
         self._listbox = Gtk.ListBox()
