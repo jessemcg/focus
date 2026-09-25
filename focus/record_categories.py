@@ -38,6 +38,19 @@ PAGE_TYPES = {
 HEADINGS = {"hearings": Category.HEARING, "reports": Category.REPORT,
             "minute orders": Category.MINUTE_ORDER, "forms": Category.FORM}
 
+# Sidebar display order: Forms stays on top, then the record categories in the
+# same order as the Case Tools summary strip.
+SIDEBAR_CATEGORY_ORDER = {
+    Category.FORM: 0,
+    Category.HEARING: 1,
+    Category.REPORT: 2,
+    Category.MINUTE_ORDER: 3,
+}
+
+
+def sidebar_category_rank(title: object) -> int:
+    return SIDEBAR_CATEGORY_ORDER.get(heading_category(title), len(SIDEBAR_CATEGORY_ORDER))
+
 
 def normalize(value: object) -> str:
     return value.strip().lower() if isinstance(value, str) else ""

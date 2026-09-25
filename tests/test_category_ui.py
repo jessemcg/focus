@@ -94,6 +94,65 @@ def test_sidebar_kind_independent_of_document_category():
     assert child.kind == "bookmark" and child.document_category == C.FORM
 
 
+class SidebarRebuildHarness:
+    _rebuild_toc_sidebar = Focus._rebuild_toc_sidebar
+
+    def __init__(self, categories):
+        from focus.core import Gio
+
+        self._toc_sidebar_root_store = Gio.ListStore(item_type=FocusSidebarItem)
+        self._toc_categories = categories
+        self._category_index = {}
+        self._current_view_state = lambda: SimpleNamespace()
+        self.placeholder_calls = []
+
+    def _update_sidebar_placeholder(self, has_items):
+        self.placeholder_calls.append(has_items)
+
+    def _apply_sidebar_expansion_state(self, _state):
+        pass
+
+    def _sync_sidebar_active_page(self):
+        pass
+
+    def titles(self):
+        store = self._toc_sidebar_root_store
+        return [store.get_item(index).title for index in range(store.get_n_items())]
+
+
+def test_sidebar_categories_follow_case_tools_order():
+    categories = [
+        TocCategory("FORMS", None, []),
+        TocCategory("REPORTS", None, []),
+        TocCategory("MINUTE ORDERS", None, []),
+        TocCategory("HEARINGS", None, []),
+    ]
+    harness = SidebarRebuildHarness(categories)
+
+    harness._rebuild_toc_sidebar()
+
+    assert harness.titles() == [
+        "FORMS",
+        "HEARINGS",
+        "REPORTS",
+        "MINUTE ORDERS",
+    ]
+    assert harness.placeholder_calls == [True]
+
+
+def test_sidebar_unknown_categories_follow_known_ones():
+    categories = [
+        TocCategory("REPORTS", None, []),
+        TocCategory("MISCELLANY", None, []),
+        TocCategory("HEARINGS", None, []),
+    ]
+    harness = SidebarRebuildHarness(categories)
+
+    harness._rebuild_toc_sidebar()
+
+    assert harness.titles() == ["HEARINGS", "REPORTS", "MISCELLANY"]
+
+
 class MinuteHarness:
     _toggle_minute_order_view = Focus._toggle_minute_order_view
 

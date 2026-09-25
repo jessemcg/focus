@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
-- `focus/app.py`: main `Focus` application class; owns transcript browsing, the always-visible TOC sidebar and Case Tools panel, dual-view state, image view, grep, summary browsing, and embedded Agent orchestration.
+- `focus/app.py`: main `Focus` application class; owns transcript browsing, the always-visible TOC sidebar (Forms first, then Hearings/Reports/Minute Orders to match the Case Tools strip), the always-visible Case Tools panel, dual-view state, image view, grep, summary browsing, and embedded Agent orchestration.
 - `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, citation formatting, and markdown/link rendering.
 - `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.

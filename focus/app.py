@@ -7,7 +7,12 @@ import sys
 import threading
 
 from .core import *  # noqa: F401,F403
-from .record_categories import Classification, load_category_index, with_toc_fallback
+from .record_categories import (
+    Classification,
+    load_category_index,
+    sidebar_category_rank,
+    with_toc_fallback,
+)
 from .summary_editions import (
     SummaryEdition,
     SummaryEditionError,
@@ -2067,14 +2072,14 @@ class Focus(Adw.Application):
         if self._toc_sidebar_root_store is None:
             return
         self._toc_sidebar_root_store.remove_all()
-        if not self._toc_categories:
-            self._update_sidebar_placeholder(False)
-            self._sync_sidebar_active_page()
-            return
-        for category in self._toc_categories:
+        ordered_categories = sorted(
+            self._toc_categories,
+            key=lambda category: sidebar_category_rank(category.title),
+        )
+        for category in ordered_categories:
             item = FocusSidebarItem.from_category(category, self._category_index)
             self._toc_sidebar_root_store.append(item)
-        self._update_sidebar_placeholder(True)
+        self._update_sidebar_placeholder(bool(ordered_categories))
         self._apply_sidebar_expansion_state(self._current_view_state())
         self._sync_sidebar_active_page()
 
@@ -2201,6 +2206,8 @@ class Focus(Adw.Application):
             return
         if item.kind == "category":
             tree_row.set_expanded(not tree_row.get_expanded())
+            return
+        if item.page is None:
             return
         self._show_page_from_link(f"{item.page:04d}")
 
@@ -4487,6 +4494,7 @@ class Focus(Adw.Application):
     def _set_summary_active_source(self, source: str | None) -> None:
         self._summary_active_source = source
         self._sync_ai_view_toggles(self._ai_active_view)
+        self._sync_sidebar_active_page()
         if self._ai_active_view == AI_VIEW_FILE:
             self._refresh_case_tools_status()
 
@@ -6327,6 +6335,7 @@ class Focus(Adw.Application):
             self._update_summary_progress_label()
         elif target == AI_VIEW_AGENT_QA:
             self._restore_agent_answer_position_if_current()
+        self._sync_sidebar_active_page()
         self._refresh_search_highlighted_button()
 
     def _cached_summary_is_ineligible(self) -> bool:
