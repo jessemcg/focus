@@ -2957,8 +2957,18 @@ list.focus-saved-answers-list {
 }
 
 list.focus-saved-answers-list > row {
-  border-radius: 10px;
-  margin: 1px 2px;
+  border-radius: 0;
+  margin: 0 2px;
+}
+
+list.focus-saved-answers-list > row:first-child {
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+
+list.focus-saved-answers-list > row:last-child {
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
 }
 
 #page-text {
