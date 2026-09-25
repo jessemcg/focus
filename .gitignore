@@ -8,3 +8,6 @@ __pycache__/
 /legacy_versions/
 config.json
 /local_current_case_focus.py
+
+# Local PI project runtime state (seeded from defaults)
+.pi/settings.json

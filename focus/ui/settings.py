@@ -11,6 +11,7 @@ from focus.pi_runtime import (
     clamp_pi_thinking_level,
     current_project_pi_model,
     current_project_pi_thinking_level,
+    ensure_project_pi_settings,
     save_project_pi_runtime,
 )
 
@@ -81,6 +82,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._pi_thinking_selection_changed = False
         self._pi_model_closed = False
         try:
+            ensure_project_pi_settings()
             self._original_pi_model_key = current_project_pi_model()
             self._original_pi_thinking_level = current_project_pi_thinking_level()
             self._pi_model_settings_error = ""

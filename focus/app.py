@@ -48,6 +48,7 @@ from .agent_followup import (
 )
 from .answer_metadata import parse_answer_metadata
 from .answer_presentation import answer_context_label
+from .pi_runtime import PiSettingsError, ensure_project_pi_settings
 from .reading_position import AnswerPositionCache
 from .saved_answers import (
     AgentAnswerSnapshot,
@@ -7418,6 +7419,11 @@ class Focus(Adw.Application):
         helper = FOCUS_RECORD_AGENT_HELPER
         if not helper.is_file():
             self._ai_transient_toast(f"Record Agent helper not found: {helper}")
+            return
+        try:
+            ensure_project_pi_settings()
+        except PiSettingsError as exc:
+            self._ai_transient_toast(f"Unable to initialize PI settings: {exc}")
             return
         pi_settings = FOCUS_PI_PROJECT_DIR / "settings.json"
         if (

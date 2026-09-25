@@ -13,6 +13,16 @@ from typing import Any, Sequence
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 PROJECT_PI_SETTINGS_PATH = PROJECT_DIR / ".pi" / "settings.json"
+# `.pi/settings.json` is local runtime state (git-ignored); seed it from these
+# application defaults when it is missing so a fresh checkout can run the Agent.
+DEFAULT_PROJECT_PI_SETTINGS: dict[str, Any] = {
+    "defaultProvider": "fireworks",
+    "defaultModel": "accounts/fireworks/models/deepseek-v4-pro-0813",
+    "defaultThinkingLevel": "low",
+    "enableSkillCommands": True,
+    "compaction": {"enabled": False},
+    "retry": {"enabled": True},
+}
 PI_MODEL_DISCOVERY_TIMEOUT_SECONDS = 10
 PI_THINKING_LEVELS: tuple[str, ...] = (
     "off",
@@ -301,6 +311,28 @@ def _read_pi_settings(path: Path) -> dict[str, Any]:
     return raw
 
 
+def ensure_project_pi_settings(
+    path: Path = PROJECT_PI_SETTINGS_PATH,
+) -> None:
+    """Create the local PI project settings from defaults when missing."""
+    if path.exists():
+        return
+    temp_path: Path | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        temp_path.write_text(
+            json.dumps(DEFAULT_PROJECT_PI_SETTINGS, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temp_path, path)
+    except OSError as exc:
+        raise PiSettingsError(f"Unable to create PI project settings: {exc}") from exc
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
 def current_project_pi_model(
     path: Path = PROJECT_PI_SETTINGS_PATH,
 ) -> tuple[str, str] | None:
@@ -328,6 +360,7 @@ def save_project_pi_runtime(
     normalized_thinking = thinking_level.strip().lower()
     if normalized_thinking not in PI_THINKING_LEVELS:
         raise PiSettingsError(f"Unsupported PI reasoning effort: {thinking_level}")
+    ensure_project_pi_settings(path)
     settings = _read_pi_settings(path)
     settings["defaultProvider"] = model.provider
     settings["defaultModel"] = model.model_id

@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from focus.pi_runtime import (
+    DEFAULT_PROJECT_PI_SETTINGS,
     PiModel,
     PiRuntimeError,
     PiSettingsError,
@@ -18,9 +19,45 @@ from focus.pi_runtime import (
     clamp_pi_thinking_level,
     current_project_pi_model,
     current_project_pi_thinking_level,
+    ensure_project_pi_settings,
     save_project_pi_model,
     save_project_pi_runtime,
 )
+
+
+def test_ensure_project_pi_settings_seeds_defaults_when_missing(tmp_path: Path) -> None:
+    path = tmp_path / ".pi" / "settings.json"
+
+    ensure_project_pi_settings(path)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == DEFAULT_PROJECT_PI_SETTINGS
+    assert list(path.parent.glob(".settings.json.*.tmp")) == []
+
+
+def test_ensure_project_pi_settings_preserves_existing_file(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text('{"defaultModel": "local-choice"}', encoding="utf-8")
+
+    ensure_project_pi_settings(path)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"defaultModel": "local-choice"}
+
+
+def test_save_project_runtime_seeds_missing_file(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+
+    save_project_pi_runtime(
+        PiModel("fireworks", "accounts/fireworks/models/glm-5p2", "GLM 5.2"),
+        "high",
+        path,
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["defaultProvider"] == "fireworks"
+    assert saved["defaultModel"] == "accounts/fireworks/models/glm-5p2"
+    assert saved["defaultThinkingLevel"] == "high"
+    assert saved["compaction"] == {"enabled": False}
+    assert saved["retry"] == {"enabled": True}
 
 
 def test_available_models_uses_rpc_and_sorts_deduplicated_models() -> None:

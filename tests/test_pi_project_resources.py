@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from focus.app import Focus
@@ -10,14 +9,15 @@ from focus.core import (
     FOCUS_PI_SKILL_NAME,
     FOCUS_PI_SYSTEM_PROMPT_FILE,
 )
+from focus.pi_runtime import DEFAULT_PROJECT_PI_SETTINGS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = FOCUS_PI_PROJECT_DIR / "extensions" / "focus-record-agent.ts"
 
 
-def test_pi_project_settings_preserve_pro_low_and_disable_compaction() -> None:
-    settings = json.loads((FOCUS_PI_PROJECT_DIR / "settings.json").read_text())
+def test_pi_project_settings_defaults_preserve_pro_low_and_disable_compaction() -> None:
+    settings = DEFAULT_PROJECT_PI_SETTINGS
 
     assert settings["defaultProvider"] == "fireworks"
     assert settings["defaultModel"] == "accounts/fireworks/models/deepseek-v4-pro-0813"
