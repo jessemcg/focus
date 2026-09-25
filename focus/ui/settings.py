@@ -72,9 +72,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._search_chip_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._prompt_editors: dict[str, AgentSettingsWidgets] = {}
-        self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
-        self._prompt_list: Gtk.ListBox | None = None
-        self._prompt_stack: Gtk.Stack | None = None
         self._pi_model_options: list[PiModel | None] = []
         self._pi_available_model_keys: set[tuple[str, str]] = set()
         self._pi_thinking_options: list[str] = []
@@ -239,66 +236,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_row.add_row(highlight_box)
         self._highlight_phrases_buffer = highlight_buffer
 
-        split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        split.set_hexpand(True)
-        split.set_vexpand(True)
-        split.set_shrink_start_child(False)
-        split.set_shrink_end_child(False)
-        split.set_resize_start_child(False)
-        split.set_resize_end_child(True)
-
-        prompt_list = Gtk.ListBox()
-        prompt_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        prompt_list.add_css_class("navigation-sidebar")
-        prompt_list.connect("row-selected", self._on_prompt_row_selected)
-        self._prompt_list = prompt_list
-
-        prompt_list_scroller = Gtk.ScrolledWindow()
-        prompt_list_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        prompt_list_scroller.set_min_content_width(240)
-        prompt_list_scroller.set_child(prompt_list)
-
-        prompt_stack = Gtk.Stack()
-        prompt_stack.set_hexpand(True)
-        prompt_stack.set_vexpand(True)
-        prompt_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
-        self._prompt_stack = prompt_stack
-
-        prompt_definitions = [
-            ("agent", "Agent", self._build_agent_settings_page),
-        ]
-        first_row: Gtk.ListBoxRow | None = None
-        for key, title, builder in prompt_definitions:
-            row = Gtk.ListBoxRow()
-            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-            row_box.set_margin_top(8)
-            row_box.set_margin_bottom(8)
-            row_box.set_margin_start(12)
-            row_box.set_margin_end(12)
-            label = Gtk.Label(label=title, xalign=0)
-            row_box.append(label)
-            row.set_child(row_box)
-            prompt_list.append(row)
-            self._prompt_row_keys[row] = key
-            if first_row is None:
-                first_row = row
-
-            page = builder(key, title)
-            prompt_stack.add_named(page, key)
-
-        if first_row is not None:
-            prompt_stack.set_visible_child_name(self._prompt_row_keys[first_row])
-
-            def _select_first_prompt_row() -> bool:
-                if first_row.get_parent() is prompt_list:
-                    prompt_list.select_row(first_row)
-                return False
-
-            GLib.idle_add(_select_first_prompt_row)
-
-        split.set_start_child(prompt_list_scroller)
-        split.set_end_child(prompt_stack)
-        box.append(split)
+        agent_row = self._build_agent_settings_page("agent", "Agent")
+        appearance_group.add(agent_row)
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -366,29 +305,16 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             return _coerce_color_value(control.get_text(), default)
         return default
 
-    def _build_agent_settings_page(self, key: str, title: str) -> Gtk.Widget:
-        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        page_box.set_margin_top(12)
-        page_box.set_margin_bottom(12)
-        page_box.set_margin_start(12)
-        page_box.set_margin_end(12)
-        page_box.set_vexpand(True)
-
-        title_label = Gtk.Label(label=title, xalign=0)
-        title_label.add_css_class("title-3")
-        page_box.append(title_label)
-
-        launch_group = Adw.PreferencesGroup(
-            title="PI Agent",
-            description="PI must be installed to answer Agent questions.",
+    def _build_agent_settings_page(self, key: str, title: str) -> Adw.ExpanderRow:
+        agent_row = Adw.ExpanderRow(
+            title=title,
+            subtitle="PI must be installed to answer Agent questions.",
         )
-        launch_group.add_css_class("list-stack")
-        launch_group.set_hexpand(True)
-        page_box.append(launch_group)
+        agent_row.set_expanded(False)
 
         pi_agent_command_row = Adw.EntryRow(title="PI command")
         pi_agent_command_row.set_hexpand(True)
-        launch_group.add(pi_agent_command_row)
+        agent_row.add_row(pi_agent_command_row)
 
         speech_agent_source_row = Adw.EntryRow(
             title="Speech-to-text question file",
@@ -397,7 +323,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             "Used by the submit_speech_agent_question D-Bus action."
         )
         speech_agent_source_row.set_hexpand(True)
-        launch_group.add(speech_agent_source_row)
+        agent_row.add_row(speech_agent_source_row)
 
         self.pi_model_row = Adw.ComboRow(
             title="PI Model",
@@ -430,7 +356,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         add_model_suffix = getattr(self.pi_model_row, "add_suffix", None)
         if callable(add_model_suffix):
             add_model_suffix(self.pi_model_refresh_button)
-        launch_group.add(self.pi_model_row)
+        agent_row.add_row(self.pi_model_row)
 
         self.pi_thinking_row = Adw.ComboRow(
             title="Reasoning Effort",
@@ -445,7 +371,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             "notify::selected",
             self._on_pi_thinking_selected,
         )
-        launch_group.add(self.pi_thinking_row)
+        agent_row.add_row(self.pi_thinking_row)
 
         pi_configuration_row = Adw.ActionRow(
             title="PI configuration",
@@ -455,7 +381,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 "global PI configuration."
             ),
         )
-        launch_group.add(pi_configuration_row)
+        agent_row.add_row(pi_configuration_row)
 
         pi_access_row = Adw.ActionRow(
             title="PI access",
@@ -467,19 +393,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
         warning_icon.add_css_class("warning")
         pi_access_row.add_prefix(warning_icon)
-        launch_group.add(pi_access_row)
-
-        page = Gtk.ScrolledWindow()
-        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        page.set_hexpand(True)
-        page.set_vexpand(True)
-        page.set_child(page_box)
+        agent_row.add_row(pi_access_row)
 
         self._prompt_editors[key] = AgentSettingsWidgets(
             pi_agent_command_row=pi_agent_command_row,
             speech_agent_source_row=speech_agent_source_row,
         )
-        return page
+        return agent_row
 
     def _on_settings_close_request(self, *_args: object) -> bool:
         self._pi_model_closed = True
@@ -788,13 +708,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._update_pi_model_subtitle()
         self._populate_pi_thinking_row(desired_thinking)
         return False
-
-    def _on_prompt_row_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
-        if not row or not self._prompt_stack:
-            return
-        key = self._prompt_row_keys.get(row)
-        if key:
-            self._prompt_stack.set_visible_child_name(key)
 
     def _prompt_text(self, buffer: Gtk.TextBuffer) -> str:
         start, end = buffer.get_bounds()

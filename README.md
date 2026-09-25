@@ -140,10 +140,10 @@ See [category acceptance and screenshots](docs/record-category-acceptance.md).
 
 ## Configuration
 
-Focus stores local application settings in `config.json` (ignored by Git). Settings include:
+Focus stores local application settings in `config.json` (ignored by Git). The Settings window is a single page with **Display**, **Highlights**, and **Agent** sections. Settings include:
 
 - Input directory.
-- PI Agent command and speech question file.
+- PI Agent command, speech question file, and PI model/reasoning effort.
 - Fonts, highlight phrases, and colors.
 
 Obsolete embedding/vector-question credentials and settings are removed when configuration is loaded, and retired summarization/extraction credentials and model profiles are dropped when settings are saved. Never commit `config.json` or API keys.
