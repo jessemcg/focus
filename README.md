@@ -12,9 +12,8 @@ Focus is a GTK4/Libadwaita desktop app for reading appellate-record text and pag
 - Metadata-backed hearing, report, minute-order, and form colors.
 - Fast Python-only record search with Unicode/OCR normalization, hit navigation, and configurable highlighting.
 - Official transcript-page/citation lookup from RecordPrep metadata.
-- Page and range summarization plus structured information extraction through configurable OpenAI-compatible model profiles.
 - Hearing, report, and minute-order summary views, with legacy organized-summary compatibility.
-- An organized Case Tools workspace with contextual controls for Agent Q&A, summaries, extraction, and page-range summarization.
+- An always-visible Case Tools workspace with Agent Q&A plus the Hearings, Reports, and Minute Orders summary views.
 - Agent Q&A in an embedded VTE terminal with a mirrored final answer, short clickable record quotes, titled answers, and a per-case saved-answer library.
 - Compact nonauthoritative case orientation and source-map capability checks before targeted research over the original `text_pages`.
 - Database-free helper search with OCR normalization, participant/document scopes, ranked snippets, safe source paths, and record citations.
@@ -144,16 +143,14 @@ See [category acceptance and screenshots](docs/record-category-acceptance.md).
 Focus stores local application settings in `config.json` (ignored by Git). Settings include:
 
 - Input directory.
-- Model profiles for single-page summary, page-range summary, and extraction.
-- Prompt templates for those three tools.
 - PI Agent command and speech question file.
 - Fonts, highlight phrases, and colors.
 
-Obsolete embedding/vector-question credentials and settings are removed when configuration is loaded or saved. Never commit `config.json` or API keys.
+Obsolete embedding/vector-question credentials and settings are removed when configuration is loaded, and retired summarization/extraction credentials and model profiles are dropped when settings are saved. Never commit `config.json` or API keys.
 
 ## Agent questions
 
-Open **Case Tools** from the labeled header control and select **Agent Q&A**. The composer has two equal-width question fields with inline activity feedback. **New question…** starts a new query when you press Enter and replaces the current conversation. **Follow up…** continues the live Pi conversation when you press Enter, never starts a new query, and becomes available only after a question has started a live session. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
+The **Case Tools** panel is always visible; select **Agent Q&A**. The composer has two equal-width question fields with inline activity feedback. **New question…** starts a new query when you press Enter and replaces the current conversation. **Follow up…** continues the live Pi conversation when you press Enter, never starts a new query, and becomes available only after a question has started a live session. The **Answer** and **Session** views appear only after Agent output or a live terminal session is available.
 
 Starting a new question creates one private disposable workspace and stages its system prompt, skill, settings, Focus extension, and explicit follow-up bridge. PI uses `--no-session`; live interactive follow-ups and app-owned answer artifacts remain available without persisted transcripts. Extension discovery stays disabled. The sibling PiRunMetrics observer is explicitly loaded when available, with the same tool allowlist and model selection. Credentials remain in PI's global auth store.
 
@@ -217,11 +214,9 @@ uv run python -m focus.agent_helper \
 
 ## Summaries
 
-Focus displays RecordPrep's source hearing, report, and minute-order summaries and remains compatible with organized summaries from older bundles. **Hearings** and **Reports** stay directly available in the Case Tools navigation; **More** groups minute orders, extraction, and page-range summarization. When content is available, the expanded panel targets about one-third of the app window height, with a 260-pixel total-height floor on shorter windows when space permits. Current RecordPrep bundles no longer create separate organized derivatives. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose and the concise case overview are nonauthoritative and must be checked against the record for Agent answers.
+Focus displays RecordPrep's source hearing, report, and minute-order summaries and remains compatible with organized summaries from older bundles. **Agent Q&A**, **Hearings**, **Reports**, and **Minute Orders** are all directly available in the Case Tools navigation. When content is available, the expanded panel targets about one-third of the app window height, with a 260-pixel total-height floor on shorter windows when space permits. Current RecordPrep bundles no longer create separate organized derivatives. RecordPrep uses the participant index privately for accurate attribution; new hearing summaries do not publish counsel/participant rosters or standalone testimony-status lines. Summary prose and the concise case overview are nonauthoritative and must be checked against the record for Agent answers.
 
 When a bundle includes RecordPrep's page-matched summary editions (`summaries/editions/` plus the manifest `summarized_<kind>_pdf`/`summarized_<kind>_pages` companion keys), Focus browses each summary one printable page at a time with flat Previous/Next controls, an editable page number, and `Page N of M` numbering that matches the PDF exactly. Each displayed page preserves paragraph separation with exactly one empty line between paragraphs (the PDF remains the immutable pagination authority; the sidecar text itself is never rewritten). Search still covers every page in document order, Enter follows matches across page transitions, and paper-page boundaries act as search boundaries. Set Bookmark writes a version-3 paper-page bookmark recording the page, a `line` fallback, the `source_sha256` summary freshness guard, the edition `pdf_sha256`, and the `layout_id`: the exact page is restored only while both hashes still match, a matching source with a changed PDF (a repaginated edition) is mapped back through the saved source line with a notification, and a source mismatch falls back safely to page 1. Legacy version-2 page bookmarks validate the source hash and then map their stored line fallback instead of trusting an obsolete page number, and version-1 line bookmarks still return approximately until the next Set Bookmark. **Open PDF** opens the canonical Letter PDF in the default document viewer, preserving fixed page membership and footer numbers; use the viewer's own print command to print it, so the edition's pagination is never re-flowed by Focus. Focus accepts every supported RecordPrep schema/layout pairing (schema v1 with the denser `recordprep-summary-letter-v2` or legacy v1 sidecars, and schema v2 with `recordprep-summary-letter-v3`), validates the sidecar against both the summary text and the PDF by hash, and rejects it as a unit if anything is missing, malformed, path-escaping, or stale, degrading safely to the continuous scrolling, percentage, and line-bookmark behavior. Schema v2 editions carry required per-page quote spans: RecordPrep renders recognized quoted phrases in bold without their outer double quote delimiters, and Focus applies its existing bold/phrase styling and phrase clicks directly from those validated spans (using the stored complete phrase for fragments that wrap across a paper-page boundary) instead of reparsing quote-free text; malformed or missing quote spans reject the whole sidecar. Cached in-session paper-page positions are honored only while the loaded edition's PDF hash still matches, so switching summaries or rebuilding an edition can never restore a stale page number.
-
-Focus's own page/range summary and extraction tools are independent of Agent Q&A and use the model profiles selected in Settings.
 
 ## Keyboard and external commands
 
@@ -231,7 +226,6 @@ Important shortcuts:
 - Home/End: first/last page.
 - Ctrl+F: transcript grep.
 - Ctrl+Q: focus Agent Q&A.
-- Ctrl+Shift+A: toggle case tools and focus Agent Q&A when opened.
 - Ctrl+I: toggle the page image.
 - Ctrl+Shift+M: open matching minute-order text / return to originating hearing text.
 - F1: keyboard shortcuts.

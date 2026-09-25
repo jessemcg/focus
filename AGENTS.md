@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
-- `focus/app.py`: main `Focus` application class; owns transcript browsing, TOC sidebar, dual-view state, image view, grep, AI tools, and embedded Agent orchestration.
+- `focus/app.py`: main `Focus` application class; owns transcript browsing, the always-visible TOC sidebar and Case Tools panel, dual-view state, image view, grep, summary browsing, and embedded Agent orchestration.
 - `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, citation formatting, and markdown/link rendering.
 - `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
@@ -46,7 +46,7 @@
 
 ## Testing Guidelines
 - Add or update coverage under `tests/` using `pytest` when introducing non-trivial logic.
-- For UI changes, exercise core flows manually: open a transcript, step pages, run grep, toggle TOC sidebar, switch views, try image view, and verify summary/extraction plus Agent Q&A flows.
+- For UI changes, exercise core flows manually: open a transcript, step pages, run grep, switch between Agent Q&A and the Hearings/Reports/Minute Orders summaries, try image view, and verify the TOC sidebar and Case Tools panel are always visible.
 - For Agent answer switching, run the bounded synthetic acceptance harness: `uv run python tests/acceptance_answer_switching.py` (optionally under `G_DEBUG=fatal-criticals`). It uses a temporary HOME/XDG, a unique application id, synthetic saved answers plus a paginated schema-v2 hearing edition and a continuous report summary, and exits non-zero on any GTK critical, wrong final view, or identity mismatch. It makes no model calls and never touches a real case.
 - Document any manual test steps in PR descriptions until automated coverage exists.
 

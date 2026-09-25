@@ -10,7 +10,7 @@ Features
 - Mouse wheel scrolls within the current record; hold Ctrl and wheel to load the previous/next page.
 - Page jump entry (Ctrl+E) and gap-tolerant grep entry (Ctrl+F) stay in the document toolbar.
 - Grep matches render in red and navigate hit-by-hit while one transcript page stays visible.
-- Ctrl+Shift+A opens case tools and focuses the Agent question box.
+- Ctrl+Q focuses the Agent question box.
 - Ctrl+P prints the current page image.
 - Keyboard shortcuts: Up = previous, Down = next, Home/End = first/last.
 - Scrollbars track your position while you browse.
@@ -27,7 +27,6 @@ Run
 from __future__ import annotations
 
 import bisect
-from datetime import date, datetime, timezone
 import io
 import json
 import os
@@ -38,10 +37,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-import urllib.error
-import urllib.request
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -82,30 +78,9 @@ GLib.set_application_name(APPLICATION_NAME)
 
 CONFIG_FILE = PROJECT_DIR / "config.json"
 CONFIG_KEY_INPUT_DIR = "input_dir"
-CONFIG_KEY_API_URL = "api_url"
-CONFIG_KEY_MODEL_ID = "model_id"
-CONFIG_KEY_API_KEY = "api_key"
-CONFIG_KEY_PAGE_API_URL = "page_api_url"
-CONFIG_KEY_PAGE_MODEL_ID = "page_model_id"
-CONFIG_KEY_PAGE_API_KEY = "page_api_key"
-CONFIG_KEY_RANGE_API_URL = "range_api_url"
-CONFIG_KEY_RANGE_MODEL_ID = "range_model_id"
-CONFIG_KEY_RANGE_API_KEY = "range_api_key"
-CONFIG_KEY_EXTRACT_API_URL = "extract_api_url"
-CONFIG_KEY_EXTRACT_MODEL_ID = "extract_model_id"
-CONFIG_KEY_EXTRACT_API_KEY = "extract_api_key"
-CONFIG_KEY_PAGE_DISABLE_REASONING = "page_disable_reasoning"
-CONFIG_KEY_RANGE_DISABLE_REASONING = "range_disable_reasoning"
-CONFIG_KEY_EXTRACT_DISABLE_REASONING = "extract_disable_reasoning"
-CONFIG_KEY_SUMMARIZATION_PROMPT = "summarization_prompt"
-CONFIG_KEY_PAGE_PROMPT = "page_summarization_prompt"
-CONFIG_KEY_RANGE_PROMPT = "range_summarization_prompt"
-CONFIG_KEY_EXTRACT_PROMPT = "extract_information_prompt"
 CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE = "speech_agent_source_file"
 DEFAULT_SPEECH_AGENT_SOURCE_FILE = "/dev/shm/speech.txt"
 CONFIG_KEY_PI_AGENT_COMMAND = "pi_agent_command"
-CONFIG_KEY_MODEL_PROFILES = "model_profiles"
-CONFIG_KEY_TASK_DEFAULT_PROFILES = "task_default_profiles"
 CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_TABLE_FONT_SIZE_PT = "table_font_size_pt"
@@ -117,19 +92,6 @@ CONFIG_KEY_SUMMARY_EMPHASIS_COLOR = "summary_emphasis_color"
 CONFIG_KEY_SEARCH_CHIP_COLOR = "search_chip_color"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
 CASE_NAME_FILENAME = "case_name.txt"
-DEFAULT_SUMMARIZATION_PROMPT = (
-    "Summarize the provided court transcript in 3–5 concise bullet points. "
-    "Highlight the core issues, who is speaking, and any rulings or key facts. "
-    "If the text is incomplete or appears truncated, mention that plainly."
-)
-DEFAULT_EXTRACT_PROMPT = (
-    "Extract information about each child mentioned in the provided court transcript pages. "
-    "For each child, identify the child's name if stated, date of birth exactly as it appears, "
-    "current age as of the current date provided above, source page number, and a short supporting "
-    "quote when available. If a DOB is incomplete, conflicting, or not found, say so plainly and "
-    "do not guess. Always respond in English."
-)
-DEFAULT_DISABLE_REASONING = False
 EMBEDDED_AI_PANEL_HEIGHT_DIVISOR = 3
 EMBEDDED_AI_PANEL_MIN_HEIGHT = 260
 DEFAULT_PI_AGENT_COMMAND = "pi"
@@ -146,21 +108,6 @@ FOCUS_AGENT_ANSWER_PROTOCOL_FILE = PROJECT_DIR / "focus" / "agent_answer.py"
 FOCUS_PI_SKILL_NAME = "focus-answer-record-questions"
 FOCUS_PI_SKILL_FILE = (
     FOCUS_PI_PROJECT_DIR / "skills" / FOCUS_PI_SKILL_NAME / "SKILL.md"
-)
-UNSET_PROFILE_LABEL = "Legacy credentials"
-MODEL_PROFILE_IDS = ("profile1", "profile2", "profile3")
-DEFAULT_MODEL_PROFILE_NICKNAMES = {
-    "profile1": "Profile 1",
-    "profile2": "Profile 2",
-    "profile3": "Profile 3",
-}
-TASK_PROFILE_PAGE = "page"
-TASK_PROFILE_RANGE = "range"
-TASK_PROFILE_EXTRACT = "extract"
-TASK_PROFILE_KEYS = (
-    TASK_PROFILE_PAGE,
-    TASK_PROFILE_RANGE,
-    TASK_PROFILE_EXTRACT,
 )
 SUMMARY_DIR_NAME = "summaries"
 HEARING_SUMMARY_CANDIDATES = (
@@ -335,11 +282,6 @@ AI_BLOCKQUOTE_LEFT_MARGIN = 24
 AI_BLOCKQUOTE_RIGHT_MARGIN = 12
 AI_BLOCKQUOTE_INDENT = 0
 AI_BLOCKQUOTE_SPACING_PX = 4
-CASE_TOOLS_ICON_CHOICES = (
-    "applications-utilities-symbolic",
-    "document-properties-symbolic",
-    "preferences-system-symbolic",
-)
 FOCUS_TERMINAL_DARK_FOREGROUND = "#f2f4f8"
 FOCUS_TERMINAL_DARK_BACKGROUND = "#3d3d3d"
 FOCUS_TERMINAL_DARK_SELECTION = "#3d536b"
@@ -438,13 +380,6 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
             ),
             FocusCommand(
                 "Transcript",
-                "Toggle TOC sidebar",
-                "toggle_toc_sidebar",
-                "<Primary><Shift>Z",
-                "Show or hide the TOC sidebar.",
-            ),
-            FocusCommand(
-                "Transcript",
                 "Toggle image view",
                 "toggle_show_image",
                 "<Primary>I",
@@ -495,13 +430,6 @@ FOCUS_COMMAND_GROUPS: tuple[tuple[str, tuple[FocusCommand, ...]], ...] = (
     (
         "AI Panel",
         (
-            FocusCommand(
-                "AI Panel",
-                "Toggle case tools and focus question box",
-                "toggle_ai_panel",
-                "<Primary><Shift>A",
-                "Show case tools and focus the question box.",
-            ),
             FocusCommand(
                 "AI Panel",
                 "Focus Agent question box",
@@ -608,54 +536,9 @@ MONTH_NAME_TO_NUMBER = {
 RIGHT_SCROLL_ZONE_EDGE_MARGIN = 18
 IMAGE_PREVIEW_RAIL_WIDTH = 212
 IMAGE_PREVIEW_THUMB_WIDTH = IMAGE_PREVIEW_RAIL_WIDTH
-AI_VIEW_SUMMARIZE = "summarize"
-AI_VIEW_EXTRACT = "extract"
 AI_VIEW_AGENT_QA = "agent-qa"
 AGENT_SUBVIEW_ANSWER = "answer"
 AGENT_SUBVIEW_SESSION = "session"
-
-
-def _model_looks_kimi(model_id: str) -> bool:
-    normalized = (model_id or "").strip().lower()
-    return "kimi" in normalized or "moonshot" in normalized
-
-
-def _model_looks_deepseek(model_id: str) -> bool:
-    normalized = (model_id or "").strip().lower()
-    return "deepseek" in normalized
-
-
-def _api_url_looks_fireworks(api_url: str) -> bool:
-    normalized = (api_url or "").strip().lower()
-    return "fireworks.ai" in normalized
-
-
-def _apply_disable_reasoning_to_body(
-    body: dict[str, Any],
-    *,
-    model_id: str,
-    disable_reasoning: bool,
-) -> None:
-    if not disable_reasoning:
-        return
-    if _model_looks_deepseek(model_id):
-        body["reasoning_effort"] = "none"
-    elif _model_looks_kimi(model_id):
-        body["thinking"] = {"type": "disabled"}
-    else:
-        body["reasoning_effort"] = "none"
-
-
-def _apply_priority_service_tier_to_body(
-    body: dict[str, Any],
-    *,
-    api_url: str,
-    priority_service_tier: bool,
-) -> None:
-    if priority_service_tier and _api_url_looks_fireworks(api_url):
-        body["service_tier"] = "priority"
-
-
 AI_VIEW_FILE = "show-file"
 
 
@@ -817,16 +700,6 @@ class TranscriptPageIndex:
 
 
 @dataclass(frozen=True)
-class SumRangeChoice:
-    start: TranscriptPageLabel
-    end: TranscriptPageLabel
-
-    @property
-    def label(self) -> str:
-        return f"{self.start.citation_label}-{self.end.citation_label}"
-
-
-@dataclass(frozen=True)
 class CitationRangeFormatting:
     citation: str
     message: str = ""
@@ -834,35 +707,6 @@ class CitationRangeFormatting:
     @property
     def valid(self) -> bool:
         return bool(self.citation)
-
-
-@dataclass(frozen=True)
-class SumRangeValidation:
-    start_page: int | None
-    end_page: int | None
-    targets: tuple[int, ...]
-    message: str
-    start_label: str = ""
-    end_label: str = ""
-    ambiguous_field: str | None = None
-    ambiguous_matches: tuple[TranscriptPageLabel, ...] = ()
-    ambiguous_range_choices: tuple[SumRangeChoice, ...] = ()
-
-    @property
-    def valid(self) -> bool:
-        return bool(self.targets)
-
-
-@dataclass(frozen=True)
-class SumPageResolution:
-    page: int | None
-    label: str
-    message: str
-    ambiguous_matches: tuple[TranscriptPageLabel, ...] = ()
-
-    @property
-    def valid(self) -> bool:
-        return self.page is not None and not self.ambiguous_matches
 
 
 def _path_from_manifest(value: Any, root: Path) -> Path | None:
@@ -1222,317 +1066,6 @@ def parse_transcript_page_jump_query(text: str) -> TranscriptPageJumpQuery | Non
     return None
 
 
-def _has_transcript_page_index(index: TranscriptPageIndex) -> bool:
-    return bool(index.by_file_page or index.by_transcript_number or index.by_citation_key)
-
-
-def resolve_sum_page_field(
-    text: str,
-    pages: Sequence[int],
-    transcript_index: TranscriptPageIndex,
-) -> SumPageResolution:
-    raw = text.strip()
-    if not raw:
-        return SumPageResolution(None, "", "Enter start and end pages.")
-    query = parse_transcript_page_jump_query(raw)
-    if query is None:
-        return SumPageResolution(None, "", "Use transcript pages like RT 3 or 1CT 25.")
-
-    has_index = _has_transcript_page_index(transcript_index)
-    if has_index:
-        if query.kind == "file":
-            return SumPageResolution(
-                None,
-                "",
-                "Use transcript citation pages, not .txt page numbers.",
-            )
-        if query.kind == "citation":
-            matches = transcript_index.by_citation_key.get(
-                _citation_key(query.citation_prefix, query.page_number),
-                (),
-            )
-            if not matches:
-                return SumPageResolution(
-                    None,
-                    "",
-                    f"{query.citation_prefix} {query.page_number} not available.",
-                )
-        else:
-            matches = transcript_index.by_transcript_number.get(query.page_number, ())
-            if not matches:
-                return SumPageResolution(
-                    None,
-                    "",
-                    f"Transcript page {query.page_number} not available.",
-                )
-        if len(matches) > 1:
-            return SumPageResolution(
-                None,
-                "",
-                f"Choose which transcript page {query.page_number} means.",
-                tuple(matches),
-            )
-        label = matches[0]
-        return SumPageResolution(label.file_page, label.citation_label, "")
-
-    if query.kind == "citation":
-        return SumPageResolution(
-            None,
-            "",
-            "Transcript page labels are not available; use .txt page numbers.",
-        )
-    page = query.page_number
-    if page not in pages:
-        return SumPageResolution(None, "", f"{page:04d}.txt not available.")
-    return SumPageResolution(page, f"{page:04d}.txt", "")
-
-
-def _sum_matches_for_query(
-    query: TranscriptPageJumpQuery,
-    transcript_index: TranscriptPageIndex,
-) -> tuple[TranscriptPageLabel, ...]:
-    if query.kind == "citation":
-        return transcript_index.by_citation_key.get(
-            _citation_key(query.citation_prefix, query.page_number),
-            (),
-        )
-    if query.kind == "bare":
-        return transcript_index.by_transcript_number.get(query.page_number, ())
-    return ()
-
-
-def _sum_range_choices_for_matches(
-    start_matches: Sequence[TranscriptPageLabel],
-    end_matches: Sequence[TranscriptPageLabel],
-    *,
-    preferred_prefix: str = "",
-) -> tuple[SumRangeChoice, ...]:
-    normalized_prefix = _normalize_citation_prefix(preferred_prefix)
-    choices: list[SumRangeChoice] = []
-    for start in start_matches:
-        for end in end_matches:
-            if start.citation_prefix != end.citation_prefix:
-                continue
-            if normalized_prefix and start.citation_prefix != normalized_prefix:
-                continue
-            if start.file_page > end.file_page:
-                continue
-            choices.append(SumRangeChoice(start, end))
-    return tuple(
-        sorted(
-            choices,
-            key=lambda choice: (
-                choice.start.file_page,
-                choice.end.file_page,
-                choice.start.citation_label,
-                choice.end.citation_label,
-            ),
-        )
-    )
-
-
-def _validation_from_sum_range_choice(
-    choice: SumRangeChoice,
-    pages: Sequence[int],
-) -> SumRangeValidation:
-    start_page = choice.start.file_page
-    end_page = choice.end.file_page
-    targets = tuple(page for page in pages if start_page <= page <= end_page)
-    if not targets:
-        return SumRangeValidation(
-            start_page,
-            end_page,
-            (),
-            "No matching pages.",
-            choice.start.citation_label,
-            choice.end.citation_label,
-        )
-    return SumRangeValidation(
-        start_page,
-        end_page,
-        targets,
-        f"{len(targets)} pages",
-        choice.start.citation_label,
-        choice.end.citation_label,
-    )
-
-
-def _validate_sum_page_fields_with_transcript_index(
-    start_text: str,
-    end_text: str,
-    pages: Sequence[int],
-    transcript_index: TranscriptPageIndex,
-    current_page: int | None,
-) -> SumRangeValidation:
-    start_raw = start_text.strip()
-    end_raw = end_text.strip()
-    if not start_raw or not end_raw:
-        return SumRangeValidation(None, None, (), "Enter start and end pages.")
-    start_query = parse_transcript_page_jump_query(start_raw)
-    end_query = parse_transcript_page_jump_query(end_raw)
-    if start_query is None or end_query is None:
-        return SumRangeValidation(None, None, (), "Use transcript pages like RT 3 or 1CT 25.")
-    if start_query.kind == "file" or end_query.kind == "file":
-        return SumRangeValidation(
-            None,
-            None,
-            (),
-            "Use transcript citation pages, not .txt page numbers.",
-        )
-
-    start_matches = _sum_matches_for_query(start_query, transcript_index)
-    if not start_matches:
-        label = (
-            f"{start_query.citation_prefix} {start_query.page_number}"
-            if start_query.kind == "citation"
-            else f"Transcript page {start_query.page_number}"
-        )
-        return SumRangeValidation(None, None, (), f"{label} not available.")
-    end_matches = _sum_matches_for_query(end_query, transcript_index)
-    if not end_matches:
-        label = (
-            f"{end_query.citation_prefix} {end_query.page_number}"
-            if end_query.kind == "citation"
-            else f"Transcript page {end_query.page_number}"
-        )
-        return SumRangeValidation(None, None, (), f"{label} not available.")
-
-    preferred_prefix = ""
-    if start_query.kind == "citation":
-        preferred_prefix = start_query.citation_prefix
-    elif end_query.kind == "citation":
-        preferred_prefix = end_query.citation_prefix
-    if preferred_prefix:
-        choices = _sum_range_choices_for_matches(
-            start_matches,
-            end_matches,
-            preferred_prefix=preferred_prefix,
-        )
-        if len(choices) == 1:
-            return _validation_from_sum_range_choice(choices[0], pages)
-        if len(choices) > 1:
-            return SumRangeValidation(
-                None,
-                None,
-                (),
-                "Choose which transcript range to summarize.",
-                ambiguous_range_choices=choices,
-            )
-
-    choices = _sum_range_choices_for_matches(start_matches, end_matches)
-    if len(choices) == 1:
-        return _validation_from_sum_range_choice(choices[0], pages)
-    if len(choices) > 1:
-        return SumRangeValidation(
-            None,
-            None,
-            (),
-            "Choose which transcript range to summarize.",
-            ambiguous_range_choices=choices,
-        )
-    if current_page is not None:
-        current_label = transcript_index.by_file_page.get(current_page)
-        if current_label and current_label.citation_prefix:
-            choices = _sum_range_choices_for_matches(
-                start_matches,
-                end_matches,
-                preferred_prefix=current_label.citation_prefix,
-            )
-            if len(choices) == 1:
-                return _validation_from_sum_range_choice(choices[0], pages)
-            if len(choices) > 1:
-                return SumRangeValidation(
-                    None,
-                    None,
-                    (),
-                    "Choose which transcript range to summarize.",
-                    ambiguous_range_choices=choices,
-                )
-    if any(
-        start.citation_prefix == end.citation_prefix
-        and start.file_page > end.file_page
-        for start in start_matches
-        for end in end_matches
-    ):
-        return SumRangeValidation(None, None, (), "Start must be before end.")
-    return SumRangeValidation(None, None, (), "No matching transcript range.")
-
-
-def validate_sum_page_fields(
-    start_text: str,
-    end_text: str,
-    pages: Sequence[int],
-    transcript_index: TranscriptPageIndex | None = None,
-    current_page: int | None = None,
-) -> SumRangeValidation:
-    index = transcript_index or TranscriptPageIndex({}, {}, {})
-    if _has_transcript_page_index(index):
-        return _validate_sum_page_fields_with_transcript_index(
-            start_text,
-            end_text,
-            pages,
-            index,
-            current_page,
-        )
-    start = resolve_sum_page_field(start_text, pages, index)
-    end = resolve_sum_page_field(end_text, pages, index)
-    if not start_text.strip() or not end_text.strip():
-        return SumRangeValidation(None, None, (), "Enter start and end pages.")
-    if start.ambiguous_matches:
-        return SumRangeValidation(
-            None,
-            None,
-            (),
-            start.message,
-            ambiguous_field="start",
-            ambiguous_matches=start.ambiguous_matches,
-        )
-    if end.ambiguous_matches:
-        return SumRangeValidation(
-            None,
-            None,
-            (),
-            end.message,
-            ambiguous_field="end",
-            ambiguous_matches=end.ambiguous_matches,
-        )
-    if not start.valid:
-        return SumRangeValidation(None, None, (), start.message)
-    if not end.valid:
-        return SumRangeValidation(None, None, (), end.message)
-    start_page = start.page
-    end_page = end.page
-    if start_page is None or end_page is None:
-        return SumRangeValidation(None, None, (), "Enter start and end pages.")
-    if start_page > end_page:
-        return SumRangeValidation(
-            start_page,
-            end_page,
-            (),
-            "Start must be before end.",
-            start.label,
-            end.label,
-        )
-    targets = tuple(page for page in pages if start_page <= page <= end_page)
-    if not targets:
-        return SumRangeValidation(
-            start_page,
-            end_page,
-            (),
-            "No matching pages.",
-            start.label,
-            end.label,
-        )
-    return SumRangeValidation(
-        start_page,
-        end_page,
-        targets,
-        f"{len(targets)} pages",
-        start.label,
-        end.label,
-    )
-
-
 def _looks_like_record_prep(root: Path) -> bool:
     if (root / "text_pages").is_dir():
         return True
@@ -1727,20 +1260,6 @@ def _normalize_speech_agent_question_text(text: str) -> str:
     return " ".join(text.split())
 
 
-def _coerce_bool_config(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return default
-
-
 def _normalize_record_font_family_name(value: Any) -> str:
     normalized = str(value or "").strip()
     normalized = LEGACY_RECORD_FONT_FAMILY_ALIASES.get(normalized, normalized)
@@ -1790,312 +1309,14 @@ def save_font_preferences(
 
 
 @dataclass
-class ModelProfile:
-    key: str
-    nickname: str
-    abbreviation: str
-    api_url: str
-    model_id: str
-    api_key: str
-    disable_reasoning: bool
-    priority_service_tier: bool = False
-
-    def display_name(self) -> str:
-        return self.nickname.strip() or _default_profile_nickname(self.key)
-
-    def short_name(self) -> str:
-        return self.abbreviation.strip() or self.display_name()
-
-    def is_configured(self) -> bool:
-        return bool(self.api_url.strip() and self.model_id.strip() and self.api_key.strip())
-
-
-@dataclass
-class LlmCredentials:
-    api_url: str
-    model_id: str
-    api_key: str
-    disable_reasoning: bool
-    priority_service_tier: bool = False
-    profile: ModelProfile | None = None
-
-    def is_configured(self) -> bool:
-        return bool(self.api_url.strip() and self.model_id.strip() and self.api_key.strip())
-
-
-@dataclass
 class AiSettings:
-    api_url: str
-    model_id: str
-    api_key: str
-    page_api_url: str
-    page_model_id: str
-    page_api_key: str
-    range_api_url: str
-    range_model_id: str
-    range_api_key: str
-    extract_api_url: str
-    extract_model_id: str
-    extract_api_key: str
-    page_disable_reasoning: bool
-    range_disable_reasoning: bool
-    extract_disable_reasoning: bool
-    page_prompt: str
-    range_prompt: str
-    extract_prompt: str
     speech_agent_source_file: str
     highlight_phrases: list[str]
     grep_highlight_color: str
     phrase_highlight_color: str
     summary_emphasis_color: str
     search_chip_color: str
-    model_profiles: list[ModelProfile] = field(default_factory=list)
-    task_profile_defaults: dict[str, str | None] = field(default_factory=dict)
     pi_agent_command: str = DEFAULT_PI_AGENT_COMMAND
-
-    def profile_by_key(self, profile_key: str | None) -> ModelProfile | None:
-        normalized = (profile_key or "").strip()
-        if not normalized:
-            return None
-        for profile in self.model_profiles:
-            if profile.key == normalized:
-                return profile
-        return None
-
-    def profile_for_task(self, task_key: str, profile_key: str | None = None) -> ModelProfile | None:
-        selected_key = profile_key if profile_key is not None else self.task_profile_defaults.get(task_key)
-        return self.profile_by_key(selected_key)
-
-    def credentials_for_task(
-        self,
-        task_key: str,
-        legacy_api_url: str,
-        legacy_model_id: str,
-        legacy_api_key: str,
-        legacy_disable_reasoning: bool,
-        *,
-        profile_key: str | None = None,
-    ) -> LlmCredentials:
-        profile = self.profile_for_task(task_key, profile_key)
-        if profile is not None:
-            return LlmCredentials(
-                api_url=profile.api_url.strip(),
-                model_id=profile.model_id.strip(),
-                api_key=profile.api_key.strip(),
-                disable_reasoning=bool(profile.disable_reasoning),
-                priority_service_tier=bool(profile.priority_service_tier),
-                profile=profile,
-            )
-        return LlmCredentials(
-            api_url=legacy_api_url.strip(),
-            model_id=legacy_model_id.strip(),
-            api_key=legacy_api_key.strip(),
-            disable_reasoning=legacy_disable_reasoning,
-        )
-
-    def page_credentials(self) -> tuple[str, str, str]:
-        credentials = self.page_llm_credentials()
-        return (credentials.api_url, credentials.model_id, credentials.api_key)
-
-    def page_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
-        return self.credentials_for_task(
-            TASK_PROFILE_PAGE,
-            self.page_api_url.strip() or self.api_url.strip(),
-            self.page_model_id.strip() or self.model_id.strip(),
-            self.page_api_key.strip() or self.api_key.strip(),
-            bool(self.page_disable_reasoning),
-            profile_key=profile_key,
-        )
-
-    def range_credentials(self) -> tuple[str, str, str]:
-        credentials = self.range_llm_credentials()
-        return (credentials.api_url, credentials.model_id, credentials.api_key)
-
-    def range_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
-        return self.credentials_for_task(
-            TASK_PROFILE_RANGE,
-            self.range_api_url.strip() or self.api_url.strip(),
-            self.range_model_id.strip() or self.model_id.strip(),
-            self.range_api_key.strip() or self.api_key.strip(),
-            bool(self.range_disable_reasoning),
-            profile_key=profile_key,
-        )
-
-    def extract_credentials(self) -> tuple[str, str, str]:
-        credentials = self.extract_llm_credentials()
-        return (credentials.api_url, credentials.model_id, credentials.api_key)
-
-    def extract_llm_credentials(self, profile_key: str | None = None) -> LlmCredentials:
-        range_credentials = self.range_llm_credentials()
-        return self.credentials_for_task(
-            TASK_PROFILE_EXTRACT,
-            self.extract_api_url.strip() or range_credentials.api_url,
-            self.extract_model_id.strip() or range_credentials.model_id,
-            self.extract_api_key.strip() or range_credentials.api_key,
-            bool(self.extract_disable_reasoning),
-            profile_key=profile_key,
-        )
-
-    def is_configured(self) -> bool:
-        page_api_url, page_model_id, page_api_key = self.page_credentials()
-        range_api_url, range_model_id, range_api_key = self.range_credentials()
-        return all(
-            value.strip()
-            for value in (
-                page_api_url,
-                page_model_id,
-                page_api_key,
-                range_api_url,
-                range_model_id,
-                range_api_key,
-                self.page_prompt,
-                self.range_prompt,
-            )
-        )
-
-    def is_extract_configured(self) -> bool:
-        extract_api_url, extract_model_id, extract_api_key = self.extract_credentials()
-        return all(
-            value.strip()
-            for value in (
-                extract_api_url,
-                extract_model_id,
-                extract_api_key,
-                self.extract_prompt,
-            )
-        )
-
-
-def _default_profile_nickname(profile_key: str) -> str:
-    fallback = DEFAULT_MODEL_PROFILE_NICKNAMES.get(profile_key)
-    if fallback:
-        return fallback
-    match = re.fullmatch(r"profile(\d+)", profile_key or "")
-    if match:
-        return f"Profile {match.group(1)}"
-    return profile_key.title()
-
-
-def _credential_signature(
-    api_url: str,
-    model_id: str,
-    api_key: str,
-) -> tuple[str, str, str] | None:
-    cleaned_api_url = api_url.strip()
-    cleaned_model_id = model_id.strip()
-    cleaned_api_key = api_key.strip()
-    if not cleaned_api_url or not cleaned_model_id or not cleaned_api_key:
-        return None
-    return cleaned_api_url, cleaned_model_id, cleaned_api_key
-
-
-def _sanitize_model_profile(raw: Any, key: str, fallback_nickname: str) -> ModelProfile:
-    data = raw if isinstance(raw, dict) else {}
-    nickname = str(data.get("nickname", fallback_nickname) or "").strip() or fallback_nickname
-    return ModelProfile(
-        key=key,
-        nickname=nickname,
-        abbreviation=str(data.get("abbreviation", "") or "").strip(),
-        api_url=str(data.get("api_url", "") or "").strip(),
-        model_id=str(data.get("model_id", "") or "").strip(),
-        api_key=str(data.get("api_key", "") or "").strip(),
-        disable_reasoning=_coerce_bool_config(data.get("disable_reasoning"), DEFAULT_DISABLE_REASONING),
-        priority_service_tier=_coerce_bool_config(data.get("priority_service_tier"), False),
-    )
-
-
-def _legacy_profile(
-    key: str,
-    nickname: str,
-    api_url: str,
-    model_id: str,
-    api_key: str,
-    disable_reasoning: bool,
-) -> ModelProfile:
-    return ModelProfile(
-        key=key,
-        nickname=nickname,
-        abbreviation="",
-        api_url=api_url.strip(),
-        model_id=model_id.strip(),
-        api_key=api_key.strip(),
-        disable_reasoning=bool(disable_reasoning),
-        priority_service_tier=False,
-    )
-
-
-def _load_model_profiles_from_config(config: dict[str, Any]) -> list[ModelProfile]:
-    raw_profiles = config.get(CONFIG_KEY_MODEL_PROFILES)
-    if isinstance(raw_profiles, list) and raw_profiles:
-        profiles: list[ModelProfile] = []
-        for index, key in enumerate(MODEL_PROFILE_IDS):
-            fallback = DEFAULT_MODEL_PROFILE_NICKNAMES[key]
-            entry = raw_profiles[index] if index < len(raw_profiles) else {}
-            profiles.append(_sanitize_model_profile(entry, key, fallback))
-        return profiles
-
-    api_url = str(config.get(CONFIG_KEY_API_URL, "") or "").strip()
-    model_id = str(config.get(CONFIG_KEY_MODEL_ID, "") or "").strip()
-    api_key = str(config.get(CONFIG_KEY_API_KEY, "") or "").strip()
-    page_api_url = str(config.get(CONFIG_KEY_PAGE_API_URL, "") or "").strip() or api_url
-    page_model_id = str(config.get(CONFIG_KEY_PAGE_MODEL_ID, "") or "").strip() or model_id
-    page_api_key = str(config.get(CONFIG_KEY_PAGE_API_KEY, "") or "").strip() or api_key
-    range_api_url = str(config.get(CONFIG_KEY_RANGE_API_URL, "") or "").strip() or api_url
-    range_model_id = str(config.get(CONFIG_KEY_RANGE_MODEL_ID, "") or "").strip() or model_id
-    range_api_key = str(config.get(CONFIG_KEY_RANGE_API_KEY, "") or "").strip() or api_key
-    extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip() or range_api_url
-    extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip() or range_model_id
-    extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip() or range_api_key
-    return [
-        _legacy_profile(
-            "profile1",
-            "Single Page",
-            page_api_url,
-            page_model_id,
-            page_api_key,
-            _coerce_bool_config(config.get(CONFIG_KEY_PAGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
-        ),
-        _legacy_profile(
-            "profile2",
-            "Page Range",
-            range_api_url,
-            range_model_id,
-            range_api_key,
-            _coerce_bool_config(config.get(CONFIG_KEY_RANGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
-        ),
-        _legacy_profile(
-            "profile3",
-            "Extract",
-            extract_api_url,
-            extract_model_id,
-            extract_api_key,
-            _coerce_bool_config(config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
-        ),
-    ]
-
-
-def _match_profile_key_for_credentials(
-    profiles: list[ModelProfile],
-    api_url: str,
-    model_id: str,
-    api_key: str,
-) -> str | None:
-    signature = _credential_signature(api_url, model_id, api_key)
-    if signature is None:
-        return None
-    for profile in profiles:
-        if _credential_signature(profile.api_url, profile.model_id, profile.api_key) == signature:
-            return profile.key
-    return None
-
-
-def _sanitize_task_profile_defaults(raw: Any) -> dict[str, str | None]:
-    source = raw if isinstance(raw, dict) else {}
-    defaults: dict[str, str | None] = {}
-    for key in TASK_PROFILE_KEYS:
-        candidate = str(source.get(key, "") or "").strip()
-        defaults[key] = candidate if candidate in MODEL_PROFILE_IDS else None
-    return defaults
 
 
 def discover_pi_agent_command(
@@ -2201,39 +1422,6 @@ def incompatible_pi_agent_flag(argv: Sequence[str]) -> str | None:
     return None
 
 
-def _load_task_profile_defaults_from_config(
-    config: dict[str, Any],
-    profiles: list[ModelProfile],
-) -> dict[str, str | None]:
-    defaults = _sanitize_task_profile_defaults(config.get(CONFIG_KEY_TASK_DEFAULT_PROFILES))
-    if any(value is not None for value in defaults.values()):
-        return defaults
-
-    api_url = str(config.get(CONFIG_KEY_API_URL, "") or "").strip()
-    model_id = str(config.get(CONFIG_KEY_MODEL_ID, "") or "").strip()
-    api_key = str(config.get(CONFIG_KEY_API_KEY, "") or "").strip()
-    page_api_url = str(config.get(CONFIG_KEY_PAGE_API_URL, "") or "").strip() or api_url
-    page_model_id = str(config.get(CONFIG_KEY_PAGE_MODEL_ID, "") or "").strip() or model_id
-    page_api_key = str(config.get(CONFIG_KEY_PAGE_API_KEY, "") or "").strip() or api_key
-    range_api_url = str(config.get(CONFIG_KEY_RANGE_API_URL, "") or "").strip() or api_url
-    range_model_id = str(config.get(CONFIG_KEY_RANGE_MODEL_ID, "") or "").strip() or model_id
-    range_api_key = str(config.get(CONFIG_KEY_RANGE_API_KEY, "") or "").strip() or api_key
-    extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip() or range_api_url
-    extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip() or range_model_id
-    extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip() or range_api_key
-
-    defaults[TASK_PROFILE_PAGE] = _match_profile_key_for_credentials(
-        profiles, page_api_url, page_model_id, page_api_key
-    )
-    defaults[TASK_PROFILE_RANGE] = _match_profile_key_for_credentials(
-        profiles, range_api_url, range_model_id, range_api_key
-    )
-    defaults[TASK_PROFILE_EXTRACT] = _match_profile_key_for_credentials(
-        profiles, extract_api_url, extract_model_id, extract_api_key
-    )
-    return defaults
-
-
 @dataclass
 class AiOutputView:
     raw: str = ""
@@ -2264,21 +1452,11 @@ class FocusViewState:
     ai_active_view: str = AI_VIEW_AGENT_QA
     ai_output_raw: dict[str, str] = field(
         default_factory=lambda: {
-            AI_VIEW_SUMMARIZE: "",
-            AI_VIEW_EXTRACT: "",
             AI_VIEW_AGENT_QA: "",
         }
     )
     ai_status_text: str = ""
     ai_spinning: bool = False
-    ai_request_generation: int = 0
-    ai_in_flight: bool = False
-    ai_cancel_event: threading.Event | None = None
-    ai_stream_thread: threading.Thread | None = None
-    ai_range_start_text: str = ""
-    ai_range_end_text: str = ""
-    ai_range_autofilled: bool = True
-    extract_range_text: str = ""
     agent_question_text: str = ""
     sidebar_expanded: list[str] = field(default_factory=list)
     summary_loaded_path: Path | None = None
@@ -2296,6 +1474,20 @@ OBSOLETE_SEARCH_CONFIG_KEYS = {
     "speech_rag_source_file",
 }
 
+# Summarization, extraction, and their model profiles are retired; the embedded
+# PI Agent owns record research. These keys are dropped from config.json the next
+# time the application saves settings.
+RETIRED_SUMMARIZATION_CONFIG_KEYS = {
+    "api_url", "model_id", "api_key",
+    "page_api_url", "page_model_id", "page_api_key",
+    "range_api_url", "range_model_id", "range_api_key",
+    "extract_api_url", "extract_model_id", "extract_api_key",
+    "page_disable_reasoning", "range_disable_reasoning", "extract_disable_reasoning",
+    "summarization_prompt", "page_summarization_prompt",
+    "range_summarization_prompt", "extract_information_prompt",
+    "model_profiles", "task_default_profiles", "agent_prompt_template",
+}
+
 
 def _load_agent_only_ai_settings() -> AiSettings:
     config = _read_config()
@@ -2305,39 +1497,13 @@ def _load_agent_only_ai_settings() -> AiSettings:
     if cleaned != config:
         _write_config(cleaned)
     config = cleaned
-    profiles = _load_model_profiles_from_config(config)
-    defaults = _load_task_profile_defaults_from_config(config, profiles)
-    api_url = str(config.get(CONFIG_KEY_API_URL, "") or "").strip()
-    model_id = str(config.get(CONFIG_KEY_MODEL_ID, "") or "").strip()
-    api_key = str(config.get(CONFIG_KEY_API_KEY, "") or "").strip()
-    page_api_url = str(config.get(CONFIG_KEY_PAGE_API_URL, "") or "").strip()
-    page_model_id = str(config.get(CONFIG_KEY_PAGE_MODEL_ID, "") or "").strip()
-    page_api_key = str(config.get(CONFIG_KEY_PAGE_API_KEY, "") or "").strip()
-    range_api_url = str(config.get(CONFIG_KEY_RANGE_API_URL, "") or "").strip()
-    range_model_id = str(config.get(CONFIG_KEY_RANGE_MODEL_ID, "") or "").strip()
-    range_api_key = str(config.get(CONFIG_KEY_RANGE_API_KEY, "") or "").strip()
-    extract_api_url = str(config.get(CONFIG_KEY_EXTRACT_API_URL, "") or "").strip()
-    extract_model_id = str(config.get(CONFIG_KEY_EXTRACT_MODEL_ID, "") or "").strip()
-    extract_api_key = str(config.get(CONFIG_KEY_EXTRACT_API_KEY, "") or "").strip()
-    fallback = str(config.get(CONFIG_KEY_SUMMARIZATION_PROMPT, DEFAULT_SUMMARIZATION_PROMPT) or DEFAULT_SUMMARIZATION_PROMPT).strip()
     return AiSettings(
-        api_url=api_url, model_id=model_id, api_key=api_key,
-        page_api_url=page_api_url, page_model_id=page_model_id, page_api_key=page_api_key,
-        range_api_url=range_api_url, range_model_id=range_model_id, range_api_key=range_api_key,
-        extract_api_url=extract_api_url, extract_model_id=extract_model_id, extract_api_key=extract_api_key,
-        page_disable_reasoning=_coerce_bool_config(config.get(CONFIG_KEY_PAGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
-        range_disable_reasoning=_coerce_bool_config(config.get(CONFIG_KEY_RANGE_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
-        extract_disable_reasoning=_coerce_bool_config(config.get(CONFIG_KEY_EXTRACT_DISABLE_REASONING), DEFAULT_DISABLE_REASONING),
-        page_prompt=str(config.get(CONFIG_KEY_PAGE_PROMPT, fallback) or fallback).strip(),
-        range_prompt=str(config.get(CONFIG_KEY_RANGE_PROMPT, fallback) or fallback).strip(),
-        extract_prompt=str(config.get(CONFIG_KEY_EXTRACT_PROMPT, DEFAULT_EXTRACT_PROMPT) or DEFAULT_EXTRACT_PROMPT).strip(),
         speech_agent_source_file=str(config.get(CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE, DEFAULT_SPEECH_AGENT_SOURCE_FILE) or DEFAULT_SPEECH_AGENT_SOURCE_FILE).strip(),
         highlight_phrases=_normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES, [])),
         grep_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR, "") or ""), DEFAULT_MATCH_COLOR),
         phrase_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR, "") or ""), DEFAULT_HIGHLIGHT_COLOR),
         summary_emphasis_color=_coerce_color_value(str(config.get(CONFIG_KEY_SUMMARY_EMPHASIS_COLOR, "") or ""), DEFAULT_SUMMARY_EMPHASIS_COLOR),
         search_chip_color=_coerce_color_value(str(config.get(CONFIG_KEY_SEARCH_CHIP_COLOR, "") or ""), DEFAULT_SEARCH_CHIP_COLOR),
-        model_profiles=profiles, task_profile_defaults=defaults,
         pi_agent_command=str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, DEFAULT_PI_AGENT_COMMAND) or DEFAULT_PI_AGENT_COMMAND).strip(),
     )
 
@@ -2346,35 +1512,8 @@ def _save_agent_only_ai_settings(settings: AiSettings) -> None:
     config = _read_config()
     for key in OBSOLETE_SEARCH_CONFIG_KEYS:
         config.pop(key, None)
-    config.pop("agent_prompt_template", None)
-    page = settings.page_llm_credentials()
-    range_credentials = settings.range_llm_credentials()
-    extract = settings.extract_llm_credentials()
-    config[CONFIG_KEY_MODEL_PROFILES] = [
-        {"nickname": profile.display_name(), "abbreviation": profile.abbreviation.strip(),
-         "api_url": profile.api_url, "model_id": profile.model_id, "api_key": profile.api_key,
-         "disable_reasoning": bool(profile.disable_reasoning),
-         "priority_service_tier": bool(profile.priority_service_tier)}
-        for profile in settings.model_profiles[: len(MODEL_PROFILE_IDS)]
-    ]
-    config[CONFIG_KEY_TASK_DEFAULT_PROFILES] = {
-        key: value for key, value in _sanitize_task_profile_defaults(settings.task_profile_defaults).items()
-        if value in MODEL_PROFILE_IDS
-    }
-    for key, value in (
-        (CONFIG_KEY_API_URL, page.api_url), (CONFIG_KEY_MODEL_ID, page.model_id), (CONFIG_KEY_API_KEY, page.api_key),
-        (CONFIG_KEY_PAGE_API_URL, page.api_url), (CONFIG_KEY_PAGE_MODEL_ID, page.model_id), (CONFIG_KEY_PAGE_API_KEY, page.api_key),
-        (CONFIG_KEY_RANGE_API_URL, range_credentials.api_url), (CONFIG_KEY_RANGE_MODEL_ID, range_credentials.model_id), (CONFIG_KEY_RANGE_API_KEY, range_credentials.api_key),
-        (CONFIG_KEY_EXTRACT_API_URL, extract.api_url), (CONFIG_KEY_EXTRACT_MODEL_ID, extract.model_id), (CONFIG_KEY_EXTRACT_API_KEY, extract.api_key),
-    ):
-        config[key] = value
-    config[CONFIG_KEY_PAGE_DISABLE_REASONING] = bool(page.disable_reasoning)
-    config[CONFIG_KEY_RANGE_DISABLE_REASONING] = bool(range_credentials.disable_reasoning)
-    config[CONFIG_KEY_EXTRACT_DISABLE_REASONING] = bool(extract.disable_reasoning)
-    config[CONFIG_KEY_SUMMARIZATION_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
-    config[CONFIG_KEY_PAGE_PROMPT] = settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT
-    config[CONFIG_KEY_RANGE_PROMPT] = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
-    config[CONFIG_KEY_EXTRACT_PROMPT] = settings.extract_prompt or DEFAULT_EXTRACT_PROMPT
+    for key in RETIRED_SUMMARIZATION_CONFIG_KEYS:
+        config.pop(key, None)
     config[CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE] = settings.speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
     config[CONFIG_KEY_PI_AGENT_COMMAND] = settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
@@ -2385,30 +1524,8 @@ def _save_agent_only_ai_settings(settings: AiSettings) -> None:
     _write_config(config)
 
 
-# Later definitions intentionally replace the pre-Agent-only migration routines above.
 load_ai_settings = _load_agent_only_ai_settings
 save_ai_settings = _save_agent_only_ai_settings
-
-
-def compose_extract_information_prompt(
-    prompt: str,
-    *,
-    today: date | None = None,
-) -> str:
-    current_date = today or date.today()
-    current_date_iso = current_date.isoformat()
-    current_date_long = f"{current_date:%B} {current_date.day}, {current_date:%Y}"
-    base_prompt = (prompt or DEFAULT_EXTRACT_PROMPT).strip() or DEFAULT_EXTRACT_PROMPT
-    preface = (
-        "Current date for this extraction: "
-        f"{current_date_long} ({current_date_iso}).\n\n"
-        "When the record gives a child's date of birth, calculate the child's current age "
-        "as of the current date above. Use the child's birthday in the current year: if the "
-        "birthday has not occurred yet this year, subtract one year from the raw year "
-        "difference. If the DOB is incomplete, ambiguous, or conflicting, report that issue "
-        "instead of guessing an age."
-    )
-    return f"{preface}\n\n{base_prompt}"
 
 
 IMAGE_ICON_ON_CHOICES = (

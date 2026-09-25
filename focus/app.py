@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 import queue
 import sys
+import threading
 
 from .core import *  # noqa: F401,F403
 from .record_categories import Classification, load_category_index, with_toc_fallback
@@ -60,8 +62,6 @@ from .ui.settings import AiSettingsWindow
 
 CASE_TOOL_DESCRIPTIONS = {
     AI_VIEW_AGENT_QA: "Ask record-grounded questions across the original record.",
-    AI_VIEW_SUMMARIZE: "Summarize a page or citation range with the selected model profile.",
-    AI_VIEW_EXTRACT: "Extract structured information from the current page or a page range.",
 }
 SUMMARY_SOURCE_DESCRIPTIONS = {
     SUMMARY_SOURCE_HEARING: "Browse prepared hearing summaries; verify material points in the record.",
@@ -135,15 +135,11 @@ class Focus(Adw.Application):
         self._toc_list_view: Gtk.ListBox | None = None
         self._toc_sidebar_root_store: Gio.ListStore | None = None
         self._toc_sidebar_tree_model: Gtk.TreeListModel | None = None
-        self._toc_sidebar_button: Gtk.ToggleButton | None = None
-        self._toc_sidebar_action: Gio.SimpleAction | None = None
-        self._toc_sidebar_icon: Gtk.Image | None = None
         self._split_content_page: Adw.NavigationPage | None = None
         self._split_sidebar_page: Adw.NavigationPage | None = None
         self._toc_placeholder: Gtk.Widget | None = None
         self._toc_sidebar_has_items = False
         self._toc_sidebar_visible = True
-        self._sidebar_button_guard = False
         self._current_text_color = DEFAULT_TEXT_COLOR
 
         self._color_provider = Gtk.CssProvider()
@@ -183,8 +179,6 @@ class Focus(Adw.Application):
         self._link_tags: list[Gtk.TextTag] = []
         self._link_tag_lookup: dict[Gtk.TextTag, tuple[str, str]] = {}
         self._ai_outputs: dict[str, AiOutputView] = {
-            AI_VIEW_SUMMARIZE: AiOutputView(),
-            AI_VIEW_EXTRACT: AiOutputView(),
             AI_VIEW_AGENT_QA: AiOutputView(),
         }
         self._ai_active_view = AI_VIEW_AGENT_QA
@@ -225,7 +219,6 @@ class Focus(Adw.Application):
         self._summary_next_page_button: Gtk.Button | None = None
         self._summary_open_pdf_button: Gtk.Button | None = None
         self._summary_source_buttons: dict[str, Gtk.ToggleButton] = {}
-        self._more_case_tools_button: Gtk.MenuButton | None = None
         self._summary_bookmark_action_button: Gtk.Button | None = None
         self._summary_return_bookmark_action_button: Gtk.Button | None = None
         self._edge_flash_source_id: int | None = None
@@ -266,15 +259,6 @@ class Focus(Adw.Application):
         self._last_ai_panel_host_height = -1
         self._ai_status_label: Gtk.Label | None = None
         self._ai_spinner: Gtk.Spinner | None = None
-        self._ai_range_start_entry: Gtk.Entry | None = None
-        self._ai_range_end_entry: Gtk.Entry | None = None
-        self._ai_range_status_label: Gtk.Label | None = None
-        self._sum_range_choice_popover: Gtk.Popover | None = None
-        self._ai_range_autofilled = True
-        self._ai_range_update_guard = False
-        self._extract_range_entry: Gtk.Entry | None = None
-        self._ai_panel_toggle: Gtk.ToggleButton | None = None
-        self._ai_panel_toggle_guard = False
         self._ai_stream_thread: threading.Thread | None = None
         self._ai_cancel_event: threading.Event | None = None
         self._ai_settings_window: AiSettingsWindow | None = None
@@ -434,8 +418,6 @@ class Focus(Adw.Application):
         self.pages = sorted(self.page_to_path.keys())
         self._category_base_index = load_category_index(self._record_layout, self.pages)
         self._category_index = dict(self._category_base_index)
-        self._ai_range_autofilled = True
-        self._maybe_prefill_sum_range_for_current_page()
 
     def _current_toc_path(self) -> Path:
         return self.toc_path
@@ -530,33 +512,6 @@ class Focus(Adw.Application):
         header.add_css_class("flat")
         header.add_css_class("focus-header")
 
-        left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        left_box.set_valign(Gtk.Align.CENTER)
-
-        self._toc_sidebar_button = Gtk.ToggleButton()
-        self._toc_sidebar_icon = self._build_header_icon("sidebar-show-symbolic")
-        self._toc_sidebar_button.set_child(self._toc_sidebar_icon)
-        self._toc_sidebar_button.add_css_class("flat")
-        self._toc_sidebar_button.set_tooltip_text("Toggle TOC sidebar (Ctrl+Shift+Z)")
-        self._toc_sidebar_button.connect("toggled", self._on_sidebar_toggle_button)
-        left_box.append(self._toc_sidebar_button)
-
-        self._ai_panel_toggle = Gtk.ToggleButton()
-        self._ai_panel_toggle.add_css_class("flat")
-        self._ai_panel_toggle.add_css_class("no-bold")
-        self._ai_panel_toggle.add_css_class("focus-view-toggle")
-        self._ai_panel_toggle.add_css_class("focus-case-tools-toggle")
-        self._ai_panel_toggle.set_valign(Gtk.Align.CENTER)
-        self._ai_panel_toggle.set_child(
-            self._build_labeled_icon("Case Tools", *CASE_TOOLS_ICON_CHOICES)
-        )
-        self._ai_panel_toggle.set_tooltip_text("Show case tools (Ctrl+Shift+A)")
-        self._set_accessible_label(self._ai_panel_toggle, "Case Tools")
-        self._ai_panel_toggle.connect("toggled", self._on_ai_panel_toggled)
-        self._set_ai_panel_visible(self._current_view_state().ai_panel_visible)
-
-        header.pack_start(left_box)
-
         self._title_widget = Adw.WindowTitle(title="Focus")
         header.set_title_widget(self._title_widget)
 
@@ -584,7 +539,6 @@ class Focus(Adw.Application):
 
         trailing_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trailing_header_box.set_valign(Gtk.Align.CENTER)
-        trailing_header_box.append(self._ai_panel_toggle)
         trailing_header_box.append(menu_button)
         header.pack_end(trailing_header_box)
 
@@ -825,35 +779,13 @@ class Focus(Adw.Application):
         )
         ai_mode_strip.append(reports_button)
 
-        more_separator = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        more_separator.add_css_class("focus-case-tools-separator")
-        ai_mode_strip.append(more_separator)
-
-        more_case_tools_menu = Gio.Menu()
-        ai_tools_menu = Gio.Menu()
-        ai_tools_menu.append("Summarize Pages", "app.show_summarize")
-        ai_tools_menu.append("Extract Information", "app.show_extract")
-        more_case_tools_menu.append_section("AI Tools", ai_tools_menu)
-        summary_tools_menu = Gio.Menu()
-        summary_tools_menu.append("Minute Orders", "app.show_minutes_summary")
-        more_case_tools_menu.append_section("Summaries", summary_tools_menu)
-
-        self._more_case_tools_button = Gtk.MenuButton()
-        self._more_case_tools_button.set_child(
-            self._build_labeled_icon(
-                "More",
-                "view-more-symbolic",
-                "open-menu-symbolic",
-            )
+        minutes_button = self._build_summary_mode_button(
+            "Minute Orders",
+            SUMMARY_SOURCE_MINUTES,
+            "Open minute-order summaries",
+            ("text-x-generic-symbolic", "document-open-symbolic"),
         )
-        self._more_case_tools_button.add_css_class("flat")
-        self._more_case_tools_button.add_css_class("no-bold")
-        self._more_case_tools_button.add_css_class("focus-pill-segment")
-        self._more_case_tools_button.set_valign(Gtk.Align.CENTER)
-        self._more_case_tools_button.set_tooltip_text("More case tools")
-        self._set_accessible_label(self._more_case_tools_button, "More case tools")
-        self._more_case_tools_button.set_menu_model(more_case_tools_menu)
-        ai_mode_strip.append(self._more_case_tools_button)
+        ai_mode_strip.append(minutes_button)
         ai_nav_row.append(ai_mode_strip)
 
         nav_spacer = Gtk.Box()
@@ -898,95 +830,6 @@ class Focus(Adw.Application):
         ai_header.append(self._ai_controls_stack)
 
         ai_panel_root.append(ai_header)
-
-        summarize_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        summarize_view.set_hexpand(True)
-        summarize_view.set_vexpand(True)
-        summarize_controls = self._build_wrapping_controls_box()
-
-        from_label = Gtk.Label(label="From")
-        from_label.add_css_class("dim-label")
-        from_label.set_valign(Gtk.Align.CENTER)
-        summarize_controls.insert(from_label, -1)
-
-        self._ai_range_start_entry = Gtk.Entry()
-        self._ai_range_start_entry.set_width_chars(8)
-        self._ai_range_start_entry.set_max_width_chars(12)
-        self._ai_range_start_entry.set_max_length(16)
-        self._ai_range_start_entry.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
-        self._ai_range_start_entry.set_alignment(0.5)
-        self._ai_range_start_entry.set_valign(Gtk.Align.CENTER)
-        self._ai_range_start_entry.set_placeholder_text("RT 1")
-        self._ai_range_start_entry.connect("changed", self._on_sum_range_field_changed)
-        self._ai_range_start_entry.connect("activate", self._on_summarize_range_activate)
-        summarize_controls.insert(self._ai_range_start_entry, -1)
-
-        to_label = Gtk.Label(label="To")
-        to_label.add_css_class("dim-label")
-        to_label.set_valign(Gtk.Align.CENTER)
-        summarize_controls.insert(to_label, -1)
-
-        self._ai_range_end_entry = Gtk.Entry()
-        self._ai_range_end_entry.set_width_chars(8)
-        self._ai_range_end_entry.set_max_width_chars(12)
-        self._ai_range_end_entry.set_max_length(16)
-        self._ai_range_end_entry.set_input_purpose(Gtk.InputPurpose.FREE_FORM)
-        self._ai_range_end_entry.set_alignment(0.5)
-        self._ai_range_end_entry.set_valign(Gtk.Align.CENTER)
-        self._ai_range_end_entry.set_placeholder_text("RT 1")
-        self._ai_range_end_entry.connect("changed", self._on_sum_range_field_changed)
-        self._ai_range_end_entry.connect("activate", self._on_summarize_range_activate)
-        summarize_controls.insert(self._ai_range_end_entry, -1)
-
-        summarize_submit_button = Gtk.Button(label="Submit")
-        summarize_submit_button.add_css_class("flat")
-        summarize_submit_button.add_css_class("no-bold")
-        summarize_submit_button.set_valign(Gtk.Align.CENTER)
-        summarize_submit_button.connect("clicked", self._on_summarize_range_button_clicked)
-        summarize_controls.insert(summarize_submit_button, -1)
-
-        self._ai_range_status_label = Gtk.Label(label="")
-        self._ai_range_status_label.add_css_class("dim-label")
-        self._ai_range_status_label.set_valign(Gtk.Align.CENTER)
-        self._ai_range_status_label.set_xalign(0.0)
-        self._ai_range_status_label.set_width_chars(12)
-        self._ai_range_status_label.set_max_width_chars(32)
-        self._ai_range_status_label.set_ellipsize(Pango.EllipsizeMode.END)
-        summarize_controls.insert(self._ai_range_status_label, -1)
-
-        self._maybe_prefill_sum_range_for_current_page()
-
-        extract_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        extract_view.set_hexpand(True)
-        extract_view.set_vexpand(True)
-        extract_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        extract_controls.set_hexpand(True)
-        extract_controls.set_valign(Gtk.Align.CENTER)
-
-        extract_btn = Gtk.Button(label="Current Page")
-        extract_btn.add_css_class("flat")
-        extract_btn.add_css_class("no-bold")
-        extract_btn.set_valign(Gtk.Align.CENTER)
-        extract_btn.set_hexpand(False)
-        extract_btn.set_halign(Gtk.Align.START)
-        extract_btn.connect("clicked", self._on_extract_page_clicked)
-        extract_controls.append(extract_btn)
-
-        self._extract_range_entry = Gtk.Entry()
-        self._extract_range_entry.set_placeholder_text("Page Range")
-        self._extract_range_entry.set_max_length(9)
-        self._extract_range_entry.set_hexpand(True)
-        self._extract_range_entry.connect("activate", self._on_extract_range_activate)
-        extract_controls.append(self._extract_range_entry)
-
-        extract_range_btn = Gtk.Button(label="Submit")
-        extract_range_btn.add_css_class("flat")
-        extract_range_btn.add_css_class("no-bold")
-        extract_range_btn.set_valign(Gtk.Align.CENTER)
-        extract_range_btn.set_hexpand(False)
-        extract_range_btn.set_halign(Gtk.Align.START)
-        extract_range_btn.connect("clicked", self._on_extract_range_button_clicked)
-        extract_controls.append(extract_range_btn)
 
         agent_view = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         agent_view.set_hexpand(True)
@@ -1243,8 +1086,6 @@ class Focus(Adw.Application):
         self._refresh_summary_actions_state()
 
         if self._ai_controls_stack:
-            self._ai_controls_stack.add_named(summarize_controls, AI_VIEW_SUMMARIZE)
-            self._ai_controls_stack.add_named(extract_controls, AI_VIEW_EXTRACT)
             self._ai_controls_stack.add_named(agent_header_controls, AI_VIEW_AGENT_QA)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
@@ -1279,14 +1120,6 @@ class Focus(Adw.Application):
 
         file_view.append(self._summary_scroller)
 
-        summarize_scroller = self._build_ai_output_view(AI_VIEW_SUMMARIZE)
-        extract_scroller = self._build_ai_output_view(AI_VIEW_EXTRACT)
-
-        summarize_view.append(summarize_scroller)
-        extract_view.append(extract_scroller)
-
-        self._ai_view_stack.add_titled(summarize_view, AI_VIEW_SUMMARIZE, "Summarize")
-        self._ai_view_stack.add_titled(extract_view, AI_VIEW_EXTRACT, "Extract")
         self._ai_view_stack.add_titled(agent_view, AI_VIEW_AGENT_QA, "Agent Q&A")
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
         self._ai_view_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
@@ -1901,27 +1734,11 @@ class Focus(Adw.Application):
             GLib.source_remove(self._ai_panel_layout_idle_id)
             self._ai_panel_layout_idle_id = None
 
-    def _update_ai_panel_toggle(self, visible: bool) -> None:
-        if not self._ai_panel_toggle:
-            return
-        tooltip = (
-            "Hide case tools (Ctrl+Shift+A)"
-            if visible
-            else "Show case tools (Ctrl+Shift+A)"
-        )
-        self._ai_panel_toggle_guard = True
-        try:
-            self._ai_panel_toggle.set_active(visible)
-            self._ai_panel_toggle.set_tooltip_text(tooltip)
-        finally:
-            self._ai_panel_toggle_guard = False
-
     def _current_view_state(self) -> FocusViewState:
         return self._view_state
 
     def _reset_view_states(self) -> None:
         self._stop_grep_search_if_running()
-        self._cancel_all_ai_streams()
         self._stop_agent_terminal()
         self._stop_agent_answer_polling()
         self._cleanup_agent_answer_artifact()
@@ -1933,15 +1750,8 @@ class Focus(Adw.Application):
         self._set_grep_entry_text("")
         self._view_state = FocusViewState()
         self._current_view_state().sidebar_visible = self._toc_sidebar_visible
-        self._current_view_state().ai_panel_visible = bool(
-            (self._ai_panel_toggle and self._ai_panel_toggle.get_active())
-            or (self._ai_panel_revealer and self._ai_panel_revealer.get_child_revealed())
-        )
+        self._current_view_state().ai_panel_visible = True
         self._ai_active_view = AI_VIEW_AGENT_QA
-        self._ai_request_generation = 0
-        self._ai_in_flight = False
-        self._ai_cancel_event = None
-        self._ai_stream_thread = None
         for ai_state in self._ai_outputs.values():
             ai_state.raw = ""
             self._apply_ai_output_links("", ai_state)
@@ -1955,22 +1765,6 @@ class Focus(Adw.Application):
         self._save_answer_in_flight = False
         self._refresh_answer_action_state()
         self._sync_show_image_action()
-
-    def _cancel_all_ai_streams(self) -> None:
-        state = self._current_view_state()
-        if state.ai_cancel_event:
-            state.ai_cancel_event.set()
-        if state.ai_stream_thread and state.ai_stream_thread.is_alive():
-            try:
-                state.ai_stream_thread.join(timeout=0.2)
-            except Exception:
-                pass
-        state.ai_in_flight = False
-        state.ai_cancel_event = None
-        state.ai_stream_thread = None
-        self._ai_in_flight = False
-        self._ai_cancel_event = None
-        self._ai_stream_thread = None
 
     def _persist_active_view_state(self) -> None:
         state = self._current_view_state()
@@ -1988,10 +1782,7 @@ class Focus(Adw.Application):
         state.current_index = self.current_index
         state.show_image = self._show_image
         state.sidebar_visible = self._toc_sidebar_visible
-        state.ai_panel_visible = bool(
-            (self._ai_panel_toggle and self._ai_panel_toggle.get_active())
-            or (self._ai_panel_revealer and self._ai_panel_revealer.get_child_revealed())
-        )
+        state.ai_panel_visible = True
         state.grep_phrase_raw = self._grep_phrase_raw
         state.grep_regex = self._grep_regex
         state.grep_active = self._grep_active
@@ -2004,18 +1795,7 @@ class Focus(Adw.Application):
         state.ai_output_raw = {name: view.raw or "" for name, view in self._ai_outputs.items()}
         state.ai_status_text = ""
         state.ai_spinning = bool(self._ai_spinner and self._ai_spinner.get_spinning())
-        state.ai_request_generation = self._ai_request_generation
-        state.ai_in_flight = self._ai_in_flight
-        state.ai_cancel_event = self._ai_cancel_event
-        state.ai_stream_thread = self._ai_stream_thread
         state.sidebar_expanded = self._get_sidebar_expanded_keys()
-        if self._ai_range_start_entry:
-            state.ai_range_start_text = self._ai_range_start_entry.get_text()
-        if self._ai_range_end_entry:
-            state.ai_range_end_text = self._ai_range_end_entry.get_text()
-        state.ai_range_autofilled = self._ai_range_autofilled
-        if self._extract_range_entry:
-            state.extract_range_text = self._extract_range_entry.get_text()
         if self._agent_question_entry:
             state.agent_question_text = self._agent_question_entry.get_text()
         state.summary_loaded_path = self._summary_loaded_path
@@ -2602,48 +2382,19 @@ class Focus(Adw.Application):
             if tree_row.get_expanded() != should_expand:
                 tree_row.set_expanded(should_expand)
 
-    def _set_sidebar_visible(self, visible: bool) -> None:
-        self._toc_sidebar_visible = visible
-        self._current_view_state().sidebar_visible = visible
+    def _set_sidebar_visible(self, visible: bool = True) -> None:
+        """Keep the TOC sidebar permanently visible."""
+        self._toc_sidebar_visible = True
+        self._current_view_state().sidebar_visible = True
         if self._split_view:
-            self._split_view.set_collapsed(not visible)
+            self._split_view.set_collapsed(False)
             current_sidebar = (
                 self._split_view.get_sidebar() if hasattr(self._split_view, "get_sidebar") else None
             )
-            if visible:
-                if self._split_sidebar_page and current_sidebar is None:
-                    self._split_view.set_sidebar(self._split_sidebar_page)
-            else:
-                if current_sidebar is not None:
-                    self._split_view.set_sidebar(None)
+            if self._split_sidebar_page and current_sidebar is None:
+                self._split_view.set_sidebar(self._split_sidebar_page)
         if self._toc_sidebar_revealer:
-            self._toc_sidebar_revealer.set_reveal_child(visible)
-        self._sync_sidebar_controls()
-
-    def _sync_sidebar_controls(self) -> None:
-        if self._toc_sidebar_button and self._toc_sidebar_button.get_active() != self._toc_sidebar_visible:
-            self._sidebar_button_guard = True
-            self._toc_sidebar_button.set_active(self._toc_sidebar_visible)
-            self._sidebar_button_guard = False
-        if self._toc_sidebar_icon:
-            self._toc_sidebar_icon.set_from_icon_name("sidebar-show-symbolic")
-        if self._toc_sidebar_button:
-            tooltip = (
-                "Hide TOC sidebar (Ctrl+Shift+Z)"
-                if self._toc_sidebar_visible
-                else "Show TOC sidebar (Ctrl+Shift+Z)"
-            )
-            self._toc_sidebar_button.set_tooltip_text(tooltip)
-        if self._toc_sidebar_action:
-            state = self._toc_sidebar_action.get_state()
-            current = state.get_boolean() if state is not None else None
-            if current != self._toc_sidebar_visible:
-                self._toc_sidebar_action.set_state(GLib.Variant.new_boolean(self._toc_sidebar_visible))
-
-    def _on_sidebar_toggle_button(self, button: Gtk.ToggleButton) -> None:
-        if self._sidebar_button_guard:
-            return
-        self._set_sidebar_visible(button.get_active())
+            self._toc_sidebar_revealer.set_reveal_child(True)
 
     def _on_stateful_toggle_activate(
         self,
@@ -2654,15 +2405,6 @@ class Focus(Adw.Application):
         if state is None or not state.is_of_type(GLib.VariantType.new("b")):
             return
         action.change_state(GLib.Variant.new_boolean(not state.get_boolean()))
-
-    def _on_toggle_toc_sidebar(
-        self,
-        action: Gio.SimpleAction,
-        value: GLib.Variant,
-    ) -> None:
-        visible = value.get_boolean()
-        action.set_state(value)
-        self._set_sidebar_visible(visible)
 
     def _on_toggle_show_image(
         self,
@@ -3003,32 +2745,6 @@ class Focus(Adw.Application):
         box.set_column_spacing(6)
         return box
 
-    def _sum_page_display_label(self, page: int) -> str:
-        label = self._transcript_page_index.by_file_page.get(page)
-        if label:
-            return label.citation_label
-        return str(page)
-
-    def _set_sum_range_fields(self, start_page: int, end_page: int, *, autofilled: bool) -> None:
-        if not self._ai_range_start_entry or not self._ai_range_end_entry:
-            return
-        self._ai_range_update_guard = True
-        try:
-            self._ai_range_start_entry.set_text(self._sum_page_display_label(start_page))
-            self._ai_range_end_entry.set_text(self._sum_page_display_label(end_page))
-        finally:
-            self._ai_range_update_guard = False
-        self._ai_range_autofilled = autofilled
-        state = self._current_view_state()
-        state.ai_range_start_text = self._ai_range_start_entry.get_text()
-        state.ai_range_end_text = self._ai_range_end_entry.get_text()
-        state.ai_range_autofilled = autofilled
-
-    def _sum_range_fields_empty(self) -> bool:
-        start_text = self._ai_range_start_entry.get_text().strip() if self._ai_range_start_entry else ""
-        end_text = self._ai_range_end_entry.get_text().strip() if self._ai_range_end_entry else ""
-        return not start_text and not end_text
-
     def _current_page_number(self) -> int | None:
         if not self.pages or self.current_index < 0 or self.current_index >= len(self.pages):
             return None
@@ -3119,48 +2835,6 @@ class Focus(Adw.Application):
             self._transcript_page_index,
         )
         return entry_text
-
-    def _maybe_prefill_sum_range_for_current_page(self) -> None:
-        if not self._ai_range_start_entry or not self._ai_range_end_entry:
-            return
-        if not self.pages:
-            self._refresh_sum_range_state()
-            return
-        if not self._ai_range_autofilled and not self._sum_range_fields_empty():
-            self._refresh_sum_range_state()
-            return
-        current_page = self._current_page_number()
-        if current_page is None:
-            self._refresh_sum_range_state()
-            return
-        self._set_sum_range_fields(current_page, current_page, autofilled=True)
-        self._refresh_sum_range_state(status="Current page")
-
-    def _sum_range_validation(self) -> SumRangeValidation:
-        start_text = self._ai_range_start_entry.get_text() if self._ai_range_start_entry else ""
-        end_text = self._ai_range_end_entry.get_text() if self._ai_range_end_entry else ""
-        return validate_sum_page_fields(
-            start_text,
-            end_text,
-            self.pages,
-            self._transcript_page_index,
-            self._current_page_number(),
-        )
-
-    def _refresh_sum_range_state(self, *, status: str | None = None) -> None:
-        validation = self._sum_range_validation()
-        if self._ai_range_status_label:
-            if status and validation.valid:
-                text = f"{status} - {len(validation.targets)} pages"
-            else:
-                text = validation.message
-            self._ai_range_status_label.set_text(text)
-
-    def _on_sum_range_field_changed(self, _entry: Gtk.Entry) -> None:
-        if not self._ai_range_update_guard:
-            self._ai_range_autofilled = False
-            self._current_view_state().ai_range_autofilled = False
-        self._refresh_sum_range_state()
 
     def _build_ai_output_view(self, view_name: str) -> Gtk.ScrolledWindow:
         state = self._get_ai_output_state(view_name)
@@ -5168,8 +4842,6 @@ class Focus(Adw.Application):
             self._show_image_update_visible()
         self._update_header()
         self._sync_sidebar_active_page(scroll=True)
-        if self._ai_active_view == AI_VIEW_SUMMARIZE:
-            self._maybe_prefill_sum_range_for_current_page()
         if self._grep_hits.get(page):
             self._scroll_to_current_grep_match()
 
@@ -5593,17 +5265,6 @@ class Focus(Adw.Application):
         open_ai_settings.connect("activate", self._on_open_ai_settings)
         self.add_action(open_ai_settings)
 
-        for action_name, view_name in {
-            "show_summarize": AI_VIEW_SUMMARIZE,
-            "show_extract": AI_VIEW_EXTRACT,
-        }.items():
-            action = Gio.SimpleAction.new(action_name, None)
-            action.connect(
-                "activate",
-                lambda _a, _p, view_name=view_name: self._open_case_tool_view(view_name),
-            )
-            self.add_action(action)
-
         for action_name, source in {
             "show_minutes_summary": SUMMARY_SOURCE_MINUTES,
             "show_hearings_summary": SUMMARY_SOURCE_HEARING,
@@ -5645,16 +5306,6 @@ class Focus(Adw.Application):
         print_current_image = Gio.SimpleAction.new("print_current_image", None)
         print_current_image.connect("activate", self._on_print_current_image_action)
         self.add_action(print_current_image)
-
-        toggle_sidebar = Gio.SimpleAction.new_stateful(
-            "toggle_toc_sidebar",
-            None,
-            GLib.Variant.new_boolean(self._toc_sidebar_visible),
-        )
-        toggle_sidebar.connect("activate", self._on_stateful_toggle_activate)
-        toggle_sidebar.connect("change-state", self._on_toggle_toc_sidebar)
-        self.add_action(toggle_sidebar)
-        self._toc_sidebar_action = toggle_sidebar
 
         show_image_action = Gio.SimpleAction.new_stateful(
             "toggle_show_image",
@@ -5699,13 +5350,6 @@ class Focus(Adw.Application):
         focus_page_number = Gio.SimpleAction.new("focus_page_number", None)
         focus_page_number.connect("activate", lambda _a, _p: self._focus_page_number_entry())
         self.add_action(focus_page_number)
-
-        toggle_ai_panel = Gio.SimpleAction.new("toggle_ai_panel", None)
-        toggle_ai_panel.connect(
-            "activate",
-            lambda _a, _p: self._toggle_embedded_ai_panel_from_shortcut(),
-        )
-        self.add_action(toggle_ai_panel)
 
         toggle_minute_order = Gio.SimpleAction.new("toggle_minute_order", None)
         toggle_minute_order.connect(
@@ -5770,7 +5414,6 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.next", ["Down"])
         self.set_accels_for_action("app.first", ["Home"])
         self.set_accels_for_action("app.last", ["End"])
-        self.set_accels_for_action("app.toggle_toc_sidebar", ["<Primary><Shift>z"])
         self.set_accels_for_action("app.toggle_show_image", ["<Primary>i"])
         self.set_accels_for_action("app.focus_grep", ["<Primary>f"])
         self.set_accels_for_action("app.grep_next_hit", ["<Primary>g"])
@@ -5786,7 +5429,6 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.focus_agent_question", ["<Primary>q"])
         self.set_accels_for_action("app.focus_page_number", ["<Primary>e"])
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
-        self.set_accels_for_action("app.toggle_ai_panel", ["<Primary><Shift>a"])
         self.set_accels_for_action("app.toggle_minute_order", ["<Primary><Shift>m"])
         self.set_accels_for_action("app.show_shortcuts", ["F1"])
         self._set_sidebar_visible(self._toc_sidebar_visible)
@@ -5811,9 +5453,6 @@ class Focus(Adw.Application):
         navigation_group.append(Gtk.ShortcutsShortcut(title="Last page", accelerator="End"))
         navigation_group.append(
             Gtk.ShortcutsShortcut(title="Focus page number field", accelerator="<Primary>E")
-        )
-        navigation_group.append(
-            Gtk.ShortcutsShortcut(title="Toggle TOC sidebar", accelerator="<Primary><Shift>Z")
         )
         navigation_group.append(
             Gtk.ShortcutsShortcut(title="Toggle image view", accelerator="<Primary>I")
@@ -5854,12 +5493,6 @@ class Focus(Adw.Application):
         navigation_section.append(search_group)
 
         tools_group = Gtk.ShortcutsGroup(title="AI Panel")
-        tools_group.append(
-            Gtk.ShortcutsShortcut(
-                title="Toggle case tools and focus question box",
-                accelerator="<Primary><Shift>A",
-            )
-        )
         tools_group.append(
             Gtk.ShortcutsShortcut(title="Focus Agent question box", accelerator="<Primary>Q")
         )
@@ -6196,10 +5829,6 @@ class Focus(Adw.Application):
 
     def on_ai_settings_saved(self, settings: AiSettings) -> None:
         self._ai_settings = settings
-        if not self._ai_settings.page_prompt.strip():
-            self._ai_settings.page_prompt = DEFAULT_SUMMARIZATION_PROMPT
-        if not self._ai_settings.range_prompt.strip():
-            self._ai_settings.range_prompt = DEFAULT_SUMMARIZATION_PROMPT
         self._refresh_ai_quote_colors()
         self._apply_text_color(self._current_text_color)
         if self.textview:
@@ -6291,13 +5920,6 @@ class Focus(Adw.Application):
             self._focus_grep_entry(); return True
         if key in ("p", "P") and (state & Gdk.ModifierType.CONTROL_MASK):
             self._print_current_image_page(); return True
-        if (
-            key in ("A", "a")
-            and (state & Gdk.ModifierType.CONTROL_MASK)
-            and (state & Gdk.ModifierType.SHIFT_MASK)
-        ):
-            self._toggle_embedded_ai_panel_from_shortcut()
-            return True
         return False
 
     def _on_page_back_one_clicked(self, _button: Gtk.Button) -> None:
@@ -6627,59 +6249,13 @@ class Focus(Adw.Application):
         self.current_index = len(self.pages) - 1
         self._load_current()
 
-    def _toggle_embedded_ai_panel_from_shortcut(self) -> None:
-        if self._ai_panel_toggle:
-            current_visible = self._ai_panel_toggle.get_active()
-        elif self._ai_panel_revealer:
-            current_visible = self._ai_panel_revealer.get_child_revealed()
-        else:
-            current_visible = False
-        new_visible = not bool(current_visible)
-        self._set_ai_panel_visible(new_visible)
-        if new_visible:
-            self._focus_agent_question_entry()
-
-    def _on_ai_panel_toggled(self, button: Gtk.ToggleButton) -> None:
-        if self._ai_panel_toggle_guard:
-            return
-        self._set_ai_panel_visible(button.get_active())
-
-    def _set_ai_panel_visible(self, visible: bool) -> None:
-        was_visible = bool(
-            self._ai_panel_revealer
-            and self._ai_panel_revealer.get_reveal_child()
-        )
-        if not visible and was_visible and self._ai_active_view == AI_VIEW_AGENT_QA:
-            self._capture_agent_answer_position()
-        if not visible and was_visible and self._ai_active_view == AI_VIEW_FILE:
-            self._capture_summary_scroll_position()
-            fraction = self._current_view_state().summary_scroll_fraction
-            if fraction is not None:
-                self._prepare_summary_scroll_restore(fraction)
-        elif visible and not was_visible and self._ai_active_view == AI_VIEW_FILE:
-            fraction = self._current_view_state().summary_scroll_fraction
-            if fraction is not None:
-                self._prepare_summary_scroll_restore(fraction)
-        if self._ai_panel_revealer:
-            self._ai_panel_revealer.set_reveal_child(visible)
-            if visible:
-                self._update_embedded_ai_panel_height(force=True)
-            else:
-                self._reset_embedded_ai_panel_sizing()
-        if visible and self._ai_active_view == AI_VIEW_FILE:
-            self._restore_summary_scroll_position(self._summary_loaded_path)
-        elif visible and self._ai_active_view == AI_VIEW_AGENT_QA:
-            self._restore_agent_answer_position_if_current()
-        self._current_view_state().ai_panel_visible = visible
-        self._update_ai_panel_toggle(visible)
-        self._refresh_search_highlighted_button()
-
     def _ensure_ai_panel_visible(self) -> None:
-        self._set_ai_panel_visible(True)
-
-    def _open_case_tool_view(self, view_name: str) -> None:
-        self._ensure_ai_panel_visible()
-        self._set_ai_view(view_name)
+        """Keep the always-on case-tools panel revealed and correctly sized."""
+        if self._ai_panel_revealer:
+            self._ai_panel_revealer.set_reveal_child(True)
+            self._update_embedded_ai_panel_height(force=True)
+        self._current_view_state().ai_panel_visible = True
+        self._refresh_search_highlighted_button()
 
     def _open_case_tool_summary(self, source: str) -> None:
         self._ensure_ai_panel_visible()
@@ -6714,7 +6290,7 @@ class Focus(Adw.Application):
     def _set_ai_view(self, view_name: str) -> None:
         target = view_name
         if target not in self._ai_outputs and target != AI_VIEW_FILE:
-            target = AI_VIEW_SUMMARIZE
+            target = AI_VIEW_AGENT_QA
         previous = self._ai_active_view
         if previous == AI_VIEW_AGENT_QA and target != AI_VIEW_AGENT_QA:
             # Capture before the answer scroller is collapsed.
@@ -6751,8 +6327,6 @@ class Focus(Adw.Application):
             self._update_summary_progress_label()
         elif target == AI_VIEW_AGENT_QA:
             self._restore_agent_answer_position_if_current()
-        elif target == AI_VIEW_SUMMARIZE:
-            self._maybe_prefill_sum_range_for_current_page()
         self._refresh_search_highlighted_button()
 
     def _cached_summary_is_ineligible(self) -> bool:
@@ -6821,11 +6395,7 @@ class Focus(Adw.Application):
         self._auto_load_summary_file()
 
     def _sync_ai_view_toggles(self, target: str) -> None:
-        if (
-            not self._ai_view_buttons
-            and not self._summary_source_buttons
-            and not self._more_case_tools_button
-        ):
+        if not self._ai_view_buttons and not self._summary_source_buttons:
             return
         self._ai_view_toggle_guard = True
         try:
@@ -6843,18 +6413,6 @@ class Focus(Adw.Application):
                     button.add_css_class("focus-ai-view-active")
                 else:
                     button.remove_css_class("focus-ai-view-active")
-            if self._more_case_tools_button:
-                exposed_summary_active = (
-                    target == AI_VIEW_FILE
-                    and self._summary_active_source in self._summary_source_buttons
-                )
-                more_active = target in {AI_VIEW_SUMMARIZE, AI_VIEW_EXTRACT} or (
-                    target == AI_VIEW_FILE and not exposed_summary_active
-                )
-                if more_active:
-                    self._more_case_tools_button.add_css_class("focus-ai-view-active")
-                else:
-                    self._more_case_tools_button.remove_css_class("focus-ai-view-active")
         finally:
             self._ai_view_toggle_guard = False
 
@@ -6891,182 +6449,6 @@ class Focus(Adw.Application):
             return
         self._open_case_tool_summary(source)
         self._sync_ai_view_toggles(self._ai_active_view)
-
-    def _on_summarize_range_activate(self, _entry: Gtk.Entry) -> None:
-        self._summarize_page_range()
-
-    def _on_summarize_range_button_clicked(self, _button: Gtk.Button) -> None:
-        self._summarize_page_range()
-
-    def _show_sum_range_choice_popover(
-        self,
-        choices: Sequence[SumRangeChoice],
-    ) -> None:
-        entry = self._ai_range_start_entry
-        if entry is None or not choices:
-            return
-        if self._sum_range_choice_popover:
-            self._sum_range_choice_popover.popdown()
-            self._sum_range_choice_popover = None
-
-        popover = Gtk.Popover()
-        popover.set_parent(entry)
-        popover.set_autohide(True)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        box.set_margin_top(6)
-        box.set_margin_bottom(6)
-        box.set_margin_start(6)
-        box.set_margin_end(6)
-
-        heading = Gtk.Label(label="Choose citation range")
-        heading.add_css_class("dim-label")
-        heading.set_xalign(0.0)
-        heading.set_margin_bottom(2)
-        box.append(heading)
-
-        for choice in choices:
-            button = Gtk.Button(label=choice.label)
-            button.add_css_class("flat")
-            button.add_css_class("no-bold")
-            button.set_halign(Gtk.Align.FILL)
-            description = choice.start.series_description or choice.end.series_description
-            if description:
-                button.set_tooltip_text(description)
-            button.connect("clicked", self._on_sum_range_choice_clicked, choice, popover)
-            box.append(button)
-
-        popover.set_child(box)
-        self._sum_range_choice_popover = popover
-        popover.popup()
-
-    def _on_sum_range_choice_clicked(
-        self,
-        _button: Gtk.Button,
-        choice: SumRangeChoice,
-        popover: Gtk.Popover,
-    ) -> None:
-        popover.popdown()
-        if self._sum_range_choice_popover is popover:
-            self._sum_range_choice_popover = None
-        if not self._ai_range_start_entry or not self._ai_range_end_entry:
-            return
-        self._ai_range_update_guard = True
-        try:
-            self._ai_range_start_entry.set_text(choice.start.citation_label)
-            self._ai_range_end_entry.set_text(choice.end.citation_label)
-        finally:
-            self._ai_range_update_guard = False
-        state = self._current_view_state()
-        if self._ai_range_start_entry:
-            state.ai_range_start_text = self._ai_range_start_entry.get_text()
-        if self._ai_range_end_entry:
-            state.ai_range_end_text = self._ai_range_end_entry.get_text()
-        self._ai_range_autofilled = False
-        state.ai_range_autofilled = False
-        self._refresh_sum_range_state()
-        self._summarize_page_range()
-
-    def _summarize_page_range(self) -> None:
-        if not self.pages:
-            self._ai_transient_toast("No pages available to summarize.")
-            return
-        if not self._ai_range_start_entry or not self._ai_range_end_entry:
-            return
-        validation = self._sum_range_validation()
-        self._refresh_sum_range_state()
-        if validation.ambiguous_range_choices:
-            self._show_sum_range_choice_popover(validation.ambiguous_range_choices)
-            return
-        if validation.ambiguous_field and validation.ambiguous_matches:
-            choices = tuple(
-                SumRangeChoice(label, label)
-                for label in validation.ambiguous_matches
-            )
-            self._show_sum_range_choice_popover(choices)
-            return
-        if not validation.valid or validation.start_page is None or validation.end_page is None:
-            self._ai_transient_toast(validation.message)
-            return
-        start_page = validation.start_page
-        end_page = validation.end_page
-        targets = validation.targets
-        self._set_ai_view(AI_VIEW_SUMMARIZE)
-        parts: list[str] = []
-        for page in targets:
-            content, _, _ = self._read_page_text(page)
-            page_label = format_toc_page_subtitle(page, self._transcript_page_index)
-            parts.append(f"{page_label}\n\n{content}\n\n")
-        combined = "".join(parts)
-        label = f"{validation.start_label}-{validation.end_label}"
-        self._start_ai_stream(
-            label=label,
-            content=combined,
-            prompt_kind="range",
-        )
-        self._ai_range_autofilled = True
-        self._current_view_state().ai_range_autofilled = True
-
-    def _parse_page_range(self, raw: str) -> tuple[int, int] | None:
-        if not raw:
-            return None
-        match = re.fullmatch(r"\s*(\d{1,4})(?:\s*-\s*(\d{1,4}))?\s*", raw)
-        if not match:
-            return None
-        start = int(match.group(1))
-        end = int(match.group(2) or start)
-        if start > end:
-            start, end = end, start
-        return start, end
-
-    def _on_extract_page_clicked(self, _button: Gtk.Button) -> None:
-        if not self.pages:
-            self._ai_transient_toast("No page loaded to extract from.")
-            return
-        self._set_ai_view(AI_VIEW_EXTRACT)
-        page = self.pages[self.current_index]
-        content, _, _ = self._read_page_text(page)
-        payload = f"Page {page:04d}\n\n{content}"
-        self._start_ai_stream(
-            label=f"page {page:04d}",
-            content=payload,
-            prompt_kind="extract",
-        )
-
-    def _on_extract_range_activate(self, _entry: Gtk.Entry) -> None:
-        self._extract_page_range()
-
-    def _on_extract_range_button_clicked(self, _button: Gtk.Button) -> None:
-        self._extract_page_range()
-
-    def _extract_page_range(self) -> None:
-        if not self.pages:
-            self._ai_transient_toast("No pages available to extract from.")
-            return
-        if not self._extract_range_entry:
-            return
-        raw = self._extract_range_entry.get_text().strip()
-        page_range = self._parse_page_range(raw)
-        if page_range is None:
-            self._ai_transient_toast("Enter a page range like 10-25.")
-            return
-        start_page, end_page = page_range
-        targets = [p for p in self.pages if start_page <= p <= end_page]
-        if not targets:
-            self._ai_transient_toast("No matching pages found in that range.")
-            return
-        self._set_ai_view(AI_VIEW_EXTRACT)
-        parts: list[str] = []
-        for page in targets:
-            content, _, _ = self._read_page_text(page)
-            parts.append(f"Page {page:04d}\n\n{content}\n\n")
-        combined = "".join(parts)
-        label = f"pages {start_page:04d}-{end_page:04d}"
-        self._start_ai_stream(
-            label=label,
-            content=combined,
-            prompt_kind="extract",
-        )
-        self._extract_range_entry.set_text("")
 
     def _on_agent_question_activate(self, _entry: Gtk.Entry) -> None:
         self._launch_agent_question()
@@ -8735,7 +8117,6 @@ class Focus(Adw.Application):
         except OSError as exc:  # noqa: BLE001
             self._ai_transient_toast(f"Could not read {resolved.name}: {exc}")
             return
-        self._stop_ai_stream_if_running()
         state = self._current_view_state()
         same_summary = state.summary_loaded_path == resolved
         if same_summary:
@@ -8781,95 +8162,6 @@ class Focus(Adw.Application):
         if not allow_auto:
             self._ensure_ai_panel_visible()
 
-    def _llm_credentials_error(self, credentials: LlmCredentials, label: str) -> str | None:
-        if credentials.is_configured():
-            return None
-        if credentials.profile is not None:
-            return f'Configure the "{credentials.profile.display_name()}" model profile in Settings.'
-        return f"Configure {label} API URL, model, API key, and prompt in Settings."
-
-    def _start_ai_stream(
-        self,
-        *,
-        label: str,
-        content: str,
-        prompt_kind: str,
-    ) -> None:
-        state = self._current_view_state()
-        self._ai_settings = load_ai_settings()
-        settings = self._ai_settings
-        if prompt_kind == "extract":
-            target_view = AI_VIEW_EXTRACT
-            action_label = "Extracting"
-            credentials = settings.extract_llm_credentials()
-            error = self._llm_credentials_error(credentials, "extract")
-            if error or not (settings.extract_prompt or DEFAULT_EXTRACT_PROMPT).strip():
-                self._ai_transient_toast(error or "Configure the extract prompt in Settings.")
-                self._ensure_ai_panel_visible()
-                return
-        elif prompt_kind == "range":
-            target_view = AI_VIEW_SUMMARIZE
-            action_label = "Summarizing"
-            credentials = settings.range_llm_credentials()
-            error = self._llm_credentials_error(credentials, "range summary")
-            if error or not (settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT).strip():
-                self._ai_transient_toast(error or "Configure the range summarization prompt in Settings.")
-                self._ensure_ai_panel_visible()
-                return
-        else:
-            self._ai_transient_toast("Unsupported AI request.")
-            return
-        if not content.strip():
-            self._ai_transient_toast(f"Nothing to {action_label.lower()} for the requested selection.")
-            return
-        if prompt_kind == "extract":
-            prompt = compose_extract_information_prompt(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
-        else:
-            prompt = settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT
-        api_url = credentials.api_url
-        model_id = credentials.model_id
-        api_key = credentials.api_key
-        disable_reasoning = credentials.disable_reasoning
-        priority_service_tier = credentials.priority_service_tier
-
-        self._stop_ai_stream_if_running()
-        state.ai_cancel_event = threading.Event()
-        state.ai_in_flight = True
-        state.ai_request_generation += 1
-        generation = state.ai_request_generation
-        self._ai_request_generation = generation
-        state.ai_active_view = target_view
-        self._ai_cancel_event = state.ai_cancel_event
-        self._ai_in_flight = True
-        self._ensure_ai_panel_visible()
-        self._set_ai_view(target_view)
-        self._reset_ai_output("", target=target_view)
-        self._update_ai_status(f"{action_label} {label}…", spinning=True)
-
-        payload_text = content
-        worker_settings = settings
-        cancel_event = state.ai_cancel_event
-
-        def worker() -> None:
-            self._stream_chat_worker(
-                worker_settings,
-                payload_text,
-                label,
-                cancel_event,
-                generation,
-                prompt,
-                target_view,
-                model_id=model_id,
-                api_url=api_url,
-                api_key=api_key,
-                disable_reasoning=disable_reasoning,
-                priority_service_tier=priority_service_tier,
-            )
-
-        state.ai_stream_thread = threading.Thread(target=worker, daemon=True)
-        state.ai_stream_thread.start()
-        self._ai_stream_thread = state.ai_stream_thread
-
     def _update_ai_status(self, text: str, spinning: bool) -> None:
         state = self._current_view_state()
         state.ai_status_text = text
@@ -8881,295 +8173,6 @@ class Focus(Adw.Application):
         if self._ai_spinner:
             self._ai_spinner.set_spinning(spinning)
             self._ai_spinner.set_visible(spinning)
-
-    def _set_ai_output_text(
-        self,
-        text: str | None = None,
-        *,
-        target: str,
-        switch_view: bool = False,
-    ) -> None:
-        focus_state = self._current_view_state()
-        focus_state.ai_output_raw[target] = text or ""
-        state = self._get_ai_output_state(target)
-        if switch_view:
-            self._set_ai_view(target)
-        state.raw = text or ""
-        self._apply_ai_output_links(state.raw, state)
-        self._queue_embedded_ai_panel_height_update()
-
-    def _set_ai_output_text_idle(
-        self,
-        text: str | None,
-        target: str,
-        switch_view: bool = False,
-    ) -> bool:
-        self._set_ai_output_text(text, target=target, switch_view=switch_view)
-        return False
-
-    def _reset_ai_output(self, text: str | None = None, *, target: str) -> None:
-        self._set_ai_output_text(text, target=target, switch_view=True)
-
-    def _append_ai_output(self, text: str, generation: int, target: str) -> bool:
-        focus_state = self._current_view_state()
-        if generation != focus_state.ai_request_generation:
-            return False
-        if not text:
-            return False
-        current_raw = focus_state.ai_output_raw.get(target, "") or ""
-        new_raw = current_raw + text
-        focus_state.ai_output_raw[target] = new_raw
-        state = self._get_ai_output_state(target)
-        state.raw = new_raw
-        self._apply_ai_output_links(state.raw, state)
-        self._queue_embedded_ai_panel_height_update()
-        self._update_ai_status("Streaming…", spinning=True)
-        return False
-
-    def _scroll_ai_output_to_bottom(self, target: str) -> None:
-        state = self._get_ai_output_state(target)
-        scroller = state.scroller
-        if scroller is None:
-            return
-        vadj = scroller.get_vadjustment()
-        if vadj is None:
-            return
-        lower = vadj.get_lower()
-        upper = vadj.get_upper()
-        page_size = vadj.get_page_size()
-        vadj.set_value(max(lower, upper - page_size))
-
-    def _stop_ai_stream_if_running(self) -> None:
-        state = self._current_view_state()
-        if state.ai_cancel_event:
-            state.ai_cancel_event.set()
-        if state.ai_stream_thread and state.ai_stream_thread.is_alive():
-            try:
-                state.ai_stream_thread.join(timeout=0.2)
-            except Exception:
-                pass
-        state.ai_stream_thread = None
-        state.ai_cancel_event = None
-        state.ai_in_flight = False
-        self._ai_stream_thread = None
-        self._ai_cancel_event = None
-        self._ai_in_flight = False
-
-    def _stream_chat_worker(
-        self,
-        settings: AiSettings,
-        content: str,
-        label: str,
-        cancel_event: threading.Event | None,
-        generation: int,
-        prompt: str,
-        target_view: str,
-        *,
-        model_id: str,
-        api_url: str,
-        api_key: str | None = None,
-        disable_reasoning: bool = False,
-        priority_service_tier: bool = False,
-        include_reasoning: bool = False,
-    ) -> None:
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-            "Authorization": f"Bearer {api_key or settings.api_key}",
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Focus/1.0",
-        }
-        body = {
-            "model": model_id,
-            "stream": True,
-            "messages": [
-                {"role": "system", "content": prompt or DEFAULT_SUMMARIZATION_PROMPT},
-                {"role": "user", "content": content},
-            ],
-        }
-        _apply_disable_reasoning_to_body(
-            body,
-            model_id=model_id,
-            disable_reasoning=disable_reasoning,
-        )
-        _apply_priority_service_tier_to_body(
-            body,
-            api_url=api_url,
-            priority_service_tier=priority_service_tier,
-        )
-        attempted_without_thinking = False
-        attempted_without_reasoning_effort = False
-
-        while True:
-            data = json.dumps(body).encode("utf-8")
-            req = urllib.request.Request(api_url, data=data, headers=headers, method="POST")
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    for chunk in self._iter_sse_chunks(
-                        resp,
-                        cancel_event,
-                        include_reasoning=include_reasoning,
-                    ):
-                        if cancel_event and cancel_event.is_set():
-                            GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
-                            return
-                        GLib.idle_add(self._append_ai_output, chunk, generation, target_view)
-                if cancel_event and cancel_event.is_set():
-                    GLib.idle_add(self._on_ai_stream_cancelled, generation, target_view)
-                else:
-                    GLib.idle_add(self._on_ai_stream_finished, label, generation, target_view)
-                return
-            except urllib.error.HTTPError as exc:
-                try:
-                    error_body = exc.read().decode("utf-8", errors="ignore")
-                except Exception:  # noqa: BLE001
-                    error_body = ""
-                message = (error_body.strip() or exc.reason or "request failed").lower()
-                if (
-                    not attempted_without_thinking
-                    and "thinking" in body
-                    and "thinking" in message
-                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
-                ):
-                    attempted_without_thinking = True
-                    body.pop("thinking", None)
-                    continue
-                if (
-                    not attempted_without_reasoning_effort
-                    and "reasoning_effort" in body
-                    and "reasoning_effort" in message
-                    and any(marker in message for marker in ("unsupported", "unknown", "invalid"))
-                ):
-                    attempted_without_reasoning_effort = True
-                    body.pop("reasoning_effort", None)
-                    continue
-                detail = error_body.strip() or exc.reason or "request failed"
-                GLib.idle_add(
-                    self._on_ai_stream_error,
-                    f"HTTP error {exc.code}: {detail}",
-                    generation,
-                    target_view,
-                )
-                return
-            except Exception as exc:  # noqa: BLE001
-                GLib.idle_add(self._on_ai_stream_error, str(exc), generation, target_view)
-                return
-
-    def _iter_sse_chunks(
-        self,
-        resp: urllib.response.addinfourl,  # type: ignore[type-arg]
-        cancel_event: threading.Event | None,
-        *,
-        include_reasoning: bool = False,
-    ) -> Iterable[str]:
-        in_reasoning_trace = False
-        while True:
-            if cancel_event and cancel_event.is_set():
-                break
-            raw = resp.readline()
-            if not raw:
-                break
-            line = raw.decode("utf-8", errors="ignore").strip()
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[5:].lstrip()
-            if data == "[DONE]":
-                break
-            if not data:
-                continue
-            try:
-                payload = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-            answer_text, reasoning_text = self._extract_stream_text_parts(payload)
-            if include_reasoning and reasoning_text:
-                if not in_reasoning_trace:
-                    in_reasoning_trace = True
-                    yield "\n[Reasoning Trace]\n"
-                yield reasoning_text
-            if answer_text:
-                if include_reasoning and in_reasoning_trace:
-                    in_reasoning_trace = False
-                    yield "\n[Answer]\n"
-                yield answer_text
-
-    def _extract_stream_text_parts(self, payload: Any) -> tuple[str, str]:
-        answer_text = ""
-        reasoning_text = ""
-        choices = payload.get("choices") if isinstance(payload, dict) else None
-        if isinstance(choices, list) and choices:
-            first = choices[0] or {}
-            delta = first.get("delta") or first.get("message") or first
-            if isinstance(delta, dict):
-                answer_text = self._coerce_stream_text(
-                    delta.get("content") if "content" in delta else delta.get("text")
-                )
-                reasoning_text = self._coerce_stream_text(
-                    delta.get("reasoning_content")
-                    if "reasoning_content" in delta
-                    else delta.get("reasoning")
-                    if "reasoning" in delta
-                    else delta.get("thinking")
-                )
-        if isinstance(payload, dict):
-            fallback = payload.get("data") or payload.get("text")
-            if isinstance(fallback, str):
-                answer_text = answer_text or fallback
-        return answer_text, reasoning_text
-
-    def _coerce_stream_text(self, value: Any) -> str:
-        if isinstance(value, str):
-            return value
-        if not isinstance(value, list):
-            return ""
-        merged: list[str] = []
-        for item in value:
-            if isinstance(item, dict):
-                candidate = item.get("text")
-                if isinstance(candidate, str):
-                    merged.append(candidate)
-            elif isinstance(item, str):
-                merged.append(item)
-        return "".join(merged)
-
-    def _on_ai_stream_finished(self, label: str, generation: int, _target_view: str) -> bool:
-        state = self._current_view_state()
-        if generation != state.ai_request_generation:
-            return False
-        state.ai_in_flight = False
-        state.ai_cancel_event = None
-        state.ai_stream_thread = None
-        self._ai_in_flight = False
-        self._ai_cancel_event = None
-        self._ai_stream_thread = None
-        self._update_ai_status(f"Finished AI response for {label}.", spinning=False)
-        return False
-
-    def _on_ai_stream_error(self, message: str, generation: int, _target_view: str) -> bool:
-        state = self._current_view_state()
-        if generation != state.ai_request_generation:
-            return False
-        state.ai_in_flight = False
-        state.ai_cancel_event = None
-        state.ai_stream_thread = None
-        self._ai_in_flight = False
-        self._ai_cancel_event = None
-        self._ai_stream_thread = None
-        self._update_ai_status("AI request failed.", spinning=False)
-        self._ai_transient_toast(message or "AI request failed.")
-        return False
-
-    def _on_ai_stream_cancelled(self, generation: int, _target_view: str) -> bool:
-        state = self._current_view_state()
-        if generation != state.ai_request_generation:
-            return False
-        state.ai_in_flight = False
-        state.ai_cancel_event = None
-        state.ai_stream_thread = None
-        self._ai_in_flight = False
-        self._ai_cancel_event = None
-        self._ai_stream_thread = None
-        self._update_ai_status("Cancelled.", spinning=False)
-        return False
 
     def _edge_flash(self) -> None:
         if not self.win:

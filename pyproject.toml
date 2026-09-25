@@ -1,7 +1,7 @@
 [project]
 name = "focus"
 version = "0.1.0"
-description = "Libadwaita GTK4 app for browsing court transcripts with paging, grep, images, AI summaries, and citation-grounded Agent search."
+description = "Libadwaita GTK4 app for browsing court transcripts with paging, grep, images, prepared summaries, and citation-grounded Agent search."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

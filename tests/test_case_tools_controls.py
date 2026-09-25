@@ -7,9 +7,7 @@ from focus.core import (
     AGENT_SUBVIEW_SESSION,
     AI_OUTPUT_MIN_HEIGHT,
     AI_VIEW_AGENT_QA,
-    AI_VIEW_EXTRACT,
     AI_VIEW_FILE,
-    AI_VIEW_SUMMARIZE,
     SUMMARY_SOURCE_HEARING,
     SUMMARY_SOURCE_MINUTES,
     SUMMARY_SOURCE_REPORTS,
@@ -164,7 +162,6 @@ class SummaryScrollHarness:
 
 
 class CaseToolHarness:
-    _open_case_tool_view = Focus._open_case_tool_view
     _open_case_tool_summary = Focus._open_case_tool_summary
 
     def __init__(self) -> None:
@@ -172,9 +169,6 @@ class CaseToolHarness:
 
     def _ensure_ai_panel_visible(self) -> None:
         self.calls.append(("visible", None))
-
-    def _set_ai_view(self, view_name: str) -> None:
-        self.calls.append(("view", view_name))
 
     def _on_minutes_summary_clicked(self, _button: object) -> None:
         self.calls.append(("summary", SUMMARY_SOURCE_MINUTES))
@@ -198,7 +192,6 @@ class ToggleHarness:
             SUMMARY_SOURCE_REPORTS: FakeButton(),
         }
         self._summary_active_source: str | None = None
-        self._more_case_tools_button = FakeButton()
         self._ai_view_toggle_guard = False
 
 
@@ -401,14 +394,6 @@ class BodyVisibilityHarness:
         return self.has_agent_session
 
 
-def test_case_tool_view_action_opens_panel_before_switching_view() -> None:
-    harness = CaseToolHarness()
-
-    harness._open_case_tool_view(AI_VIEW_EXTRACT)
-
-    assert harness.calls == [("visible", None), ("view", AI_VIEW_EXTRACT)]
-
-
 def test_case_tool_summary_actions_open_panel_and_route_sources() -> None:
     for source in (
         SUMMARY_SOURCE_MINUTES,
@@ -425,17 +410,6 @@ def test_case_tool_summary_actions_open_panel_and_route_sources() -> None:
 def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
     harness = ToggleHarness()
 
-    harness._sync_ai_view_toggles(AI_VIEW_SUMMARIZE)
-    assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
-    assert not harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
-
-    harness._sync_ai_view_toggles(AI_VIEW_EXTRACT)
-    assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
-    assert not harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
-
-    harness._sync_ai_view_toggles(AI_VIEW_FILE)
-    assert "focus-ai-view-active" in harness._more_case_tools_button.css_classes
-
     harness._summary_active_source = SUMMARY_SOURCE_HEARING
     harness._sync_ai_view_toggles(AI_VIEW_FILE)
     assert harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].active
@@ -448,7 +422,6 @@ def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
         "focus-ai-view-active"
         not in harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].css_classes
     )
-    assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
 
     harness._summary_active_source = SUMMARY_SOURCE_REPORTS
     harness._sync_ai_view_toggles(AI_VIEW_FILE)
@@ -462,13 +435,11 @@ def test_case_tool_buttons_track_active_views_and_summary_sources() -> None:
         "focus-ai-view-active"
         in harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].css_classes
     )
-    assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
 
     harness._sync_ai_view_toggles(AI_VIEW_AGENT_QA)
     assert harness._ai_view_buttons[AI_VIEW_AGENT_QA].active
     assert not harness._summary_source_buttons[SUMMARY_SOURCE_HEARING].active
     assert not harness._summary_source_buttons[SUMMARY_SOURCE_REPORTS].active
-    assert "focus-ai-view-active" not in harness._more_case_tools_button.css_classes
 
 
 def test_agent_output_controls_appear_only_for_available_output() -> None:
@@ -644,8 +615,6 @@ def test_summary_actions_track_printable_summary_state() -> None:
 def test_empty_header_only_views_do_not_reserve_body_space() -> None:
     for view_name in (
         AI_VIEW_AGENT_QA,
-        AI_VIEW_SUMMARIZE,
-        AI_VIEW_EXTRACT,
         AI_VIEW_FILE,
     ):
         harness = BodyVisibilityHarness(view_name)
@@ -654,7 +623,7 @@ def test_empty_header_only_views_do_not_reserve_body_space() -> None:
 
 
 def test_dynamic_case_tool_content_expands_the_body() -> None:
-    output_harness = BodyVisibilityHarness(AI_VIEW_SUMMARIZE)
+    output_harness = BodyVisibilityHarness(AI_VIEW_AGENT_QA)
     output_harness.has_output = True
     assert output_harness._active_ai_body_has_content()
 

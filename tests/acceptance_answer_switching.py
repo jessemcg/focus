@@ -215,8 +215,7 @@ def prepare():  # type: ignore[no-untyped-def]
         if i % 7 == 0:
             window.set_default_size(600 + (i % 40) * 10, 500 + (i % 30) * 10)
         if i % 11 == 0:
-            application._set_ai_panel_visible(False)
-            application._set_ai_panel_visible(True)
+            application._ensure_ai_panel_visible()
         state["index"] = i + 1
         return True
 

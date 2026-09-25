@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from focus.core import *  # noqa: F401,F403
 from focus.pi_runtime import (
     PiModel,
@@ -48,26 +50,9 @@ def _bind_pi_model_list_item(
 
 
 @dataclass
-class SummarizationPromptWidgets:
-    profile_dropdown: Gtk.DropDown
-    prompt_buffer: Gtk.TextBuffer
-
-
-@dataclass
 class AgentSettingsWidgets:
     pi_agent_command_row: Adw.EntryRow
     speech_agent_source_row: Adw.EntryRow
-
-
-@dataclass
-class ModelProfileEditorWidgets:
-    nickname_row: Adw.EntryRow
-    abbreviation_row: Adw.EntryRow
-    api_url_row: Adw.EntryRow
-    model_row: Adw.EntryRow
-    api_key_row: Adw.EntryRow
-    disable_reasoning_row: Adw.SwitchRow
-    priority_service_tier_row: Adw.SwitchRow
 
 
 class AiSettingsWindow(Adw.ApplicationWindow):
@@ -86,12 +71,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._summary_emphasis_color_control: Gtk.Widget | None = None
         self._search_chip_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
-        self._prompt_editors: dict[
-            str,
-            SummarizationPromptWidgets | AgentSettingsWidgets,
-        ] = {}
-        self._model_profiles: list[ModelProfile] = list(app._ai_settings.model_profiles)
-        self._model_profile_editors: dict[str, ModelProfileEditorWidgets] = {}
+        self._prompt_editors: dict[str, AgentSettingsWidgets] = {}
         self._prompt_row_keys: dict[Gtk.ListBoxRow, str] = {}
         self._prompt_list: Gtk.ListBox | None = None
         self._prompt_stack: Gtk.Stack | None = None
@@ -285,10 +265,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._prompt_stack = prompt_stack
 
         prompt_definitions = [
-            ("profiles", "Model Profiles", self._build_model_profiles_page),
-            ("page", "Single Page Summarization", self._build_summarization_prompt_page),
-            ("range", "Page Range Summarization", self._build_summarization_prompt_page),
-            ("extract", "Extract Information", self._build_summarization_prompt_page),
             ("agent", "Agent", self._build_agent_settings_page),
         ]
         first_row: Gtk.ListBoxRow | None = None
@@ -334,139 +310,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._toast_overlay.set_child(scrolled)
         view.set_content(self._toast_overlay)
         self.set_content(view)
-
-    def _build_password_row(self, title: str) -> Adw.EntryRow:
-        password_row_cls = getattr(Adw, "PasswordEntryRow", None)
-        if password_row_cls:
-            row = password_row_cls(title=title)
-            if hasattr(row, "set_show_peek_icon"):
-                row.set_show_peek_icon(True)
-        else:
-            row = Adw.EntryRow(title=title)
-            if hasattr(row, "set_input_purpose"):
-                row.set_input_purpose(Gtk.InputPurpose.PASSWORD)
-            if hasattr(row, "set_visibility"):
-                try:
-                    row.set_visibility(False)
-                except Exception:
-                    pass
-        if hasattr(row, "set_hexpand"):
-            row.set_hexpand(True)
-        return row
-
-    def _profile_dropdown_model(self, *, include_legacy: bool = True) -> Gtk.StringList:
-        labels = [profile.display_name() for profile in self._model_profiles]
-        if include_legacy:
-            labels = [UNSET_PROFILE_LABEL, *labels]
-        return Gtk.StringList.new(labels)
-
-    def _profile_dropdown_selected_index(
-        self,
-        settings: AiSettings,
-        task_key: str,
-        *,
-        include_legacy: bool = True,
-    ) -> int:
-        selected_key = settings.task_profile_defaults.get(task_key)
-        if selected_key in MODEL_PROFILE_IDS:
-            selected_index = MODEL_PROFILE_IDS.index(selected_key)
-            return selected_index + 1 if include_legacy else selected_index
-        return 0
-
-    def _profile_key_from_dropdown(
-        self,
-        dropdown: Gtk.DropDown,
-        *,
-        include_legacy: bool = True,
-    ) -> str | None:
-        selected = int(dropdown.get_selected())
-        if include_legacy:
-            selected -= 1
-        if 0 <= selected < len(MODEL_PROFILE_IDS):
-            return MODEL_PROFILE_IDS[selected]
-        return None
-
-    def _build_profile_dropdown(self, settings: AiSettings, task_key: str) -> Gtk.DropDown:
-        dropdown = Gtk.DropDown(model=self._profile_dropdown_model())
-        dropdown.set_selected(self._profile_dropdown_selected_index(settings, task_key))
-        dropdown.set_hexpand(False)
-        return dropdown
-
-    def _build_model_profiles_page(self, _key: str, title: str) -> Gtk.Widget:
-        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        page_box.set_margin_top(12)
-        page_box.set_margin_bottom(12)
-        page_box.set_margin_start(12)
-        page_box.set_margin_end(12)
-        page_box.set_vexpand(True)
-
-        title_label = Gtk.Label(label=title, xalign=0)
-        title_label.add_css_class("title-3")
-        page_box.append(title_label)
-
-        info_label = Gtk.Label(
-            label=(
-                "Set up four shared LLM profiles. Prompt pages choose one of these profiles "
-                "as their default model."
-            ),
-            xalign=0,
-        )
-        info_label.add_css_class("dim-label")
-        info_label.set_wrap(True)
-        info_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        page_box.append(info_label)
-
-        self._model_profile_editors = {}
-        for profile in self._model_profiles:
-            group = Adw.PreferencesGroup(title=profile.display_name())
-            group.add_css_class("list-stack")
-            group.set_hexpand(True)
-
-            nickname_row = Adw.EntryRow(title="Nickname")
-            nickname_row.set_text(profile.display_name())
-            group.add(nickname_row)
-
-            abbreviation_row = Adw.EntryRow(title="Abbreviation (optional)")
-            abbreviation_row.set_text(profile.abbreviation)
-            group.add(abbreviation_row)
-
-            api_url_row = Adw.EntryRow(title="API URL")
-            api_url_row.set_text(profile.api_url)
-            group.add(api_url_row)
-
-            model_row = Adw.EntryRow(title="Model ID")
-            model_row.set_text(profile.model_id)
-            group.add(model_row)
-
-            api_key_row = self._build_password_row("API Key")
-            api_key_row.set_text(profile.api_key)
-            group.add(api_key_row)
-
-            disable_reasoning_row = Adw.SwitchRow(title="Disable reasoning")
-            disable_reasoning_row.set_active(bool(profile.disable_reasoning))
-            group.add(disable_reasoning_row)
-
-            priority_service_tier_row = Adw.SwitchRow(title="Priority")
-            priority_service_tier_row.set_active(bool(profile.priority_service_tier))
-            group.add(priority_service_tier_row)
-
-            self._model_profile_editors[profile.key] = ModelProfileEditorWidgets(
-                nickname_row=nickname_row,
-                abbreviation_row=abbreviation_row,
-                api_url_row=api_url_row,
-                model_row=model_row,
-                api_key_row=api_key_row,
-                disable_reasoning_row=disable_reasoning_row,
-                priority_service_tier_row=priority_service_tier_row,
-            )
-            page_box.append(group)
-
-        page = Gtk.ScrolledWindow()
-        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        page.set_hexpand(True)
-        page.set_vexpand(True)
-        page.set_child(page_box)
-        return page
 
     def _build_color_row(self, title: str, default: str) -> tuple[Gtk.Widget, Gtk.Widget]:
         color_dialog_cls = getattr(Gtk, "ColorDialog", None)
@@ -522,79 +365,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if hasattr(control, "get_text"):
             return _coerce_color_value(control.get_text(), default)
         return default
-
-    def _build_prompt_editor(self, text: str) -> tuple[Gtk.ScrolledWindow, Gtk.TextBuffer]:
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_hexpand(True)
-        scroller.set_vexpand(True)
-        scroller.set_has_frame(False)
-
-        buffer = Gtk.TextBuffer()
-        buffer.set_text(text)
-        prompt_view = Gtk.TextView.new_with_buffer(buffer)
-        prompt_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        prompt_view.set_monospace(True)
-        prompt_view.set_vexpand(True)
-        prompt_view.set_hexpand(True)
-        prompt_view.set_top_margin(12)
-        prompt_view.set_bottom_margin(12)
-        prompt_view.set_left_margin(12)
-        prompt_view.set_right_margin(12)
-        scroller.set_child(prompt_view)
-        return scroller, buffer
-
-    def _build_summarization_prompt_page(self, key: str, title: str) -> Gtk.Widget:
-        page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        page_box.set_margin_top(12)
-        page_box.set_margin_bottom(12)
-        page_box.set_margin_start(12)
-        page_box.set_margin_end(12)
-        page_box.set_vexpand(True)
-
-        title_label = Gtk.Label(label=title, xalign=0)
-        title_label.add_css_class("title-3")
-        page_box.append(title_label)
-
-        settings = load_ai_settings()
-        profile_group = Adw.PreferencesGroup(title="Default Model Profile")
-        profile_group.add_css_class("list-stack")
-        profile_group.set_hexpand(True)
-        page_box.append(profile_group)
-
-        profile_row = Adw.ActionRow(
-            title="Profile",
-            subtitle="Uses the selected profile's API URL, model, API key, and reasoning setting.",
-        )
-        profile_row.set_activatable(False)
-        task_key = key if key in TASK_PROFILE_KEYS else TASK_PROFILE_PAGE
-        profile_dropdown = self._build_profile_dropdown(settings, task_key)
-        profile_row.add_suffix(profile_dropdown)
-        profile_row.set_activatable_widget(profile_dropdown)
-        profile_group.add(profile_row)
-
-        prompt_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        prompt_section.set_hexpand(True)
-        prompt_section.set_vexpand(True)
-        prompt_label = Gtk.Label(label="Prompt", xalign=0)
-        prompt_label.add_css_class("dim-label")
-        prompt_section.append(prompt_label)
-        default_prompt = DEFAULT_EXTRACT_PROMPT if key == "extract" else DEFAULT_SUMMARIZATION_PROMPT
-        prompt_scroller, buffer = self._build_prompt_editor(default_prompt)
-        prompt_section.append(prompt_scroller)
-        page_box.append(prompt_section)
-
-        page = Gtk.ScrolledWindow()
-        page.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        page.set_hexpand(True)
-        page.set_vexpand(True)
-        page.set_child(page_box)
-
-        self._prompt_editors[key] = SummarizationPromptWidgets(
-            profile_dropdown=profile_dropdown,
-            prompt_buffer=buffer,
-        )
-        return page
 
     def _build_agent_settings_page(self, key: str, title: str) -> Gtk.Widget:
         page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
@@ -1032,31 +802,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
     def _load_settings(self) -> None:
         settings = load_ai_settings()
-        page_widgets = self._prompt_editors.get("page")
-        range_widgets = self._prompt_editors.get("range")
-        extract_widgets = self._prompt_editors.get("extract")
         agent_widgets = self._prompt_editors.get("agent")
-
-        if isinstance(page_widgets, SummarizationPromptWidgets):
-            page_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
-            page_widgets.profile_dropdown.set_selected(
-                self._profile_dropdown_selected_index(settings, TASK_PROFILE_PAGE)
-            )
-            page_widgets.prompt_buffer.set_text(settings.page_prompt or DEFAULT_SUMMARIZATION_PROMPT)
-
-        if isinstance(range_widgets, SummarizationPromptWidgets):
-            range_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
-            range_widgets.profile_dropdown.set_selected(
-                self._profile_dropdown_selected_index(settings, TASK_PROFILE_RANGE)
-            )
-            range_widgets.prompt_buffer.set_text(settings.range_prompt or DEFAULT_SUMMARIZATION_PROMPT)
-
-        if isinstance(extract_widgets, SummarizationPromptWidgets):
-            extract_widgets.profile_dropdown.set_model(self._profile_dropdown_model())
-            extract_widgets.profile_dropdown.set_selected(
-                self._profile_dropdown_selected_index(settings, TASK_PROFILE_EXTRACT)
-            )
-            extract_widgets.prompt_buffer.set_text(settings.extract_prompt or DEFAULT_EXTRACT_PROMPT)
 
         if isinstance(agent_widgets, AgentSettingsWidgets):
             agent_widgets.pi_agent_command_row.set_text(settings.pi_agent_command)
@@ -1105,6 +851,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             settings.search_chip_color,
             DEFAULT_SEARCH_CHIP_COLOR,
         )
+
     def _show_status_toast(self, text: str) -> None:
         if not self._toast_overlay or not text:
             return
@@ -1113,54 +860,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._toast_overlay.add_toast(toast)
 
     def _on_save_clicked(self, _btn: Gtk.Button) -> None:
-        page_widgets = self._prompt_editors.get("page")
-        range_widgets = self._prompt_editors.get("range")
-        extract_widgets = self._prompt_editors.get("extract")
         agent_widgets = self._prompt_editors.get("agent")
-        if not isinstance(page_widgets, SummarizationPromptWidgets):
-            return
-        if not isinstance(range_widgets, SummarizationPromptWidgets):
-            return
-        if not isinstance(extract_widgets, SummarizationPromptWidgets):
-            return
         if not isinstance(agent_widgets, AgentSettingsWidgets):
             return
 
-        current_settings = load_ai_settings()
-        model_profiles: list[ModelProfile] = []
-        for profile_key in MODEL_PROFILE_IDS:
-            widgets = self._model_profile_editors.get(profile_key)
-            if widgets is None:
-                existing = current_settings.profile_by_key(profile_key)
-                if existing is not None:
-                    model_profiles.append(existing)
-                continue
-            model_profiles.append(
-                ModelProfile(
-                    key=profile_key,
-                    nickname=(
-                        widgets.nickname_row.get_text().strip()
-                        or DEFAULT_MODEL_PROFILE_NICKNAMES[profile_key]
-                    ),
-                    abbreviation=widgets.abbreviation_row.get_text().strip(),
-                    api_url=widgets.api_url_row.get_text().strip(),
-                    model_id=widgets.model_row.get_text().strip(),
-                    api_key=widgets.api_key_row.get_text().strip(),
-                    disable_reasoning=bool(widgets.disable_reasoning_row.get_active()),
-                    priority_service_tier=bool(widgets.priority_service_tier_row.get_active()),
-                )
-            )
-        task_profile_defaults = {
-            TASK_PROFILE_PAGE: self._profile_key_from_dropdown(page_widgets.profile_dropdown),
-            TASK_PROFILE_RANGE: self._profile_key_from_dropdown(range_widgets.profile_dropdown),
-            TASK_PROFILE_EXTRACT: self._profile_key_from_dropdown(extract_widgets.profile_dropdown),
-        }
         speech_agent_source_file = agent_widgets.speech_agent_source_row.get_text().strip()
         pi_agent_command = agent_widgets.pi_agent_command_row.get_text().strip()
 
-        page_prompt = self._prompt_text(page_widgets.prompt_buffer).strip()
-        range_prompt = self._prompt_text(range_widgets.prompt_buffer).strip()
-        extract_prompt = self._prompt_text(extract_widgets.prompt_buffer).strip()
         highlight_phrases = (
             _normalize_highlight_phrases(self._prompt_text(self._highlight_phrases_buffer))
             if self._highlight_phrases_buffer is not None
@@ -1208,24 +914,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         else:
             record_font_family_name = self.app.get_record_font_family_name()
         settings = AiSettings(
-            api_url=current_settings.api_url,
-            model_id=current_settings.model_id,
-            api_key=current_settings.api_key,
-            page_api_url=current_settings.page_api_url,
-            page_model_id=current_settings.page_model_id,
-            page_api_key=current_settings.page_api_key,
-            range_api_url=current_settings.range_api_url,
-            range_model_id=current_settings.range_model_id,
-            range_api_key=current_settings.range_api_key,
-            extract_api_url=current_settings.extract_api_url,
-            extract_model_id=current_settings.extract_model_id,
-            extract_api_key=current_settings.extract_api_key,
-            page_disable_reasoning=current_settings.page_disable_reasoning,
-            range_disable_reasoning=current_settings.range_disable_reasoning,
-            extract_disable_reasoning=current_settings.extract_disable_reasoning,
-            page_prompt=page_prompt or DEFAULT_SUMMARIZATION_PROMPT,
-            range_prompt=range_prompt or DEFAULT_SUMMARIZATION_PROMPT,
-            extract_prompt=extract_prompt or DEFAULT_EXTRACT_PROMPT,
             speech_agent_source_file=(
                 speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
             ),
@@ -1235,8 +923,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             phrase_highlight_color=phrase_highlight_color,
             summary_emphasis_color=summary_emphasis_color,
             search_chip_color=search_chip_color,
-            model_profiles=model_profiles,
-            task_profile_defaults=task_profile_defaults,
         )
         selected_pi_model = self._selected_pi_model()
         selected_pi_thinking = self._selected_pi_thinking_level()
@@ -1271,7 +957,5 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._show_status_toast(
                 "Saved. The PI model and reasoning effort apply to new Agent sessions."
             )
-        elif settings.is_configured():
-            self._show_status_toast("Saved. Summaries and Agent questions are enabled.")
         else:
-            self._show_status_toast("Saved. Add required fields to enable summaries.")
+            self._show_status_toast("Saved. Agent questions are enabled.")
