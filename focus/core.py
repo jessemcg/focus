@@ -1994,6 +1994,10 @@ menubutton.focus-ai-view-active > button image {
 button.focus-citation-range-active,
 button.focus-citation-range-active:hover,
 button.focus-citation-range-active:active {
+  min-height: 0;
+  border-radius: 10px;
+  padding-top: 4px;
+  padding-bottom: 4px;
   background-color: __SEARCH_CHIP_COLOR__;
   color: #1f2937;
   background-image: none;

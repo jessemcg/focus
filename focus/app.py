@@ -7,6 +7,7 @@ import sys
 import threading
 
 from .core import *  # noqa: F401,F403
+from .citation_extent import resolve_citation_extent
 from .record_categories import (
     Classification,
     load_category_index,
@@ -159,8 +160,13 @@ class Focus(Adw.Application):
         self._show_transcript_breakdown_action: Gio.SimpleAction | None = None
         self._minute_order_button: Gtk.Button | None = None
         self._current_page_citation_button: Gtk.Button | None = None
-        self._page_citation_range_button: Gtk.Button | None = None
+        self._citation_less_button: Gtk.Button | None = None
+        self._citation_more_button: Gtk.Button | None = None
+        self._citation_count_entry: Gtk.Entry | None = None
+        self._citation_preview_label: Gtk.Label | None = None
+        self._citation_end_here_button: Gtk.Button | None = None
         self._page_citation_range_start: TranscriptPageLabel | None = None
+        self._page_citation_range_end: TranscriptPageLabel | None = None
         self._grep_prev_hit_button: Gtk.Button | None = None
         self._grep_next_hit_button: Gtk.Button | None = None
         self._grep_hit_label: Gtk.Label | None = None
@@ -242,11 +248,7 @@ class Focus(Adw.Application):
         self._image_print_entry: Gtk.Entry | None = None
         self._image_print_pages: list[int] = []
         self._show_image_action: Gio.SimpleAction | None = None
-        self._show_image_button: Gtk.ToggleButton | None = None
-        self._show_image_icon: Gtk.Image | None = None
-        self._show_image_button_guard = False
-        self._image_icon_name_on = IMAGE_ICON_ON_CHOICES[0]
-        self._image_icon_name_off = self._image_icon_name_on
+        self._back_to_text_button: Gtk.Button | None = None
         self._toc_categories: list[TocCategory] = []
         self._toc_load_generation = 0
         self._ai_panel_revealer: Gtk.Revealer | None = None
@@ -694,9 +696,6 @@ class Focus(Adw.Application):
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         content_box.set_hexpand(True)
         content_box.set_vexpand(True)
-
-        self._image_icon_name_on = self._choose_icon(*IMAGE_ICON_ON_CHOICES)
-        self._image_icon_name_off = self._image_icon_name_on
 
         self._content_stack = Gtk.Stack()
         self._content_stack.set_hexpand(True)
@@ -1257,51 +1256,71 @@ class Focus(Adw.Application):
         end_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         end_controls.set_halign(Gtk.Align.END)
         end_controls.set_valign(Gtk.Align.CENTER)
+        end_controls.set_margin_start(6)
 
+        citation_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self._current_page_citation_button = Gtk.Button(label="Cite")
         self._current_page_citation_button.add_css_class("flat")
         self._current_page_citation_button.add_css_class("no-bold")
-        self._current_page_citation_button.add_css_class("focus-subdued")
+        self._current_page_citation_button.add_css_class("focus-citation-primary")
         self._current_page_citation_button.set_valign(Gtk.Align.CENTER)
-        self._current_page_citation_button.set_tooltip_text(
-            "Insert current page citation in Prose (Ctrl+Alt+Shift+C)"
-        )
-        self._current_page_citation_button.set_sensitive(False)
-        self._current_page_citation_button.connect(
-            "clicked",
-            self._on_current_page_citation_clicked,
-        )
-        end_controls.append(self._current_page_citation_button)
+        self._current_page_citation_button.connect("clicked", self._on_current_page_citation_clicked)
+        citation_controls.append(self._current_page_citation_button)
 
-        self._page_citation_range_button = Gtk.Button(label="Range")
-        self._page_citation_range_button.add_css_class("flat")
-        self._page_citation_range_button.add_css_class("no-bold")
-        self._page_citation_range_button.add_css_class("focus-subdued")
-        self._page_citation_range_button.set_valign(Gtk.Align.CENTER)
-        self._page_citation_range_button.set_tooltip_text(
-            "Set citation range start (Ctrl+Alt+C)"
+        self._citation_less_button = Gtk.Button(icon_name="list-remove-symbolic")
+        self._citation_more_button = Gtk.Button(icon_name="list-add-symbolic")
+        for button, delta, name in (
+            (self._citation_less_button, -1, "Remove one following page"),
+            (self._citation_more_button, 1, "Add one following page"),
+        ):
+            button.add_css_class("flat")
+            button.add_css_class("focus-citation-step")
+            button.set_valign(Gtk.Align.CENTER)
+            button.update_property([Gtk.AccessibleProperty.LABEL], [name])
+            button.connect("clicked", self._on_citation_step_clicked, delta)
+        citation_controls.append(self._citation_less_button)
+        self._citation_count_entry = Gtk.Entry()
+        self._citation_count_entry.set_width_chars(2)
+        self._citation_count_entry.set_max_width_chars(4)
+        self._citation_count_entry.set_alignment(0.5)
+        self._citation_count_entry.add_css_class("flat")
+        self._citation_count_entry.add_css_class("focus-citation-count")
+        self._citation_count_entry.set_valign(Gtk.Align.CENTER)
+        self._citation_count_entry.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Additional citation pages"]
         )
-        self._page_citation_range_button.set_sensitive(False)
-        self._page_citation_range_button.connect(
-            "clicked",
-            self._on_page_citation_range_clicked,
-        )
-        end_controls.append(self._page_citation_range_button)
+        self._citation_count_entry.connect("activate", self._on_citation_count_activate)
+        citation_controls.append(self._citation_count_entry)
+        citation_controls.append(self._citation_more_button)
+        self._citation_preview_label = Gtk.Label()
+        self._citation_preview_label.add_css_class("dim-label")
+        self._citation_preview_label.set_ellipsize(Pango.EllipsizeMode.END)
+        self._citation_preview_label.set_max_width_chars(16)
+        # Grow leftward so showing/extending the preview does not move +.
+        end_controls.append(self._citation_preview_label)
+        end_controls.append(citation_controls)
+        self._citation_end_here_button = Gtk.Button(label="End here")
+        self._citation_end_here_button.add_css_class("flat")
+        self._citation_end_here_button.add_css_class("no-bold")
+        self._citation_end_here_button.set_valign(Gtk.Align.CENTER)
+        self._citation_end_here_button.connect("clicked", self._on_citation_end_here_clicked)
+        end_controls.append(self._citation_end_here_button)
+        self._sync_citation_buttons()
 
-        self._show_image_icon = Gtk.Image.new_from_icon_name(self._image_icon_name_off)
-        self._show_image_icon.add_css_class("focus-toggle-icon")
-        self._show_image_button = Gtk.ToggleButton()
-        self._show_image_button.set_child(self._show_image_icon)
-        self._show_image_button.add_css_class("flat")
-        self._show_image_button.set_valign(Gtk.Align.CENTER)
-        self._show_image_button.set_tooltip_text("Enable image view (Ctrl+I)")
-        self._show_image_button.connect("toggled", self._on_show_image_button_toggled)
-        end_controls.append(self._show_image_button)
+        self._back_to_text_button = Gtk.Button(label="Back to text")
+        self._back_to_text_button.add_css_class("flat")
+        self._back_to_text_button.update_property(
+            [Gtk.AccessibleProperty.LABEL], ["Back to text"]
+        )
+        self._back_to_text_button.set_valign(Gtk.Align.CENTER)
+        self._back_to_text_button.set_tooltip_text("Return to text (Ctrl+I toggles image view)")
+        self._back_to_text_button.connect("clicked", self._on_back_to_text_clicked)
+        end_controls.append(self._back_to_text_button)
         text_controls.set_end_widget(end_controls)
         self._refresh_search_highlighted_button()
 
         document_shell.append(text_controls)
-        self._update_show_image_toggle_button()
+        self._sync_image_return_button()
         self._update_page_nav_buttons()
 
         self.scroller.add_css_class("focus-category-surface")
@@ -1742,6 +1761,7 @@ class Focus(Adw.Application):
         self._clear_answer_reading_positions()
         self._cancel_pending_summary_scroll_restore()
         self._page_citation_range_start = None
+        self._page_citation_range_end = None
         self._sync_citation_buttons()
         self._set_grep_entry_text("")
         self._view_state = FocusViewState()
@@ -2402,12 +2422,8 @@ class Focus(Adw.Application):
         self._set_show_image(desired)
         action.set_state(GLib.Variant.new_boolean(self._show_image))
 
-    def _on_show_image_button_toggled(self, button: Gtk.ToggleButton) -> None:
-        if self._show_image_button_guard:
-            return
-        desired = button.get_active()
-        self._set_show_image(desired)
-        self._update_show_image_toggle_button()
+    def _on_back_to_text_clicked(self, _button: Gtk.Button) -> None:
+        self._set_show_image(False)
 
     def _apply_text_color(self, color_value: str) -> None:
         self._current_text_color = color_value
@@ -2427,6 +2443,9 @@ class Focus(Adw.Application):
             "label.focus-search-chip { "
             f"background-color: {search_chip_color}; "
             "}"
+            "button.focus-citation-primary { min-width: 0; padding-left: 10px; padding-right: 10px; }"
+            "button.focus-citation-step { min-width: 20px; padding-left: 3px; padding-right: 3px; }"
+            "entry.focus-citation-count { min-width: 28px; padding-left: 2px; padding-right: 2px; }"
             "button.focus-citation-range-active, "
             "button.focus-citation-range-active:hover, "
             "button.focus-citation-range-active:active, "
@@ -4450,26 +4469,25 @@ class Focus(Adw.Application):
 
     def _sync_show_image_action(self) -> None:
         if not self._show_image_action:
-            self._update_show_image_toggle_button()
+            self._sync_image_return_button()
             return
         state = self._show_image_action.get_state()
         current = state.get_boolean() if state is not None else None
         if current != self._show_image:
             self._show_image_action.set_state(GLib.Variant.new_boolean(self._show_image))
-        self._update_show_image_toggle_button()
+        self._sync_image_return_button()
 
-    def _update_show_image_toggle_button(self) -> None:
-        if not self._show_image_button or not self._show_image_icon:
+    def _sync_image_return_button(self) -> None:
+        button = self._back_to_text_button
+        if button is None:
             return
-        self._show_image_button_guard = True
-        try:
-            self._show_image_button.set_active(self._show_image)
-        finally:
-            self._show_image_button_guard = False
-        icon_name = self._image_icon_name_on if self._show_image else self._image_icon_name_off
-        self._show_image_icon.set_from_icon_name(icon_name)
-        tooltip = "Disable image view (Ctrl+I)" if self._show_image else "Enable image view (Ctrl+I)"
-        self._show_image_button.set_tooltip_text(tooltip)
+        if not self._show_image and button.has_focus():
+            # Focusing the reader must not move its viewport to the cursor.
+            adjustment = self.scroller.get_vadjustment()
+            position = adjustment.get_value()
+            self.textview.grab_focus()
+            adjustment.set_value(position)
+        button.set_visible(self._show_image)
 
     def _set_summary_active_source(self, source: str | None) -> None:
         self._summary_active_source = source
@@ -5012,11 +5030,80 @@ class Focus(Adw.Application):
     def _on_grep_next_hit_clicked(self, _button: Gtk.Button) -> None:
         self._navigate_grep_match(1)
 
-    def _on_current_page_citation_clicked(self, _button: Gtk.Button) -> None:
-        self._insert_current_page_citation_in_prose_or_clipboard()
+    def _citation_additional_pages(self) -> int:
+        start = self._page_citation_range_start
+        end = self._page_citation_range_end
+        return end.file_page - start.file_page if start and end else 0
 
-    def _on_page_citation_range_clicked(self, _button: Gtk.Button) -> None:
-        self._insert_page_citation_range_in_prose_or_clipboard()
+    def _clear_citation_extent(self) -> None:
+        self._page_citation_range_start = None
+        self._page_citation_range_end = None
+        self._sync_citation_buttons()
+
+    def _resolve_citation_extent(self, additional: int) -> TranscriptPageLabel:
+        start = self._page_citation_range_start or self._current_transcript_page_label()
+        if start is None:
+            raise ValueError("No transcript citation available for the starting page.")
+        return resolve_citation_extent(start, additional, self.pages, self._transcript_page_index)
+
+    def _set_citation_extent(self, additional: int) -> bool:
+        if additional == 0:
+            self._clear_citation_extent()
+            return True
+        try:
+            end = self._resolve_citation_extent(additional)
+        except ValueError as exc:
+            self._transient_toast(str(exc))
+            self._sync_citation_buttons()
+            return False
+        if self._page_citation_range_start is None:
+            self._page_citation_range_start = self._current_transcript_page_label()
+        self._page_citation_range_end = end
+        self._sync_citation_buttons()
+        return True
+
+    def _commit_citation_count(self) -> bool:
+        entry = self._citation_count_entry
+        if entry is None or entry.get_text() == f"+{self._citation_additional_pages()}":
+            return True
+        try:
+            additional = int(entry.get_text().strip())
+            if additional < 0:
+                raise ValueError
+        except ValueError:
+            self._transient_toast("Enter zero or a positive number of additional pages.")
+            self._sync_citation_buttons()
+            return False
+        return self._set_citation_extent(additional)
+
+    def _on_citation_count_activate(self, _entry: Gtk.Entry) -> None:
+        self._commit_citation_count()
+
+    def _on_citation_step_clicked(self, _button: Gtk.Button, delta: int) -> None:
+        if self._commit_citation_count():
+            self._set_citation_extent(max(0, self._citation_additional_pages() + delta))
+
+    def _on_citation_end_here_clicked(self, _button: Gtk.Button) -> None:
+        start = self._page_citation_range_start
+        page = self._current_page_number()
+        if start is not None and page is not None:
+            self._set_citation_extent(page - start.file_page)
+
+    def _on_current_page_citation_clicked(self, _button: Gtk.Button) -> None:
+        if not self._commit_citation_count():
+            return
+        start = self._page_citation_range_start
+        end = self._page_citation_range_end
+        if start is None or end is None:
+            self._insert_current_page_citation_in_prose_or_clipboard()
+            return
+        result = format_page_citation_range_for_clipboard(start, end)
+        if not result.valid:
+            self._transient_toast(result.message)
+            return
+        if (self._send_text_to_prose_record_citations_action(result.citation)
+                or self._copy_text_to_clipboard(result.citation)):
+            self._clear_citation_extent()
 
     def _current_page_citation_for_clipboard(self) -> str:
         current_page = self._current_page_number()
@@ -5037,26 +5124,74 @@ class Focus(Adw.Application):
 
     def _sync_citation_buttons(self) -> None:
         enabled = bool(self.pages)
-        if self._current_page_citation_button:
-            self._current_page_citation_button.set_sensitive(enabled)
-        if not self._page_citation_range_button:
-            return
-        self._page_citation_range_button.set_sensitive(enabled)
         start = self._page_citation_range_start
-        if start:
-            self._page_citation_range_button.add_css_class(
-                "focus-citation-range-active"
+        end = self._page_citation_range_end
+        additional = self._citation_additional_pages()
+        preview = ""
+        if start and end:
+            preview = start.citation_label
+            if additional:
+                preview += f"–{end.transcript_page_number}"
+        page_count = f"{additional + 1} {'page' if additional == 0 else 'pages'}"
+        description = (
+            f"Cite {preview} · {page_count}. "
+            f"Anchored at {start.citation_label}; browsing does not change this range."
+            if start else "Insert current page citation in Prose or copy to clipboard."
+        )
+        description += " Ctrl+Alt+Shift+C always cites the displayed page."
+        button = self._current_page_citation_button
+        if button is not None:
+            button.set_sensitive(enabled)
+            button.set_tooltip_text(description)
+            button.update_property(
+                [Gtk.AccessibleProperty.LABEL, Gtk.AccessibleProperty.DESCRIPTION],
+                [f"Cite {preview}" if start else "Cite current page", description],
             )
-            self._page_citation_range_button.set_tooltip_text(
-                f"Range starts at {start.citation_label}. "
-                "Click again to insert. (Ctrl+Alt+C)"
+            if start:
+                button.add_css_class("focus-citation-range-active")
+            else:
+                button.remove_css_class("focus-citation-range-active")
+        if self._citation_count_entry is not None:
+            self._citation_count_entry.set_text(f"+{additional}")
+            self._citation_count_entry.set_sensitive(enabled)
+            self._citation_count_entry.set_tooltip_text(
+                "Additional pages after the starting page. Type a number and press Enter; "
+                "zero cancels the range. " + description
             )
-        else:
-            self._page_citation_range_button.remove_css_class(
-                "focus-citation-range-active"
+        if self._citation_less_button is not None:
+            self._citation_less_button.set_sensitive(enabled and start is not None)
+            self._citation_less_button.set_tooltip_text(
+                "Remove one following page; zero cancels the range"
             )
-            self._page_citation_range_button.set_tooltip_text(
-                "Set citation range start (Ctrl+Alt+C)"
+        if self._citation_more_button is not None:
+            error = ""
+            try:
+                self._resolve_citation_extent(additional + 1)
+            except ValueError as exc:
+                error = str(exc)
+            self._citation_more_button.set_sensitive(enabled and not error)
+            self._citation_more_button.set_tooltip_text(error or "Add one following page")
+        if self._citation_preview_label is not None:
+            self._citation_preview_label.set_label(preview)
+            self._citation_preview_label.set_tooltip_text(description)
+            self._citation_preview_label.set_visible(start is not None)
+        if self._citation_end_here_button is not None:
+            page = self._current_page_number()
+            visible = start is not None and page is not None and page != start.file_page
+            error = ""
+            if visible:
+                try:
+                    self._resolve_citation_extent(page - start.file_page)
+                except ValueError as exc:
+                    error = str(exc)
+            button = self._citation_end_here_button
+            if not visible and button.has_focus() and self._current_page_citation_button:
+                self._current_page_citation_button.grab_focus()
+            button.set_visible(visible)
+            button.set_sensitive(enabled and not error)
+            button.set_tooltip_text(error or "Set the citation range end to the displayed page")
+            button.update_property(
+                [Gtk.AccessibleProperty.LABEL], ["Set citation range end here"]
             )
 
     def _prose_record_citations_action_available(self) -> bool:
@@ -5136,6 +5271,7 @@ class Focus(Adw.Application):
         start_label = self._page_citation_range_start
         if start_label is None:
             self._page_citation_range_start = current_label
+            self._page_citation_range_end = current_label
             self._sync_citation_buttons()
             return True
 
@@ -5143,12 +5279,12 @@ class Focus(Adw.Application):
         if not result.valid:
             self._transient_toast(result.message)
             return False
-        self._page_citation_range_start = None
-        self._sync_citation_buttons()
-        if self._send_text_to_prose_record_citations_action(result.citation):
-            return True
-        if not self._copy_text_to_clipboard(result.citation):
+        if not (self._send_text_to_prose_record_citations_action(result.citation)
+                or self._copy_text_to_clipboard(result.citation)):
             return False
+        self._page_citation_range_start = None
+        self._page_citation_range_end = None
+        self._sync_citation_buttons()
         return True
 
     def _on_append_selection_citation_to_file_action(

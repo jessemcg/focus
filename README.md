@@ -133,7 +133,29 @@ summaries, or record metadata.
 minute-order **text**, even when an image was visible. Press again to return to the
 originating hearing text, including after browsing elsewhere. Missing exact target
 text produces an unavailable message rather than jumping to a neighboring page.
-**Ctrl+I** remains the independent manual image toggle.
+**Ctrl+I** remains the independent manual image toggle. Click a page thumbnail to
+open its image; **Back to text** appears only while viewing an image.
+
+The flat **Cite − +0 +** controls insert the current-page citation with one click
+when no range is active. The first **+** anchors a range to the displayed page;
+**+2** means that starting page plus the next two pages (three pages total).
+Browse freely: neither the anchor nor the count changes when you navigate.
+A muted preview such as **RT 45–47**, immediately left of Cite, shows exactly what
+Cite will insert without moving the + button when the preview appears.
+**End here** appears while browsing away from the anchor and sets the endpoint to
+the displayed page without inserting. **−** shortens the range; reducing it to zero
+cancels the anchor. You can also edit the count and press Enter, or click Cite to
+apply it and insert. Cite clears the range only after successful delivery to Prose
+or clipboard fallback; failures retain it. Case changes clear it without saving.
+
+The counter and End here reject missing pages, incompatible citation series, and
+numbering gaps/restarts, with explanatory tooltips or feedback. Existing shortcuts
+and public actions remain: **Ctrl+Alt+Shift+C** always inserts the displayed page;
+**Ctrl+Alt+C** still sets the start on its first press and inserts through the
+then-current page on its second. A shortcut-set start is visible as an anchored
+single-page preview at **+0**, and can also be extended with + or End here, inserted
+with Cite, or cancelled with −.
+See [reader-control validation and screenshots](docs/reader-controls-acceptance.md).
 
 See [category acceptance and screenshots](docs/record-category-acceptance.md).
 

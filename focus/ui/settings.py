@@ -204,7 +204,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_row.add_row(summary_emphasis_row)
 
         search_chip_row, self._search_chip_color_control = self._build_color_row(
-            "Search Chip Color",
+            "Search and Cite Chip Color",
             DEFAULT_SEARCH_CHIP_COLOR,
         )
         highlight_row.add_row(search_chip_row)
