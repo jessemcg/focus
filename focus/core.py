@@ -1140,16 +1140,6 @@ def _resolve_record_layout(root: Path) -> RecordLayout:
     )
 
 
-def _resolve_legacy_case_overview_path(embeddings_dir: Path) -> Path | None:
-    overview = embeddings_dir / "case_overview" / "case_overview.txt"
-    if overview.exists():
-        return overview
-    details = embeddings_dir / "case_details" / "case_details.txt"
-    if details.exists():
-        return details
-    return None
-
-
 def _normalize_highlight_phrases(value: Any) -> list[str]:
     if isinstance(value, str):
         candidates: Iterable[str] = value.splitlines()
@@ -1439,8 +1429,6 @@ class AiOutputView:
 class FocusViewState:
     current_index: int = 0
     show_image: bool = False
-    sidebar_visible: bool = True
-    ai_panel_visible: bool = True
     grep_phrase_raw: str | None = None
     grep_regex: re.Pattern[str] | None = None
     grep_active: bool = False
@@ -1450,14 +1438,6 @@ class FocusViewState:
     grep_match_order: list[tuple[int, int]] = field(default_factory=list)
     grep_current_match_index: int = -1
     ai_active_view: str = AI_VIEW_AGENT_QA
-    ai_output_raw: dict[str, str] = field(
-        default_factory=lambda: {
-            AI_VIEW_AGENT_QA: "",
-        }
-    )
-    ai_status_text: str = ""
-    ai_spinning: bool = False
-    agent_question_text: str = ""
     sidebar_expanded: list[str] = field(default_factory=list)
     summary_loaded_path: Path | None = None
     summary_active_source: str | None = None
@@ -1489,7 +1469,7 @@ RETIRED_SUMMARIZATION_CONFIG_KEYS = {
 }
 
 
-def _load_agent_only_ai_settings() -> AiSettings:
+def load_ai_settings() -> AiSettings:
     config = _read_config()
     cleaned = dict(config)
     for key in OBSOLETE_SEARCH_CONFIG_KEYS:
@@ -1508,7 +1488,7 @@ def _load_agent_only_ai_settings() -> AiSettings:
     )
 
 
-def _save_agent_only_ai_settings(settings: AiSettings) -> None:
+def save_ai_settings(settings: AiSettings) -> None:
     config = _read_config()
     for key in OBSOLETE_SEARCH_CONFIG_KEYS:
         config.pop(key, None)
@@ -1522,10 +1502,6 @@ def _save_agent_only_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_SUMMARY_EMPHASIS_COLOR] = _coerce_color_value(settings.summary_emphasis_color, DEFAULT_SUMMARY_EMPHASIS_COLOR)
     config[CONFIG_KEY_SEARCH_CHIP_COLOR] = _coerce_color_value(settings.search_chip_color, DEFAULT_SEARCH_CHIP_COLOR)
     _write_config(config)
-
-
-load_ai_settings = _load_agent_only_ai_settings
-save_ai_settings = _save_agent_only_ai_settings
 
 
 IMAGE_ICON_ON_CHOICES = (

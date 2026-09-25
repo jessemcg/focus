@@ -158,7 +158,6 @@ def test_poll_accepts_two_revisions_and_renders_latest_through_links(tmp_path) -
 
     # The second revision replaced the raw output and latest-answer text.
     assert harness._output_state.raw == second_markdown
-    assert harness._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] == second_markdown
     assert harness._agent_last_answer_text == second_markdown
 
     # Only the final answer is passed through the shared rendering path.

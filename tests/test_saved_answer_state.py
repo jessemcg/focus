@@ -104,7 +104,6 @@ def test_new_live_revision_does_not_replace_displayed_saved_answer(tmp_path) -> 
 
     # The saved answer stays displayed and the live revision is retained.
     assert harness._output_state.raw == saved.markdown
-    assert harness._current_view_state().ai_output_raw["agent-qa"] == saved.markdown
     assert harness._agent_live_snapshot is not None
     assert harness._agent_live_snapshot.markdown == live_markdown
     assert harness._latest_answer_pending

@@ -72,7 +72,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._summary_emphasis_color_control: Gtk.Widget | None = None
         self._search_chip_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
-        self._prompt_editors: dict[str, AgentSettingsWidgets] = {}
+        self._agent_widgets: AgentSettingsWidgets | None = None
         self._pi_model_options: list[PiModel | None] = []
         self._pi_available_model_keys: set[tuple[str, str]] = set()
         self._pi_thinking_options: list[str] = []
@@ -238,7 +238,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_row.add_row(highlight_box)
         self._highlight_phrases_buffer = highlight_buffer
 
-        agent_row = self._build_agent_settings_page("agent", "Agent")
+        agent_row = self._build_agent_settings_page()
         appearance_group.add(agent_row)
 
         scrolled = Gtk.ScrolledWindow()
@@ -307,9 +307,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             return _coerce_color_value(control.get_text(), default)
         return default
 
-    def _build_agent_settings_page(self, key: str, title: str) -> Adw.ExpanderRow:
+    def _build_agent_settings_page(self) -> Adw.ExpanderRow:
         agent_row = Adw.ExpanderRow(
-            title=title,
+            title="Agent",
             subtitle="PI must be installed to answer Agent questions.",
         )
         agent_row.set_expanded(False)
@@ -388,8 +388,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         pi_access_row = Adw.ActionRow(
             title="PI access",
             subtitle=(
-                "Focus enables read-oriented PI tools plus bash for the "
-                "citation helper; the project skill prohibits case-file writes."
+                "Focus permits guarded transcript-page reads and its structured "
+                "record search and answer tools; shell access is disabled."
             ),
         )
         warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
@@ -397,7 +397,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         pi_access_row.add_prefix(warning_icon)
         agent_row.add_row(pi_access_row)
 
-        self._prompt_editors[key] = AgentSettingsWidgets(
+        self._agent_widgets = AgentSettingsWidgets(
             pi_agent_command_row=pi_agent_command_row,
             speech_agent_source_row=speech_agent_source_row,
         )
@@ -555,10 +555,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         self._pi_model_generation += 1
         generation = self._pi_model_generation
-        agent_widgets = self._prompt_editors.get("agent")
         command = (
-            agent_widgets.pi_agent_command_row.get_text().strip()
-            if isinstance(agent_widgets, AgentSettingsWidgets)
+            self._agent_widgets.pi_agent_command_row.get_text().strip()
+            if self._agent_widgets is not None
             else DEFAULT_PI_AGENT_COMMAND
         )
         try:
@@ -717,11 +716,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
     def _load_settings(self) -> None:
         settings = load_ai_settings()
-        agent_widgets = self._prompt_editors.get("agent")
-
-        if isinstance(agent_widgets, AgentSettingsWidgets):
-            agent_widgets.pi_agent_command_row.set_text(settings.pi_agent_command)
-            agent_widgets.speech_agent_source_row.set_text(
+        if self._agent_widgets is not None:
+            self._agent_widgets.pi_agent_command_row.set_text(settings.pi_agent_command)
+            self._agent_widgets.speech_agent_source_row.set_text(
                 settings.speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
             )
 
@@ -775,12 +772,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._toast_overlay.add_toast(toast)
 
     def _on_save_clicked(self, _btn: Gtk.Button) -> None:
-        agent_widgets = self._prompt_editors.get("agent")
-        if not isinstance(agent_widgets, AgentSettingsWidgets):
+        if self._agent_widgets is None:
             return
 
-        speech_agent_source_file = agent_widgets.speech_agent_source_row.get_text().strip()
-        pi_agent_command = agent_widgets.pi_agent_command_row.get_text().strip()
+        speech_agent_source_file = self._agent_widgets.speech_agent_source_row.get_text().strip()
+        pi_agent_command = self._agent_widgets.pi_agent_command_row.get_text().strip()
 
         highlight_phrases = (
             _normalize_highlight_phrases(self._prompt_text(self._highlight_phrases_buffer))

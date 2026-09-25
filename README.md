@@ -29,7 +29,6 @@ Focus does not load embeddings, retrieval chunks, Chroma, or any other vector da
 - GTK4 VTE (`gir1.2-vte-3.91` and `libvte-2.91-gtk4-0`) for the embedded Agent terminal
 - [uv](https://docs.astral.sh/uv/)
 - [PI](https://pi.dev/docs/latest) for Agent questions
-- A running/configured OpenAI-compatible service only for Focus's optional page/range summary and extraction tools
 
 Install the Python environment:
 
@@ -146,7 +145,7 @@ Focus stores local application settings in `config.json` (ignored by Git). The S
 - PI Agent command, speech question file, and PI model/reasoning effort.
 - Fonts, highlight phrases, and colors.
 
-Obsolete embedding/vector-question credentials and settings are removed when configuration is loaded, and retired summarization/extraction credentials and model profiles are dropped when settings are saved. Never commit `config.json` or API keys.
+Obsolete embedding/vector-question credentials and settings are removed when configuration is loaded, and retired summarization/extraction credentials and model profiles are dropped when settings are saved. Never commit `config.json` or private case data.
 
 ## Agent questions
 

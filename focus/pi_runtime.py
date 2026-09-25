@@ -311,21 +311,30 @@ def _read_pi_settings(path: Path) -> dict[str, Any]:
     return raw
 
 
+def _write_private_settings_temp(path: Path, settings: dict[str, Any]) -> None:
+    """Write a complete private JSON file for atomic publication."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as output:
+        json.dump(settings, output, ensure_ascii=True, indent=2)
+        output.write("\n")
+
+
 def ensure_project_pi_settings(
     path: Path = PROJECT_PI_SETTINGS_PATH,
 ) -> None:
-    """Create the local PI project settings from defaults when missing."""
-    if path.exists():
+    """Seed missing local settings without replacing a concurrent user file."""
+    if path.exists() or path.is_symlink():
         return
     temp_path: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        temp_path.write_text(
-            json.dumps(DEFAULT_PROJECT_PI_SETTINGS, ensure_ascii=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temp_path, path)
+        _write_private_settings_temp(temp_path, DEFAULT_PROJECT_PI_SETTINGS)
+        try:
+            os.link(temp_path, path)
+        except FileExistsError:
+            # Another writer (or a dangling symlink) won the race.
+            pass
     except OSError as exc:
         raise PiSettingsError(f"Unable to create PI project settings: {exc}") from exc
     finally:
@@ -361,6 +370,8 @@ def save_project_pi_runtime(
     if normalized_thinking not in PI_THINKING_LEVELS:
         raise PiSettingsError(f"Unsupported PI reasoning effort: {thinking_level}")
     ensure_project_pi_settings(path)
+    if path.is_symlink():
+        raise PiSettingsError("PI project settings is a symlink; refusing to replace it.")
     settings = _read_pi_settings(path)
     settings["defaultProvider"] = model.provider
     settings["defaultModel"] = model.model_id
@@ -368,10 +379,7 @@ def save_project_pi_runtime(
     settings.pop("fireworksPriorityServiceTier", None)
     temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        temp_path.write_text(
-            json.dumps(settings, ensure_ascii=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        _write_private_settings_temp(temp_path, settings)
         os.replace(temp_path, path)
     except OSError as exc:
         raise PiSettingsError(f"Unable to save PI project settings: {exc}") from exc

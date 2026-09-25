@@ -145,7 +145,6 @@ class Focus(Adw.Application):
         self._split_sidebar_page: Adw.NavigationPage | None = None
         self._toc_placeholder: Gtk.Widget | None = None
         self._toc_sidebar_has_items = False
-        self._toc_sidebar_visible = True
         self._current_text_color = DEFAULT_TEXT_COLOR
 
         self._color_provider = Gtk.CssProvider()
@@ -265,12 +264,8 @@ class Focus(Adw.Application):
         self._last_ai_panel_host_height = -1
         self._ai_status_label: Gtk.Label | None = None
         self._ai_spinner: Gtk.Spinner | None = None
-        self._ai_stream_thread: threading.Thread | None = None
-        self._ai_cancel_event: threading.Event | None = None
         self._ai_settings_window: AiSettingsWindow | None = None
         self._ai_settings: AiSettings = load_ai_settings()
-        self._ai_in_flight = False
-        self._ai_request_generation = 0
         self._agent_question_entry: Gtk.Entry | None = None
         self._agent_followup_entry: Gtk.Entry | None = None
         self._agent_ask_row: Gtk.Box | None = None
@@ -862,7 +857,6 @@ class Focus(Adw.Application):
             "Enter starts a new Agent query and replaces the current conversation"
         )
         self._agent_question_entry.connect("activate", self._on_agent_question_activate)
-        self._agent_question_entry.connect("changed", self._on_agent_question_changed)
         agent_ask_row.append(self._agent_question_entry)
 
         self._agent_followup_entry = Gtk.Entry()
@@ -1382,7 +1376,7 @@ class Focus(Adw.Application):
 
         self._toc_sidebar_revealer = Gtk.Revealer()
         self._toc_sidebar_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_RIGHT)
-        self._toc_sidebar_revealer.set_reveal_child(self._toc_sidebar_visible)
+        self._toc_sidebar_revealer.set_reveal_child(True)
         sidebar_root.append(sidebar_container)
         self._toc_sidebar_revealer.set_child(sidebar_root)
         self._split_sidebar_page = Adw.NavigationPage.new(self._toc_sidebar_revealer, "Contents")
@@ -1426,12 +1420,8 @@ class Focus(Adw.Application):
             return
         self._detach_widget_from_parent(self._ai_panel_root)
         self._ai_panel_revealer.set_child(self._ai_panel_root)
-        visible = self._current_view_state().ai_panel_visible
-        self._ai_panel_revealer.set_reveal_child(visible)
-        if visible:
-            self._update_embedded_ai_panel_height(force=True)
-        else:
-            self._reset_embedded_ai_panel_sizing()
+        self._ai_panel_revealer.set_reveal_child(True)
+        self._update_embedded_ai_panel_height(force=True)
 
     def _reset_ai_output_scroller_sizing(self) -> None:
         for scroller in self._ai_output_scrollers:
@@ -1755,8 +1745,6 @@ class Focus(Adw.Application):
         self._sync_citation_buttons()
         self._set_grep_entry_text("")
         self._view_state = FocusViewState()
-        self._current_view_state().sidebar_visible = self._toc_sidebar_visible
-        self._current_view_state().ai_panel_visible = True
         self._ai_active_view = AI_VIEW_AGENT_QA
         for ai_state in self._ai_outputs.values():
             ai_state.raw = ""
@@ -1787,8 +1775,6 @@ class Focus(Adw.Application):
             self._capture_summary_scroll_position()
         state.current_index = self.current_index
         state.show_image = self._show_image
-        state.sidebar_visible = self._toc_sidebar_visible
-        state.ai_panel_visible = True
         state.grep_phrase_raw = self._grep_phrase_raw
         state.grep_regex = self._grep_regex
         state.grep_active = self._grep_active
@@ -1798,12 +1784,7 @@ class Focus(Adw.Application):
         state.grep_match_order = list(self._grep_match_order)
         state.grep_current_match_index = self._grep_current_match_index
         state.ai_active_view = self._ai_active_view
-        state.ai_output_raw = {name: view.raw or "" for name, view in self._ai_outputs.items()}
-        state.ai_status_text = ""
-        state.ai_spinning = bool(self._ai_spinner and self._ai_spinner.get_spinning())
         state.sidebar_expanded = self._get_sidebar_expanded_keys()
-        if self._agent_question_entry:
-            state.agent_question_text = self._agent_question_entry.get_text()
         state.summary_loaded_path = self._summary_loaded_path
         state.summary_active_source = self._summary_active_source
         state.summary_current_page = (
@@ -2390,10 +2371,8 @@ class Focus(Adw.Application):
             if tree_row.get_expanded() != should_expand:
                 tree_row.set_expanded(should_expand)
 
-    def _set_sidebar_visible(self, visible: bool = True) -> None:
+    def _ensure_sidebar_visible(self) -> None:
         """Keep the TOC sidebar permanently visible."""
-        self._toc_sidebar_visible = True
-        self._current_view_state().sidebar_visible = True
         if self._split_view:
             self._split_view.set_collapsed(False)
             current_sidebar = (
@@ -5440,7 +5419,7 @@ class Focus(Adw.Application):
         self.set_accels_for_action("app.print_current_image", ["<Primary>p"])
         self.set_accels_for_action("app.toggle_minute_order", ["<Primary><Shift>m"])
         self.set_accels_for_action("app.show_shortcuts", ["F1"])
-        self._set_sidebar_visible(self._toc_sidebar_visible)
+        self._ensure_sidebar_visible()
 
     def _build_shortcuts_window(self) -> Gtk.ShortcutsWindow:
         if self._shortcuts_window:
@@ -6263,7 +6242,6 @@ class Focus(Adw.Application):
         if self._ai_panel_revealer:
             self._ai_panel_revealer.set_reveal_child(True)
             self._update_embedded_ai_panel_height(force=True)
-        self._current_view_state().ai_panel_visible = True
         self._refresh_search_highlighted_button()
 
     def _open_case_tool_summary(self, source: str) -> None:
@@ -6462,12 +6440,6 @@ class Focus(Adw.Application):
 
     def _on_agent_question_activate(self, _entry: Gtk.Entry) -> None:
         self._launch_agent_question()
-
-    def _on_agent_question_changed(self, _entry: Gtk.Entry) -> None:
-        if self._agent_question_entry:
-            self._current_view_state().agent_question_text = (
-                self._agent_question_entry.get_text()
-            )
 
     def _focus_agent_question_entry(self) -> None:
         self._ensure_ai_panel_visible()
@@ -6685,7 +6657,6 @@ class Focus(Adw.Application):
         if state:
             state.raw = ""
             self._apply_ai_output_links("", state)
-        self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = ""
         self._sync_agent_output_header_state()
         self._refresh_answer_action_state()
         self._queue_embedded_ai_panel_height_update()
@@ -6744,7 +6715,6 @@ class Focus(Adw.Application):
         self._agent_displayed_is_saved = is_saved
         state = self._get_ai_output_state(AI_VIEW_AGENT_QA)
         state.raw = snapshot.markdown
-        self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = snapshot.markdown
         self._apply_ai_output_links(snapshot.markdown, state)
         self._set_agent_subview(AGENT_SUBVIEW_ANSWER)
         position = self._answer_positions.get(snapshot.answer_id)
@@ -6809,7 +6779,6 @@ class Focus(Adw.Application):
         if snapshot is None or state is None or state.raw == snapshot.markdown:
             return
         state.raw = snapshot.markdown
-        self._current_view_state().ai_output_raw[AI_VIEW_AGENT_QA] = snapshot.markdown
         self._apply_ai_output_links(snapshot.markdown, state)
 
     def _capture_agent_answer_position(self) -> None:
@@ -7362,7 +7331,6 @@ class Focus(Adw.Application):
         self._clear_agent_answer()
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._ai_settings = load_ai_settings()
-        self._current_view_state().agent_question_text = question
         self._agent_initial_question = question
         self._agent_followup_draft = ""
         self._agent_followup_status = ""
@@ -7670,7 +7638,6 @@ class Focus(Adw.Application):
             return
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
-        self._current_view_state().agent_question_text = question
         if self._agent_question_entry:
             self._agent_question_entry.set_text(question)
         self._launch_agent_question()
@@ -8178,9 +8145,6 @@ class Focus(Adw.Application):
             self._ensure_ai_panel_visible()
 
     def _update_ai_status(self, text: str, spinning: bool) -> None:
-        state = self._current_view_state()
-        state.ai_status_text = text
-        state.ai_spinning = spinning
         display_text = text.strip() or self._case_tool_description()
         if self._ai_status_label:
             self._ai_status_label.set_text(display_text)

@@ -120,7 +120,6 @@ class ReadingHarness:
         self._agent_subview_name = AGENT_SUBVIEW_ANSWER
         self._agent_context_label = FakeContextLabel()
         self._ai_outputs: dict[str, object] = {}
-        self._current_state: dict[str, str] = {"agent-qa": ""}
         self._case_generation = 0
         self._answer_position_generation = 0
         self._answer_position_pending = None
@@ -131,13 +130,6 @@ class ReadingHarness:
         self._answer_positions = AnswerPositionCache()
         self._agent_displayed_snapshot: AgentAnswerSnapshot | None = None
         self._agent_displayed_is_saved = False
-
-    def _current_view_state(self):  # type: ignore[no-untyped-def]
-        return self
-
-    @property
-    def ai_output_raw(self) -> dict[str, str]:
-        return self._current_state
 
 
 def _snapshot(markdown: str = "Answer body.\n") -> AgentAnswerSnapshot:
@@ -265,7 +257,7 @@ def test_sync_answer_buffer_only_renders_on_content_change() -> None:
     harness._agent_displayed_snapshot = _snapshot("Body B.\n")
     harness._sync_agent_answer_buffer()
     assert applied == ["Body B.\n"]
-    assert harness._current_state[AI_VIEW_AGENT_QA] == "Body B.\n"
+    assert state.raw == "Body B.\n"
 
 
 def test_context_line_hidden_outside_answer_and_reports_identity() -> None:
