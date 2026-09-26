@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Focus — aperture concept</title>
+  <defs>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#deddda"/><stop offset="1" stop-color="#9a9996"/></linearGradient>
+    <linearGradient id="barrel" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#5e5c64"/><stop offset="1" stop-color="#3d3846"/></linearGradient>
+    <radialGradient id="glass" cx=".38" cy=".25" r=".85"><stop stop-color="#343875"/><stop offset="1" stop-color="#171d38"/></radialGradient>
+  </defs>
+  <g id="lens-housing">
+    <circle cx="64" cy="65" r="58" fill="#241f31"/>
+    <circle cx="64" cy="61" r="58" fill="url(#barrel)"/>
+    <circle cx="64" cy="61" r="52" fill="url(#rim)"/>
+    <circle cx="64" cy="62" r="47" fill="#241f31"/>
+    <circle cx="64" cy="62" r="41" fill="url(#glass)"/>
+  </g>
+  <g id="aperture-blades">
+    <path d="M64 22 A40 40 0 0 1 98.641 42 L80.454 71.5 V52.5 Q80 30 64 22Z" fill="#7061c4"/>
+    <path d="M64 22 A40 40 0 0 1 98.641 42 L80.454 71.5 V52.5 Q80 30 64 22Z" transform="rotate(60 64 62)" fill="#3584e4"/>
+    <path d="M64 22 A40 40 0 0 1 98.641 42 L80.454 71.5 V52.5 Q80 30 64 22Z" transform="rotate(120 64 62)" fill="#30b8b6"/>
+    <path d="M64 22 A40 40 0 0 1 98.641 42 L80.454 71.5 V52.5 Q80 30 64 22Z" transform="rotate(180 64 62)" fill="#21889c"/>
+    <path d="M64 22 A40 40 0 0 1 98.641 42 L80.454 71.5 V52.5 Q80 30 64 22Z" transform="rotate(240 64 62)" fill="#1a5fb4"/>
+    <path d="M64 22 A40 40 0 0 1 98.641 42 L80.454 71.5 V52.5 Q80 30 64 22Z" transform="rotate(300 64 62)" fill="#574aa1"/>
+  </g>
+  <path id="glass-reflection" d="M35 45 C40 33 51 27 62 27 C64 27 65 29 62 30 C51 33 44 38 39 47 C37 50 33 49 35 45Z" fill="#ffffff" opacity=".55"/>
+</svg>

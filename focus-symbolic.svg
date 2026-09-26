@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+<title>Focus aperture symbolic</title>
+<g fill="#2e3436">
+<path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1Zm0 2a5 5 0 1 0 0 10A5 5 0 0 0 8 3Z"/>
+<path fill-rule="evenodd" d="M8 4 11.5 6v4L8 12l-3.5-2V6Zm0 2L6.5 7v2L8 10l1.5-1V7Z"/>
+</g>
+</svg>
