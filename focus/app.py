@@ -81,7 +81,7 @@ class Focus(Adw.Application):
     def __init__(self, *, input_override: Path | None = None) -> None:
         super().__init__(
             application_id=APPLICATION_ID,
-            flags=Gio.ApplicationFlags.FLAGS_NONE,
+            flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
         try:
             style_manager = Adw.StyleManager.get_default()
@@ -476,6 +476,31 @@ class Focus(Adw.Application):
         if page_num - before <= after - page_num:
             return pos - 1
         return pos
+
+    def do_command_line(self, command_line: Gio.ApplicationCommandLine) -> int:
+        # GTK forwards this to the already-running instance, unlike arguments
+        # parsed only in the second process before app.run().
+        args = command_line.get_arguments()[1:]
+        if len(args) > 1:
+            command_line.printerr("Only one directory argument is supported.\n")
+            return 2
+        if args:
+            try:
+                target = _prepare_cli_input_dir(args[0])
+            except SystemExit as exc:
+                return int(exc.code)
+            if target != self.input_dir:
+                if self.win is None:
+                    self.input_dir = target
+                    self._record_layout = _resolve_record_layout(target)
+                    self._case_name = _read_case_name(self._record_layout.root)
+                else:
+                    # CLI overrides are one-time; only the picker saves a case.
+                    self._apply_input_dir(target, persist=False)
+                    self.win.present()
+                    return 0
+        self.activate()
+        return 0
 
     def on_activate(self, app: Gio.Application) -> None:  # noqa: ARG002
         self._scan_pages()
@@ -5990,7 +6015,7 @@ class Focus(Adw.Application):
             self._load_current()
         self._transient_toast("AI settings updated.")
 
-    def _apply_input_dir(self, path: Path) -> None:
+    def _apply_input_dir(self, path: Path, *, persist: bool = True) -> None:
         target = path.expanduser()
         resolved = target.resolve(strict=False)
         if not resolved.exists() or not resolved.is_dir():
@@ -6013,7 +6038,8 @@ class Focus(Adw.Application):
         # Warm the listing so the Saved Answers split button's primary action
         # can resume an answer before the popover is ever opened.
         self._reload_saved_answers()
-        save_input_dir_to_config(normalized)
+        if persist:
+            save_input_dir_to_config(normalized)
         if not self.text_dir.exists():
             self._transient_toast(f"Text pages directory not found: {self.text_dir}")
         self._grep_phrase_raw = None
@@ -8391,7 +8417,10 @@ def run(input_dir: Path | None = None) -> int:
     if input_dir is not None:
         input_override = _prepare_cli_input_dir(str(input_dir))
     app = Focus(input_override=input_override)
-    return int(app.run(None))
+    args = [sys.argv[0]]
+    if input_override is not None:
+        args.append(str(input_override))
+    return int(app.run(args))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -3,6 +3,7 @@
 import importlib
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import gi
 
@@ -55,6 +56,55 @@ def test_header_and_menu_share_existing_action():
         == button.get_action_name()
         for i in range(menu.get_n_items())
     )
+
+
+def test_forwarded_command_line_switches_case_without_saving(monkeypatch, tmp_path):
+    case_a = tmp_path / "A"
+    case_b = tmp_path / "B"
+    for case in (case_a, case_b):
+        (case / "text_pages").mkdir(parents=True)
+        (case / "text_pages" / "0001.txt").write_text(case.name)
+
+    app = Focus(input_override=case_a)
+    app.win = SimpleNamespace(present=Mock())
+    app.activate = Mock()
+    app._apply_input_dir = Mock()
+    command_line = SimpleNamespace(get_arguments=lambda: ["focus", str(case_b)])
+    assert app.do_command_line(command_line) == 0
+    app._apply_input_dir.assert_called_once_with(case_b, persist=False)
+    app.win.present.assert_called_once()
+    app.activate.assert_not_called()
+    assert not core.CONFIG_FILE.exists()
+
+
+def test_first_command_line_uses_override_without_saving(monkeypatch, tmp_path):
+    case = tmp_path / "case"
+    (case / "text_pages").mkdir(parents=True)
+    app = Focus(input_override=case)
+    app.activate = Mock()
+    assert app.do_command_line(SimpleNamespace(get_arguments=lambda: ["focus", str(case)])) == 0
+    assert app.input_dir == case
+    assert app._record_layout.text_dir == case / "text_pages"
+    assert not core.CONFIG_FILE.exists()
+    app.activate.assert_called_once()
+
+
+def test_run_forwards_validated_directory_to_application(monkeypatch, tmp_path):
+    case = tmp_path / "case"
+    (case / "text_pages").mkdir(parents=True)
+    launched = []
+
+    class FakeFocus:
+        def __init__(self, *, input_override):
+            launched.append(input_override)
+
+        def run(self, args):
+            launched.append(args)
+            return 0
+
+    monkeypatch.setattr(app_module, "Focus", FakeFocus)
+    assert app_module.run(case) == 0
+    assert launched == [case, [app_module.sys.argv[0], str(case)]]
 
 
 def test_picker_singleflight_cancel_errors_and_selection(monkeypatch, tmp_path):
@@ -140,3 +190,6 @@ def test_picker_singleflight_cancel_errors_and_selection(monkeypatch, tmp_path):
     app._apply_input_dir(empty)
     assert "text_pages/" in messages[-1] and "Open Case…" in messages[-1]
     assert resets == [case_a, case_b]
+    app._apply_input_dir(case_a, persist=False)
+    assert app.input_dir == case_a
+    assert core.load_input_dir_from_config() == empty
