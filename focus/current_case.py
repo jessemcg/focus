@@ -9,11 +9,10 @@ import sys
 from pathlib import Path
 
 
-CURRENT_CASE_FILE = Path(
-    "/home/jesse/Dropbox/MCGLAW/config_files/scripts/misc/currently_selected_case"
-)
-OPEN_CASES_ROOT = Path("/home/jesse/Dropbox/MCGLAW/OPEN_CASES")
-CLOSED_CASES_ROOT = Path("/home/jesse/Dropbox/MCGLAW/CLOSED_CASES")
+MCGLAW_ROOT = Path.home() / "Dropbox" / "MCGLAW"
+CURRENT_CASE_FILE = MCGLAW_ROOT / "config_files/scripts/misc/currently_selected_case"
+OPEN_CASES_ROOT = MCGLAW_ROOT / "OPEN_CASES"
+CLOSED_CASES_ROOT = MCGLAW_ROOT / "CLOSED_CASES"
 FOCUS_CONFIG = Path(__file__).resolve().parent.parent / "config.json"
 BUNDLE_RELATIVE_PATH = Path("0_record") / "case_bundle"
 

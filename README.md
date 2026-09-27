@@ -61,9 +61,20 @@ Or:
 uv run python -m focus
 ```
 
-The desktop launcher is maintained separately in `config_files/Desktop_Files` and uses
-`focus.svg`, the editable full-color icon. `focus-symbolic.svg` is its monochrome
-companion; `focus.png` is the matching transparent 512×512 export.
+To open a case for the first time, click **Open Case…** in the header (also in the
+menu) and select an existing record folder. Focus remembers that selection. For a
+one-time override without changing the saved selection, run:
+
+```bash
+uv run focus /path/to/case_bundle
+```
+
+Jesse's custom desktop launcher in `config_files/Desktop_Files` refreshes the
+currently selected MCGLAW case on each launch; it may supersede a folder selected
+manually on the next launch. Ordinary `uv run focus` does not perform that refresh.
+The launcher uses `focus.svg`, the editable full-color icon;
+`focus-symbolic.svg` is its monochrome companion and `focus.png` the matching
+transparent 512×512 export.
 
 ## Record layout
 
@@ -165,9 +176,15 @@ See [category acceptance and screenshots](docs/record-category-acceptance.md).
 
 Focus stores local application settings in `config.json` (ignored by Git). The Settings window is a single page with **Display**, **Highlights**, and **Agent** sections. Settings include:
 
-- Input directory.
 - PI Agent command, speech question file, and PI model/reasoning effort.
 - Fonts, highlight phrases, and colors.
+
+Choose the input directory using **Open Case…** in the header or menu, not the
+Settings window. Configured input directories support absolute paths or `~` for
+the home directory; Focus stores selected paths as absolute paths. Literal `$HOME`
+is not expanded in configuration. Settings and PI resources remain checkout-local;
+Python, uv, GTK/Libadwaita (and VTE for Agent sessions), and optional PI must be
+available on the host. This does not make a wheel or copied executable self-contained.
 
 Obsolete embedding/vector-question credentials and settings are removed when configuration is loaded, and retired summarization/extraction credentials and model profiles are dropped when settings are saved. Never commit `config.json` or private case data.
 

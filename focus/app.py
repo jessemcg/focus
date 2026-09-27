@@ -488,9 +488,39 @@ class Focus(Adw.Application):
             self._persist_active_view_state()
         else:
             self._set_window_title("No pages found")
-            self._set_text("No .txt pages found in:\n" + str(self.text_dir))
+            self._set_text(self._empty_record_message())
         if self.win:
             self.win.present()
+
+    def _empty_record_message(self) -> str:
+        return (
+            f"No .txt pages found in:\n{self.text_dir}\n\n"
+            "Choose Open Case… to select an existing record folder containing "
+            "text_pages/ or legacy text_record/."
+        )
+
+    @staticmethod
+    def _build_open_case_button() -> Gtk.Button:
+        button = Gtk.Button()
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        content.append(Gtk.Image.new_from_icon_name("folder-open-symbolic"))
+        content.append(Gtk.Label(label="Open Case…"))
+        button.set_child(content)
+        button.add_css_class("flat")
+        button.set_valign(Gtk.Align.CENTER)
+        button.set_action_name("app.choose_input")
+        button.set_tooltip_text(
+            "Select an existing record folder to replace the currently displayed case"
+        )
+        return button
+
+    @staticmethod
+    def _build_document_menu() -> Gio.Menu:
+        menu = Gio.Menu()
+        menu.append("Transcript Page Breakdown", "app.show_transcript_breakdown")
+        menu.append("Print Images", "app.print_images")
+        menu.append("Open Case…", "app.choose_input")
+        return menu
 
     def _ensure_window(self) -> None:
         if self.win:
@@ -518,16 +548,11 @@ class Focus(Adw.Application):
         self._title_widget = Adw.WindowTitle(title="Focus")
         header.set_title_widget(self._title_widget)
 
+        header.pack_start(self._build_open_case_button())
+
         # Hamburger menu on the right
         menu_model = Gio.Menu()
-        document_menu = Gio.Menu()
-        document_menu.append(
-            "Transcript Page Breakdown",
-            "app.show_transcript_breakdown",
-        )
-        document_menu.append("Print Images", "app.print_images")
-        document_menu.append("Input Directory", "app.choose_input")
-        menu_model.append_section(None, document_menu)
+        menu_model.append_section(None, self._build_document_menu())
 
         application_menu = Gio.Menu()
         application_menu.append("D-Bus Commands", "app.show_dbus_commands")
@@ -5886,31 +5911,37 @@ class Focus(Adw.Application):
         cr.restore()
 
     def _on_choose_input_dir(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
-        if not self.win:
+        if not self.win or self._input_dir_dialog is not None:
             return
         dialog = Gtk.FileDialog()
-        dialog.set_title("Select Input Directory")
+        self._input_dir_dialog = dialog
+        dialog.set_title("Open Case Folder")
         dialog.set_modal(True)
         if self.input_dir.exists():
             try:
                 dialog.set_initial_folder(Gio.File.new_for_path(str(self.input_dir)))
             except (TypeError, AttributeError):
                 pass
-        dialog.select_folder(self.win, None, self._on_input_dir_dialog_response)
-        self._input_dir_dialog = dialog
+        try:
+            dialog.select_folder(self.win, None, self._on_input_dir_dialog_response)
+        except GLib.Error as exc:
+            self._input_dir_dialog = None
+            self._transient_toast(f"Directory selection failed: {exc.message}")
 
     def _on_input_dir_dialog_response(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+        if self._input_dir_dialog is not dialog:
+            return
+        self._input_dir_dialog = None
         try:
             file = dialog.select_folder_finish(result)
         except GLib.Error as exc:
             if not exc.matches(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED):
                 self._transient_toast(f"Directory selection failed: {exc.message}")
-        else:
-            path_str = file.get_path() if file else None
-            if path_str:
-                self._apply_input_dir(Path(path_str))
-        if self._input_dir_dialog is dialog:
-            self._input_dir_dialog = None
+            return
+        if file is None or file.get_path() is None:
+            self._transient_toast("Choose a local record folder; nonlocal locations are unsupported.")
+            return
+        self._apply_input_dir(Path(file.get_path()))
 
     def _on_open_ai_settings(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         try:
@@ -5960,7 +5991,6 @@ class Focus(Adw.Application):
         self._transient_toast("AI settings updated.")
 
     def _apply_input_dir(self, path: Path) -> None:
-        self._stop_grep_search_if_running()
         target = path.expanduser()
         resolved = target.resolve(strict=False)
         if not resolved.exists() or not resolved.is_dir():
@@ -5970,6 +6000,7 @@ class Focus(Adw.Application):
         if not normalized.exists() or not normalized.is_dir():
             self._transient_toast(f"Directory not found: {normalized}")
             return
+        self._stop_grep_search_if_running()
         self._set_show_image(False, silent=True)
         self._close_transcript_breakdown_window()
         self._reset_view_states()
@@ -6003,7 +6034,7 @@ class Focus(Adw.Application):
         else:
             self._update_header()
             self._set_window_title("No pages found")
-            self._set_text("No .txt pages found in:\n" + str(self.text_dir))
+            self._set_text(self._empty_record_message())
 
     def _on_scroll(self, ctrl: Gtk.EventControllerScroll, dx: float, dy: float) -> bool:
         state = ctrl.get_current_event_state()
