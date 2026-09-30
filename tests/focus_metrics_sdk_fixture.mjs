@@ -98,6 +98,8 @@ try {
   assert.equal(settled, 2); captureArtifact();
   assert.equal(manager.getSessionFile(), undefined);
   writeFileSync(process.env.FOCUS_TEST_CAPTURE, JSON.stringify({ contexts, artifacts, tools: session.getActiveToolNames(),
-    version: process.env.PI_RUN_METRICS_PI_VERSION, settled }, (k, v) => k === 'timestamp' ? 0 :
+    version: process.env.PI_RUN_METRICS_PI_VERSION,
+    provenanceTags: { build: process.env.PI_RUN_METRICS_BUILD_PROVENANCE,
+      configuration: process.env.PI_RUN_METRICS_LAUNCH_CONFIGURATION }, settled }, (k, v) => k === 'timestamp' ? 0 :
       typeof v === 'string' ? v.replace(/answer\.json\.tmp-\d+-\d+/g, 'answer.json.tmp-ID-TIMESTAMP') : v));
 } finally { session.dispose(); }

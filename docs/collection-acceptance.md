@@ -85,6 +85,12 @@ untouched. No desktop/XREMAP change/synchronization command is required.
 Rollback changes code only or disables collection with PI_RUN_METRICS_ENABLED=0;
 retain every historical and newly collected record.
 
+Collector 0.2.0's separate other-app contract adds build/capability environment
+keys. Focus's no-observer shell fallback clears those inherited keys too; it
+claims no new Focus observations, build stamp or capability provenance. Its
+existing action attribution and killed-helper behavior remain unchanged. See the
+[sibling expansion contract](../../PiRunMetrics/docs/observation-contract.md).
+
 The pre-existing staged README and unstaged app.py/test_open_case.py changes remain
 outside this collection commit. Tests used a current-worktree disposable copy so
 those changes were preserved and included in regression coverage, not rewritten.

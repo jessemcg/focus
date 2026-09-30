@@ -57,7 +57,9 @@ def setup(tmp_path):
                FOCUS_AGENT_COMMAND_ARG_1=str(PROJECT / 'tests/focus_metrics_sdk_fixture.mjs'),
                PI_CODING_AGENT_DIR=str(tmp_path / 'synthetic-agent'),
                PI_RUN_METRICS_APP='stale', PI_RUN_METRICS_WORKFLOW='PRIVATE_CANARY',
-               PI_RUN_METRICS_PI_VERSION='99.99.99', PI_RUN_METRICS_REVISION='PRIVATE_CANARY')
+               PI_RUN_METRICS_PI_VERSION='99.99.99', PI_RUN_METRICS_REVISION='PRIVATE_CANARY',
+               PI_RUN_METRICS_BUILD_PROVENANCE='PRIVATE_CANARY',
+               PI_RUN_METRICS_LAUNCH_CONFIGURATION='PRIVATE_CANARY')
     env.pop('PI_CODING_AGENT_SESSION_DIR', None)
     env.pop('PI_RUN_METRICS_DEFAULT_ROOT', None)
     return env
@@ -96,6 +98,8 @@ def run_variant(tmp_path, env, variant, scenario):
         assert 'Pi run metrics: collection incomplete or unavailable.' in result.stderr
     capture = json.loads(Path(env['FOCUS_TEST_CAPTURE']).read_text())
     version = capture.pop('version', None)
+    assert all(value in (None, '') for value in capture.pop('provenanceTags').values())
+    # Shell adapter output may clear to empty strings; neither claims provenance.
     if variant in ('enabled', 'unwritable'):
         assert version == '0.99.1'
     else:
@@ -112,7 +116,7 @@ def run_variant(tmp_path, env, variant, scenario):
             assert canary not in raw
         start, end = map(json.loads, raw.splitlines())
         assert start['pi_version'] == end['pi_version'] == '0.99.1'
-        assert end['collector_version'] == '0.1.2'
+        assert end['collector_version'] == '0.2.0'
         assert end['app'] == 'focus' and end['workflow'] == 'record_question'
         assert end['incomplete'] is False
         assert path.stat().st_mode & 0o777 == 0o600
