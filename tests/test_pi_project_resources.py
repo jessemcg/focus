@@ -71,6 +71,31 @@ def test_pi_record_skill_has_repeatable_stop_first_workflow_and_soft_style() -> 
     assert "```bash" not in skill
 
 
+def test_record_quote_guidance_adapts_recordprep_without_acceptance_gates() -> None:
+    skill = FOCUS_PI_SKILL_FILE.read_text(encoding="utf-8")
+
+    for guidance in (
+        "continuous, verbatim two-to-five-word record quote",
+        "distinctive three-to-five-word anchors",
+        "source text page you have actually read",
+        "integrating each quotation grammatically",
+        "duplicating it as a quotation",
+        "not independent proof of an inferred proposition",
+        "Preserve speaker attribution, denials, uncertainty",
+        "do not stitch fragments",
+        "silently clean up OCR",
+        "punctuation outside the closing quotation mark",
+        "Never invent a quotation when no suitable anchor exists",
+        "There is no fixed quote count per paragraph, list item, or answer",
+        "not force an extra sentence",
+        "Do not emit RecordPrep quote-id placeholders",
+        "not an acceptance gate",
+        "Submit an imperfect but useful answer unchanged",
+    ):
+        assert guidance in skill
+    assert "for each substantive paragraph or list item" not in skill
+
+
 def test_focus_extension_is_shell_free_uncapped_and_terminating() -> None:
     source = EXTENSION.read_text(encoding="utf-8")
 
