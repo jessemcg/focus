@@ -2493,6 +2493,12 @@ class Focus(Adw.Application):
             "label.focus-search-chip { "
             f"background-color: {search_chip_color}; "
             "}"
+            # FlowBox children are layout wrappers, not additional controls.
+            # Keep their padding/focus outlines, but let only the inner widgets
+            # paint hover/active backgrounds (shared by all summary kinds).
+            "flowbox.focus-summary-controls > flowboxchild { "
+            "background: none; box-shadow: none; "
+            "}"
             "button.focus-citation-primary { min-width: 0; padding-left: 10px; padding-right: 10px; }"
             "button.focus-citation-step { min-width: 20px; padding-left: 3px; padding-right: 3px; }"
             "entry.focus-citation-count { min-width: 28px; padding-left: 2px; padding-right: 2px; }"
@@ -2791,6 +2797,7 @@ class Focus(Adw.Application):
 
     def _build_wrapping_controls_box(self) -> Gtk.FlowBox:
         box = Gtk.FlowBox()
+        box.add_css_class("focus-summary-controls")
         box.set_selection_mode(Gtk.SelectionMode.NONE)
         box.set_valign(Gtk.Align.CENTER)
         box.set_halign(Gtk.Align.FILL)
