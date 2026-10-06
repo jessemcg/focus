@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 import unicodedata
 from datetime import datetime
@@ -23,11 +24,22 @@ def _emit_json(payload: Any) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+class RecordError(ValueError):
+    """A fixed-code helper failure, separate from human-readable feedback."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 def _load_source_map(root: Path) -> dict[str, Any]:
     path = root / "artifacts" / "source_map.json"
-    data = _read_json(path)
-    if not isinstance(data, dict):
-        raise ValueError(f"Source map must be an object: {path}")
+    try:
+        data = _read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RecordError("map_unavailable", "Source map is missing, unreadable or invalid.") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("pages"), list):
+        raise RecordError("map_unavailable", "Source map must be an object with pages.")
     return data
 
 
@@ -345,12 +357,43 @@ def _resolve_case_file(root: Path, value: object) -> tuple[str, bool]:
     return str(resolved), resolved.is_file()
 
 
+def _resolve_text_source(root: Path, value: object) -> tuple[str, str]:
+    """Resolve only regular .txt files in the canonical source-text boundary.
+
+    Missing and unreadable files are distinct from rejected metadata. No source
+    map is repaired and the separate image metadata resolver stays unchanged.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return "", "rejected"
+    text_root = root / "text_pages"
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        if ".." in candidate.parts or text_root.resolve(strict=False) != text_root:
+            return "", "rejected"
+        resolved = candidate.resolve(strict=False)
+        resolved.relative_to(text_root)
+        if resolved.suffix != ".txt":
+            return "", "rejected"
+        mode = resolved.stat().st_mode
+        if not stat.S_ISREG(mode):
+            return "", "rejected"
+    except FileNotFoundError:
+        return str(candidate.resolve(strict=False)), "missing"
+    except (ValueError, RuntimeError):
+        return "", "rejected"
+    except OSError:
+        return "", "unreadable"
+    return str(resolved), "ready"
+
+
 def _page_match_payload(root: Path, page: dict[str, Any]) -> dict[str, Any]:
     payload = dict(page)
-    resolved_text_path, text_exists = _resolve_case_file(
-        root,
-        page.get("text_path"),
-    )
+    resolved_text_path, text_status = _resolve_text_source(root, page.get("text_path"))
+    text_exists = text_status == "ready"
+    payload["text_status"] = text_status
     resolved_image_path, image_exists = _resolve_case_file(
         root,
         page.get("image_path"),
@@ -466,10 +509,22 @@ def _candidate_pages(source_map: dict[str, Any], args: argparse.Namespace) -> li
     pages = [item for item in source_map.get("pages", []) if isinstance(item, dict)]
     allowed: set[int] | None = None
     documents = [item for item in source_map.get("documents", []) if isinstance(item, dict)]
-    for document_id in args.document or []:
-        document = _document_by_id(source_map, document_id)
-        scope = _document_page_numbers(document) if document else set()
-        allowed = scope if allowed is None else allowed & scope
+    if args.document:
+        allowed = set()
+        for document_id in dict.fromkeys(args.document):
+            document = _document_by_id(source_map, document_id)
+            if document is None:
+                raise RecordError("scope_unavailable", "Unknown document id; use matches[].documents[].id or the document map.")
+            scope = _document_page_numbers(document)
+            if not scope:
+                raise RecordError("scope_unavailable", "Requested document has no usable page boundaries.")
+            allowed.update(scope)
+    capabilities = _source_map_context_from_data(source_map).get("capabilities", {})
+    for value, capability in ((args.hearing_date, "hearing_date_scope"),
+                              (args.witness, "witness_scope"),
+                              (args.counsel_role, "counsel_role_scope")):
+        if value and not capabilities.get(capability):
+            raise RecordError("scope_unavailable", "Requested scope metadata is unavailable; no case-wide search was performed.")
     if args.hearing_date:
         wanted = _normalize_search_text(args.hearing_date)
         scope: set[int] = set()
@@ -512,9 +567,17 @@ def _candidate_pages(source_map: dict[str, Any], args: argparse.Namespace) -> li
                 except (TypeError, ValueError):
                     pass
         allowed = scope if allowed is None else allowed & scope
-    if allowed is None:
-        return pages
-    return [page for page in pages if isinstance(page.get("file_page"), int) and page["file_page"] in allowed]
+    selected = pages if allowed is None else [
+        page for page in pages if isinstance(page.get("file_page"), int) and page["file_page"] in allowed
+    ]
+    seen: set[tuple[Any, Any]] = set()
+    result = []
+    for page in selected:
+        key = (page.get("file_page"), page.get("text_path"))
+        if key not in seen:
+            seen.add(key)
+            result.append(page)
+    return result
 
 
 def _participant_aliases_for_page(source_map: dict[str, Any], page_number: int) -> list[str]:
@@ -654,10 +717,10 @@ def _query_group_from_args(args: argparse.Namespace) -> dict[str, Any]:
     queries = [
         value
         for value in (getattr(args, "query", None) or [])
-        if _normalize_search_text(value)
+        if any(len(term) > 1 for term in _normalize_search_text(value).split())
     ]
     if not queries:
-        raise ValueError("At least one search query is required.")
+        raise RecordError("arguments_rejected", "At least one usable search query is required.")
     return {"purpose": "general", "queries": queries[:8]}
 
 
@@ -818,19 +881,30 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
     query_group = _query_group_from_args(args)
     queries = query_group["queries"]
     candidates = _candidate_pages(source_map, args)
+    coverage = {"candidate_pages": len(candidates), "scanned_pages": 0,
+                "missing_pages": 0, "unreadable_pages": 0, "rejected_paths": 0,
+                "decoding_warnings": 0, "complete": True}
     candidates_with_matches: list[dict[str, Any]] = []
     for page in candidates:
-        text_path = str(page.get("text_path") or "").strip()
-        resolved_text_path, text_exists = _resolve_case_file(root, text_path)
-        if not text_exists:
+        resolved_text_path, status = _resolve_text_source(root, page.get("text_path"))
+        if status != "ready":
+            coverage[{"missing": "missing_pages", "unreadable": "unreadable_pages",
+                      "rejected": "rejected_paths"}[status]] += 1
             continue
         try:
-            raw_text = Path(resolved_text_path).read_text(
-                encoding="utf-8",
-                errors="ignore",
-            )
-        except OSError:
+            raw_bytes = Path(resolved_text_path).read_bytes()
+        except FileNotFoundError:
+            coverage["missing_pages"] += 1
             continue
+        except OSError:
+            coverage["unreadable_pages"] += 1
+            continue
+        try:
+            raw_text = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            raw_text = raw_bytes.decode("utf-8", errors="replace")
+            coverage["decoding_warnings"] += 1
+        coverage["scanned_pages"] += 1
         normalized_text = _normalize_search_text(raw_text)
         page_number = int(page.get("file_page") or 0)
         aliases = _participant_aliases_for_page(source_map, page_number)
@@ -985,7 +1059,11 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
         }.items()
         if value
     }
+    coverage["complete"] = not any(coverage[key] for key in (
+        "missing_pages", "unreadable_pages", "rejected_paths", "decoding_warnings"))
     payload: dict[str, Any] = {
+        "coverage": coverage,
+        "scope_status": "empty" if scopes and not candidates else "resolved",
         "queries": query_summaries,
         "candidate_pages": len(candidates),
         "total_matches": total_unique,
@@ -998,6 +1076,10 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_search(args: argparse.Namespace) -> None:
+    for value in [*(args.document or []), *[getattr(args, key) for key in
+                  ("hearing_date", "witness", "counsel_role") if getattr(args, key) is not None]]:
+        if not isinstance(value, str) or not _normalize_search_text(value):
+            raise RecordError("arguments_rejected", "Explicit scopes must be nonempty; omit a scope rather than passing an empty value.")
     _emit_json(_search_payload(args))
 
 
@@ -1006,7 +1088,7 @@ def command_document(args: argparse.Namespace) -> None:
     source_map = _load_source_map(root)
     document = _document_by_id(source_map, args.id)
     if document is None:
-        raise RuntimeError(f"Document not found: {args.id}")
+        raise RecordError("document_not_found", "Document not found; use an id returned by search or the document map.")
     _emit_json(document)
 
 
@@ -1073,7 +1155,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search source pages on demand without an index or database.",
     )
     search_parser.add_argument("--query", action="append", required=True)
-    search_parser.add_argument("--document", action="append")
+    search_parser.add_argument("--document", action="append",
+                               help="Document id; repeated documents form a union, intersected with other filter types.")
     search_parser.add_argument("--hearing-date")
     search_parser.add_argument("--witness")
     search_parser.add_argument("--counsel-role")
@@ -1106,7 +1189,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args.func(args)
     except Exception as exc:  # noqa: BLE001
-        _emit_json({"error": str(exc), "type": exc.__class__.__name__})
+        _emit_json({"error": str(exc), "type": exc.__class__.__name__,
+                    "error_code": getattr(exc, "code", "helper_failed")})
         return 1
     return 0
 

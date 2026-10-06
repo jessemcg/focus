@@ -816,4 +816,5 @@ def test_missing_source_map_returns_structured_error(tmp_path) -> None:
 
     assert completed.returncode == 1
     payload = json.loads(completed.stdout)
-    assert payload["type"] == "FileNotFoundError"
+    assert payload["type"] == "RecordError"
+    assert payload["error_code"] == "map_unavailable"
