@@ -106,6 +106,22 @@ def test_unusable_pages_are_disclosed_and_never_escape(tmp_path, monkeypatch, fa
     assert helper._page_match_payload(root, {'image_path':'image_pages/0001.png'})['image_exists'] is True
 
 
+@pytest.mark.parametrize('scope', ['hearing_date', 'witness', 'counsel_role'])
+def test_matching_but_unusable_scope_metadata_is_not_empty_evidence(tmp_path, scope):
+    root = _write_case_bundle(tmp_path)
+    if scope == 'witness':
+        mutate(root, lambda d: d['participant_index']['hearings'][0]['witnesses'][0].update(examinations=[]))
+        value = 'Mother'
+    elif scope == 'counsel_role':
+        mutate(root, lambda d: d['participant_index']['hearings'][0].update(end_page=0))
+        value = 'mothers_counsel'
+    else:
+        mutate(root, lambda d: d['documents'][0].update(end_page=0))
+        value = 'January 2, 2025'
+    with pytest.raises(helper.RecordError, match='no usable'):
+        search(root, **{scope:value})
+
+
 def test_complete_negative_and_citation_collision(tmp_path):
     root = _write_case_bundle(tmp_path)
     result = search(root, query=['absent words'])

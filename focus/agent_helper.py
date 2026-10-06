@@ -357,7 +357,7 @@ def _resolve_case_file(root: Path, value: object) -> tuple[str, bool]:
     return str(resolved), resolved.is_file()
 
 
-def _resolve_text_source(root: Path, value: object) -> tuple[str, str]:
+def _resolve_text_source(root: Path, value: object, *, boundary_valid: bool | None = None) -> tuple[str, str]:
     """Resolve only regular .txt files in the canonical source-text boundary.
 
     Missing and unreadable files are distinct from rejected metadata. No source
@@ -371,7 +371,9 @@ def _resolve_text_source(root: Path, value: object) -> tuple[str, str]:
     if not candidate.is_absolute():
         candidate = root / candidate
     try:
-        if ".." in candidate.parts or text_root.resolve(strict=False) != text_root:
+        if boundary_valid is None:
+            boundary_valid = text_root.resolve(strict=False) == text_root
+        if ".." in candidate.parts or not boundary_valid:
             return "", "rejected"
         resolved = candidate.resolve(strict=False)
         resolved.relative_to(text_root)
@@ -530,7 +532,10 @@ def _candidate_pages(source_map: dict[str, Any], args: argparse.Namespace) -> li
         scope: set[int] = set()
         for document in documents:
             if document.get("type") == "hearing" and _normalize_search_text(str(document.get("date") or "")) == wanted:
-                scope.update(_document_page_numbers(document))
+                document_scope = _document_page_numbers(document)
+                if not document_scope:
+                    raise RecordError("scope_unavailable", "Matching hearing has no usable page boundaries.")
+                scope.update(document_scope)
         allowed = scope if allowed is None else allowed & scope
     participant = source_map.get("participant_index") if isinstance(source_map.get("participant_index"), dict) else {}
     hearings = [item for item in participant.get("hearings", []) if isinstance(item, dict)]
@@ -543,6 +548,7 @@ def _candidate_pages(source_map: dict[str, Any], args: argparse.Namespace) -> li
                     continue
                 names = [str(witness.get("name") or ""), *[str(item) for item in witness.get("aliases", [])]]
                 if any(wanted in _normalize_search_text(name) or _normalize_search_text(name) in wanted for name in names if name):
+                    witness_scope: set[int] = set()
                     for exam in witness.get("examinations", []):
                         if not isinstance(exam, dict):
                             continue
@@ -551,7 +557,11 @@ def _candidate_pages(source_map: dict[str, Any], args: argparse.Namespace) -> li
                             end = int(exam.get("end_file_page") or start)
                         except (TypeError, ValueError):
                             continue
-                        scope.update(range(start, end + 1))
+                        if start > 0 and end >= start:
+                            witness_scope.update(range(start, end + 1))
+                    if not witness_scope:
+                        raise RecordError("scope_unavailable", "Matching witness has no usable examination boundaries.")
+                    scope.update(witness_scope)
         allowed = scope if allowed is None else allowed & scope
     if args.counsel_role:
         wanted = _normalize_search_text(args.counsel_role).replace(" ", "_")
@@ -562,10 +572,10 @@ def _candidate_pages(source_map: dict[str, Any], args: argparse.Namespace) -> li
                 or _normalize_search_text(str(item.get("role_label") or "")).replace(" ", "_") == wanted
                 for item in hearing.get("counsel", []) if isinstance(item, dict)
             ):
-                try:
-                    scope.update(range(int(hearing.get("start_page") or 0), int(hearing.get("end_page") or -1) + 1))
-                except (TypeError, ValueError):
-                    pass
+                hearing_scope = _document_page_numbers(hearing)
+                if not hearing_scope:
+                    raise RecordError("scope_unavailable", "Matching counsel role has no usable hearing boundaries.")
+                scope.update(hearing_scope)
         allowed = scope if allowed is None else allowed & scope
     selected = pages if allowed is None else [
         page for page in pages if isinstance(page.get("file_page"), int) and page["file_page"] in allowed
@@ -884,9 +894,16 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
     coverage = {"candidate_pages": len(candidates), "scanned_pages": 0,
                 "missing_pages": 0, "unreadable_pages": 0, "rejected_paths": 0,
                 "decoding_warnings": 0, "complete": True}
+    # Request-local boundary validation, not a persistent file/search cache.
+    # Individual pages still resolve and stat independently on every search.
+    text_root = root / "text_pages"
+    try:
+        boundary_valid = text_root.resolve(strict=False) == text_root
+    except (OSError, RuntimeError):
+        boundary_valid = False
     candidates_with_matches: list[dict[str, Any]] = []
     for page in candidates:
-        resolved_text_path, status = _resolve_text_source(root, page.get("text_path"))
+        resolved_text_path, status = _resolve_text_source(root, page.get("text_path"), boundary_valid=boundary_valid)
         if status != "ready":
             coverage[{"missing": "missing_pages", "unreadable": "unreadable_pages",
                       "rejected": "rejected_paths"}[status]] += 1
