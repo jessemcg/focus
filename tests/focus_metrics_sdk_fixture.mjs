@@ -37,6 +37,14 @@ const script = [
     callTool('document', 'focus_record', { action: 'document', id: 'report:0002' }),
     callTool('map', 'focus_record', { action: 'map', map_section: 'documents' }),
     callTool('read', 'read', { path: join(process.env.FOCUS_AGENT_CASE_ROOT, 'text_pages/0001.txt') }),
+    callTool('schema-invalid', 'focus_record', { action: 'search', queries: [{}] }),
+    callTool('document-absent', 'focus_record', { action: 'document', id: 'not-a-document' }),
+    callTool('scope-absent', 'focus_record', { action: 'search', queries: ['placement'], document: ['not-a-document'] }),
+    callTool('scope-empty', 'focus_record', { action: 'search', queries: ['placement'], document: ['report:0002'], hearing_date: 'January 2, 2025' }),
+    callTool('read-missing', 'read', { path: join(process.env.FOCUS_AGENT_CASE_ROOT, 'text_pages/missing.txt') }),
+    callTool('read-outside', 'read', { path: join(process.env.FOCUS_AGENT_CASE_ROOT, 'image_pages/0001.png') }),
+    callTool('read-directory', 'read', { path: join(process.env.FOCUS_AGENT_CASE_ROOT, 'text_pages') }),
+    callTool('read-schema-invalid', 'read', { path: {} }),
   ] },
 ];
 if (scenario === 'submit' || scenario === 'artifact-failure') script.push({ stopReason: 'toolUse', content: [callTool('submit', 'submit_focus_answer', { answer_kind: 'answered', markdown: text[0].text })] });
@@ -46,6 +54,7 @@ if (scenario === 'partial') script.push({ stopReason: 'length', content: text })
 if (scenario === 'empty') script.push({ stopReason: 'stop', content: [] });
 if (scenario === 'cancel') script.push({ stopReason: 'aborted', content: text });
 const initialCalls = script.length;
+script.push({ stopReason: 'toolUse', content: [callTool('followup-search', 'focus_record', { action: 'search', queries: ['medication'] })] });
 script.push({ stopReason: 'stop', content: text }); // separately settled literal followup
 let abortReady;
 const waitingForAbort = new Promise(resolve => { abortReady = resolve; });
@@ -77,6 +86,7 @@ const runtime = await sdk.ModelRuntime.create({ authPath: join(root, 'synthetic-
 const manager = sdk.SessionManager.inMemory(root);
 const { session } = await sdk.createAgentSession({ cwd: root, agentDir: join(root, 'synthetic-agent'), modelRuntime: runtime, model,
   thinkingLevel: 'off', resourceLoader: loader, settingsManager, sessionManager: manager, tools: value('--tools').split(',') });
+await session.bindExtensions({ mode: 'print', onError: e => { throw new Error('Synthetic extension lifecycle failed: ' + e.message); } });
 assert.deepEqual(session.getActiveToolNames().sort(), ['focus_record', 'read', 'submit_focus_answer']);
 let settled = 0;
 session.subscribe(e => { if (e.type === 'agent_settled') settled++; });

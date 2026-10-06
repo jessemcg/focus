@@ -116,17 +116,44 @@ def run_variant(tmp_path, env, variant, scenario):
             assert canary not in raw
         start, end = map(json.loads, raw.splitlines())
         assert start['pi_version'] == end['pi_version'] == '0.99.1'
-        assert end['collector_version'] == '0.2.0'
+        assert end['collector_version'] == '0.3.0'
         assert end['app'] == 'focus' and end['workflow'] == 'record_question'
         assert end['incomplete'] is False
         assert path.stat().st_mode & 0o777 == 0o600
         records.append(end)
     first = next(r for r in records if r['cycles'] == 2)
-    assert first['focus_record_execution_errors'] == {'search': 1, 'lookup': 1, 'document': 1, 'map': 1}
-    assert first['tools']['focus_record']['execution_errors'] == 4
-    assert first['tools']['focus_record']['calls'] == 9
+    assert first['focus_record_execution_errors'] == {'search': 2, 'lookup': 1, 'document': 1, 'map': 1}
+    assert first['tools']['focus_record']['execution_errors'] == 5
+    assert first['tools']['focus_record']['calls'] == 13
+    helper = first['app_observations']['focus_record_helper']
+    guard = first['app_observations']['focus_read_guard']
+    assert helper['incomplete'] is False and guard['incomplete'] is False
+    assert helper['calls'] == helper['observed_calls'] == 13
+    assert guard['calls'] == guard['observed_calls'] == 5
+    assert helper['counts']['record.arguments_rejected'] == 4
+    assert helper['counts']['record.unclassified_execution_failure'] == 1
+    assert guard['counts'] == {'read.permitted': 1, 'read.missing_path': 1,
+                              'read.outside_boundary': 1, 'read.invalid_target': 1,
+                              'read.unclassified_execution_failure': 1}
     assert records[0]['run_id'] != records[1]['run_id']
-    assert next(r for r in records if r['cycles'] == 1)['focus_record_execution_errors'] == {}
+    followup = next(r for r in records if r['cycles'] == 1)
+    assert followup['focus_record_execution_errors'] == {}
+    assert followup['app_observations']['focus_read_guard']['calls'] == 0
+    assert followup['app_observations']['focus_read_guard']['incomplete'] is False
+    # Run the production reader on only these synthetic records; new fields are
+    # additive and old totals remain valid, not malformed component records.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('synthetic_metrics_reader', COLLECTOR.parent / 'analyze_runs.py')
+    sys.path.insert(0, str(COLLECTOR.parent))
+    try:
+        reader = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = reader
+        spec.loader.exec_module(reader)
+        for record in records:
+            reader.validate(record)
+    finally:
+        sys.path.pop(0)
+        sys.modules.pop(spec.name, None)
     return capture, records
 
 
@@ -169,5 +196,20 @@ def test_actual_extension_missing_or_invalid_map_is_application_error_not_health
     first = next(r for r in records if r['cycles'] == 2)
     assert first['diagnostics']['focus.context.ok'] == 1
     assert first['tools']['focus_record']['application_errors'] > 0
-    assert first['focus_record_execution_errors'] == {'search': 1, 'lookup': 1, 'document': 1, 'map': 1}
+    assert first['focus_record_execution_errors'] == {'search': 2, 'lookup': 1, 'document': 1, 'map': 1}
     assert capture['artifacts'][0]['markdown']
+    assert first['app_observations']['focus_record_helper']['counts']['record.map_unavailable'] > 0
+
+
+def test_incomplete_coverage_observation_and_baseline_passivity(tmp_path):
+    env = setup(tmp_path)
+    (Path(env['FOCUS_AGENT_CASE_ROOT']) / 'text_pages/0002.txt').unlink()
+    enabled, records = run_variant(tmp_path, env, 'enabled', 'submit')
+    disabled, _ = run_variant(tmp_path, env, 'disabled', 'submit')
+    assert enabled == disabled
+    first = next(r for r in records if r['cycles'] == 2)
+    counts = first['app_observations']['focus_record_helper']['counts']
+    assert counts['record.incomplete_coverage'] == 1
+    assert counts['record.document_not_found'] == 1
+    assert counts['record.scope_unavailable'] == 1
+    assert counts['record.empty_scope'] == 1

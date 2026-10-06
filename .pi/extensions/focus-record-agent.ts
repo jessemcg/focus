@@ -5,6 +5,11 @@ import { chmod, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/pro
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 const RUN_ID_RE = /^[A-Za-z0-9_-]{20,128}$/;
+const OBSERVATION_CHANNEL = "pi-run-metrics:observation:v1";
+const OBSERVATIONS = {
+  focus_record_helper: new Set(["record.returned", "record.arguments_rejected", "record.transport_unavailable", "record.map_unavailable", "record.scope_unavailable", "record.empty_scope", "record.document_not_found", "record.incomplete_coverage", "record.cancelled", "record.helper_killed", "record.helper_failed", "record.invalid_protocol"]),
+  focus_read_guard: new Set(["read.permitted", "read.missing_path", "read.outside_boundary", "read.invalid_target", "read.unclassified_execution_failure"]),
+};
 const WARNING_CATEGORIES = new Set([
   "long_quote",
   "bold_markup",
@@ -75,11 +80,18 @@ const usableQuery = (value: any): boolean => nonempty(value) && value.normalize(
 function validateArguments(params: any): void {
   const required = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   required(object(params) && ["context", "search", "lookup", "document", "map"].includes(params.action), "Unknown Focus action.");
+  const allowed: Record<string, string[]> = {
+    context: [], search: ["queries", "document", "hearing_date", "witness", "counsel_role", "max_results", "attribution_detail"],
+    lookup: ["citation", "file"], document: ["id"], map: ["map_section"],
+  };
+  for (const key of Object.keys(params)) {
+    required(key === "action" || allowed[params.action].includes(key), `${key} is not an input for action ${params.action}; use id for document inspection and document[] for search scope.`);
+  }
   if (params.action === "search") {
     required(Array.isArray(params.queries) && params.queries.length > 0 && params.queries.every(usableQuery), "search requires at least one usable query; each query must contain a term of two or more letters/numbers.");
     if (params.document !== undefined) required(Array.isArray(params.document) && params.document.length > 0 && params.document.every(nonempty), "document[] restricts search: supply nonempty document ids from search or the document map.");
     for (const key of ["hearing_date", "witness", "counsel_role"]) {
-      if (params[key] !== undefined) required(usableQuery(params[key]), `${key} must be a nonempty usable scope; omit it for an unscoped search.`);
+      if (params[key] !== undefined) required(nonempty(params[key]) && /[\p{L}\p{N}_]/u.test(params[key]), `${key} must be a nonempty usable scope; omit it for an unscoped search.`);
     }
     required(params.id === undefined, "Use document[] to restrict search; singular id is only for action document.");
   } else if (params.action === "lookup") {
@@ -93,7 +105,18 @@ function validateArguments(params: any): void {
 
 function validPayload(params: any, payload: any): boolean {
   if (!object(payload)) return false;
-  if (nonempty(payload.error)) return true;
+  if (Object.hasOwn(payload, "error")) return nonempty(payload.error);
+  if (Array.isArray(payload.matches) && !payload.matches.every(object)) return false;
+  if (payload.coverage !== undefined) {
+    const coverage = payload.coverage;
+    if (!object(coverage) || typeof coverage.complete !== "boolean") return false;
+    for (const key of ["candidate_pages", "scanned_pages", "missing_pages", "unreadable_pages", "rejected_paths", "decoding_warnings"]) {
+      if (!Number.isInteger(coverage[key]) || coverage[key] < 0) return false;
+    }
+    if (coverage.candidate_pages !== coverage.scanned_pages + coverage.missing_pages + coverage.unreadable_pages + coverage.rejected_paths
+      || coverage.decoding_warnings > coverage.scanned_pages
+      || coverage.complete !== !(coverage.missing_pages || coverage.unreadable_pages || coverage.rejected_paths || coverage.decoding_warnings)) return false;
+  }
   if (params.action === "context") return object(payload.overview) && object(payload.source_map)
     && typeof payload.overview.available === "boolean" && typeof payload.source_map.available === "boolean";
   if (params.action === "search") return Array.isArray(payload.matches) && Array.isArray(payload.queries)
@@ -107,6 +130,11 @@ function validPayload(params: any, payload: any): boolean {
 }
 
 export default function focusRecordAgent(pi: ExtensionAPI) {
+  function observe(component: keyof typeof OBSERVATIONS, toolCallId: string, code: string): void {
+    if (!OBSERVATIONS[component].has(code)) return;
+    try { pi.events?.emit(OBSERVATION_CHANNEL, { version: 1, kind: "observation", component, toolCallId, code }); }
+    catch { /* Passive metadata must not change tool behavior. */ }
+  }
   const caseRoot = resolve(process.env.FOCUS_AGENT_CASE_ROOT ?? "");
   const textRoot = resolve(caseRoot, "text_pages");
   const python = process.env.FOCUS_RECORD_AGENT_PYTHON ?? "python3";
@@ -230,6 +258,10 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", (_event, ctx) => {
+    for (const component of Object.keys(OBSERVATIONS)) {
+      try { pi.events?.emit(OBSERVATION_CHANNEL, { version: 1, kind: "ready", component }); }
+      catch { /* Optional/broken collection must not affect Focus. */ }
+    }
     if (ctx.model) {
       activeProvider = ctx.model.provider;
       activeModel = ctx.model.id;
@@ -259,9 +291,14 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event, ctx) => {
     await ready;
-    if (transportError) return { block: true, reason: `Focus transport failure: ${transportError}` };
+    if (transportError) {
+      if (event.toolName === "read") observe("focus_read_guard", event.toolCallId, "read.unclassified_execution_failure");
+      if (event.toolName === "focus_record") observe("focus_record_helper", event.toolCallId, "record.transport_unavailable");
+      return { block: true, reason: `Focus transport failure: ${transportError}` };
+    }
     if (event.toolName === "read") {
       const status = await guardedRecordPath((event.input as any)?.path, ctx.cwd);
+      observe("focus_read_guard", event.toolCallId, `read.${status}`);
       if (status !== "permitted") {
         const reason = status === "missing_path" ? "Requested path is missing."
           : status === "outside_boundary" ? "Requested path is outside the active case text_pages source boundary."
@@ -321,22 +358,33 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
       file: Type.Optional(Type.String({ description: 'lookup: exactly one file or citation; use a returned source path.' })),
       id: Type.Optional(Type.String({ description: 'document action requires matches[].documents[].id or an id from the document map, e.g. "hearing:0001".' })),
       document: Type.Optional(Type.Array(Type.String(), { maxItems: 4, description: 'search only: union of these document ids, intersected with hearing_date/witness/counsel_role. Not the document-inspection identifier.' })),
-      hearing_date: Type.Optional(Type.String()),
-      witness: Type.Optional(Type.String()),
-      counsel_role: Type.Optional(Type.String()),
+      hearing_date: Type.Optional(Type.String({ description: 'search only: intersect with a mapped hearing date, e.g. "January 2, 2025"; unavailable metadata is an error.' })),
+      witness: Type.Optional(Type.String({ description: 'search only: intersect with mapped witness examination pages; verify source attribution.' })),
+      counsel_role: Type.Optional(Type.String({ description: 'search only: intersect with hearings for a mapped counsel role id or label.' })),
       max_results: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
       attribution_detail: Type.Optional(Type.Boolean()),
       map_section: Type.Optional(StringEnum(["documents", "participants", "citation_series", "warnings"] as const, { description: 'map requires one section, e.g. "documents".' })),
     }),
-    async execute(_toolCallId, params, signal) {
-      const failure = (code: string, message: string, type = "ProcessError") => ({
-        content: [{ type: "text" as const, text: JSON.stringify({ error: message, error_code: code, type }) }],
-        details: { action: params.action, error: message, error_code: code },
-      });
-      validateArguments(params);
-      if (signal?.aborted) throw new DOMException("Focus helper cancelled before execution", "AbortError");
+    async execute(toolCallId, params, signal) {
+      const emit = (code: string) => observe("focus_record_helper", toolCallId, `record.${code}`);
+      const failure = (code: string, message: string, type = "ProcessError") => {
+        emit(code);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: message, error_code: code, type }) }],
+          details: { action: params.action, error: message, error_code: code },
+        };
+      };
+      try { validateArguments(params); }
+      catch (error) { emit("arguments_rejected"); throw error; }
+      const checkCancelled = () => {
+        if (signal?.aborted) {
+          emit("cancelled");
+          throw new DOMException("Focus helper cancelled; no evidence accepted", "AbortError");
+        }
+      };
+      checkCancelled();
       await ready;
-      if (signal?.aborted) throw new DOMException("Focus helper cancelled before execution", "AbortError");
+      checkCancelled();
       if (transportError) return failure("transport_unavailable", `Focus transport failure: ${transportError}`);
       const args = [helper, "--case-root", caseRoot];
       if (params.action === "context") {
@@ -366,8 +414,10 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
         counters.mapInspections += 1;
         args.push("map", "--section", params.map_section, "--json");
       }
-      const result = await pi.exec(python, args, { signal, timeout: 120000 });
-      if (signal?.aborted) throw new DOMException("Focus helper cancelled; no evidence accepted", "AbortError");
+      let result;
+      try { result = await pi.exec(python, args, { signal, timeout: 120000 }); }
+      catch (error) { emit(signal?.aborted ? "cancelled" : "helper_failed"); throw error; }
+      checkCancelled();
       if (result.killed) return failure("helper_killed", "Focus helper was killed; no evidence accepted. The cause is not established.");
       let payload: any;
       try {
@@ -381,6 +431,13 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
           nonempty(payload?.error) ? payload.error : "Focus helper exited unsuccessfully; no evidence accepted.");
       }
       if (!validPayload(params, payload)) return failure("invalid_protocol", "Focus helper response does not satisfy this action's result contract.", "ProtocolError");
+      if (payload.error) emit(codes.has(payload.error_code) ? payload.error_code : "helper_failed");
+      else {
+        emit("returned");
+        if (params.action === "context" && !payload.source_map.available) emit("map_unavailable");
+        if (params.action === "search" && payload.coverage?.complete === false) emit("incomplete_coverage");
+        if (params.action === "search" && payload.scope_status === "empty") emit("empty_scope");
+      }
       return {
         content: [{ type: "text", text: JSON.stringify(payload) }],
         details: { action: params.action, error: payload.error ?? "",

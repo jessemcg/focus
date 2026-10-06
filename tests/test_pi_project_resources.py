@@ -121,7 +121,10 @@ def test_focus_extension_is_shell_free_uncapped_and_terminating() -> None:
     assert "counters.mapInspections += 1" in source
     assert "counters.pagesRead += 1" in source
     assert "guardedRecordPath" in source
-    assert "Read access is limited to the active case text_pages directory." in source
+    assert "outside the active case text_pages source boundary" in source
+    assert "Use the returned absolute resolved_text_path or focus_record lookup" in source
+    assert 'result.killed' in source
+    assert 'invalid_protocol' in source
     assert "terminate: true" in source
     assert 'if (stopReason === "toolUse") return;' in source
     assert 'capture: "assistant_fallback"' in source

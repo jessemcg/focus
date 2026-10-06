@@ -24,10 +24,11 @@ Object.assign(process.env, {
   FOCUS_AGENT_RUNTIME_DIR: runtime, FOCUS_AGENT_ANSWER_ARTIFACT: join(runtime, 'answer.json'),
   FOCUS_RECORD_AGENT_HELPER: join(root, 'helper.py'), FOCUS_RECORD_AGENT_PYTHON: 'synthetic-python',
 });
-function harness(exec) {
-  const tools = {}; const handlers = {};
-  factory({ registerTool: t => { tools[t.name] = t; }, on: (n, fn) => { handlers[n] = fn; }, exec });
-  return { tools, handlers };
+function harness(exec, brokenBus = false) {
+  const tools = {}; const handlers = {}; const observations = [];
+  factory({ registerTool: t => { tools[t.name] = t; }, on: (n, fn) => { handlers[n] = fn; }, exec,
+    events: { emit: (_channel, event) => { if (brokenBus) throw new Error('CANARY broken telemetry'); observations.push(event); } } });
+  return { tools, handlers, observations };
 }
 let invocations = [];
 const h = harness(async (command, args, options) => {
@@ -40,6 +41,8 @@ const h = harness(async (command, args, options) => {
   return { code: 0, stdout: JSON.stringify(payload) };
 });
 assert.deepEqual(Object.keys(h.tools), ['focus_record', 'submit_focus_answer']);
+h.handlers.session_start({}, {thinkingLevel:'high'});
+assert.deepEqual(h.observations.map(e => e.component), ['focus_record_helper','focus_read_guard']);
 const valid = [ { action: 'context' }, { action: 'search', queries: ['PRIVATE_CANARY; $(false)'] },
   { action: 'lookup', file: '0001.txt' }, { action: 'document', id: 'synthetic' }, { action: 'map', map_section: 'documents' } ];
 for (const params of valid) {
@@ -73,7 +76,19 @@ for (const [stdout, code, expectedCode] of [
   assert.equal(r.details.error_code, expectedCode);
   assert.ok(r.details.error);
 }
-for (const params of [{action:'search', queries:['  ']}, {action:'search',queries:['!!!']},
+for (const params of valid) {
+  for (const stdout of ['', '{}', 'null', '[]', '42', '"text"', '{"matches":[null],"queries":[],"candidate_pages":0,"total_matches":0}']) {
+    const r = await harness(async () => ({code:0,stdout})).tools.focus_record.execute('invalid',params);
+    assert.equal(r.details.error_code,'invalid_protocol');
+    assert.ok(r.details.error);
+  }
+}
+for (const version of [1,2]) {
+  const r = await harness(async () => ({code:0,stdout:JSON.stringify({schema_version:version,documents:[],extra:true})}))
+    .tools.focus_record.execute('map',{action:'map',map_section:'documents'});
+  assert.equal(r.details.error,'');
+}
+for (const params of [{action:'context',document:['not-a-document']}, {action:'lookup',file:'a',document:['scope']}, {action:'search', queries:['  ']}, {action:'search',queries:['!!!']},
   {action:'search',queries:['a']}, {action:'search',queries:['word'],document:['']},
   {action:'search',queries:['word'],id:'wrong'}, {action:'lookup',file:'a',citation:'CT 1'},
   {action:'lookup',file:''}, {action:'document',id:'synthetic',document:['synthetic']}]) {
@@ -129,7 +144,19 @@ for (const mode of ['cancel', 'timeout']) {
     assert.ok(result.details.error);
   }
   assert.equal(killed, true);
+  assert.ok(native.observations.some(e => e.code === (mode === 'cancel' ? 'record.cancelled' : 'record.helper_killed')));
 }
+const normalTextRoot = process.env.FOCUS_AGENT_CASE_ROOT;
+const redirected = join(root,'redirected-bundle');
+mkdirSync(redirected); symlinkSync(text,join(redirected,'text_pages'));
+process.env.FOCUS_AGENT_CASE_ROOT = redirected;
+const redirectedHarness = harness(async () => { throw new Error('must not spawn'); });
+assert.equal((await redirectedHarness.tools.focus_record.execute('redirect',{action:'context'})).details.error_code,'transport_unavailable');
+process.env.FOCUS_AGENT_CASE_ROOT = normalTextRoot;
+// A throwing observation bus must not change returned evidence or errors.
+const fixtureExec = async () => ({code:0, stdout:'{"overview":{"available":false},"source_map":{"available":true}}'});
+assert.deepEqual(await harness(fixtureExec).tools.focus_record.execute('id',{action:'context'}),
+  await harness(fixtureExec,true).tools.focus_record.execute('id',{action:'context'}));
 // All actions fail if transport cannot initialize; no success conversion.
 process.env.FOCUS_AGENT_RUN_ID = 'bad';
 const broken = harness(async () => { throw new Error('must not execute'); });
