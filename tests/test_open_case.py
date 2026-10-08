@@ -41,15 +41,11 @@ def test_header_and_menu_share_existing_action():
     menu = Focus._build_document_menu()
     assert button.get_action_name() == "app.choose_input"
     assert button.has_css_class("flat") and button.get_focusable()
-    assert "existing record folder" in button.get_tooltip_text()
-    children = button.get_child()
-    labels = []
-    child = children.get_first_child()
-    while child is not None:
-        if isinstance(child, Gtk.Label):
-            labels.append(child.get_label())
-        child = child.get_next_sibling()
-    assert labels == ["Open Case…"]
+    assert "Open a case bundle" in button.get_tooltip_text()
+    icon = button.get_child()
+    assert isinstance(icon, Gtk.Image)
+    assert icon.get_icon_name() == "folder-open-symbolic"
+    assert icon.has_css_class("dim-label")
     assert any(
         menu.get_item_attribute_value(i, Gio.MENU_ATTRIBUTE_LABEL).get_string() == "Open Case…"
         and menu.get_item_attribute_value(i, Gio.MENU_ATTRIBUTE_ACTION).get_string()

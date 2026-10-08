@@ -527,15 +527,15 @@ class Focus(Adw.Application):
     @staticmethod
     def _build_open_case_button() -> Gtk.Button:
         button = Gtk.Button()
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        content.append(Gtk.Image.new_from_icon_name("folder-open-symbolic"))
-        content.append(Gtk.Label(label="Open Case…"))
-        button.set_child(content)
+        icon = Gtk.Image.new_from_icon_name("folder-open-symbolic")
+        icon.add_css_class("dim-label")
+        button.set_child(icon)
+        button.update_property([Gtk.AccessibleProperty.LABEL], ["Open Case…"])
         button.add_css_class("flat")
         button.set_valign(Gtk.Align.CENTER)
         button.set_action_name("app.choose_input")
         button.set_tooltip_text(
-            "Select an existing record folder to replace the currently displayed case"
+            "Open a case bundle to replace the currently displayed case"
         )
         return button
 
