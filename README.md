@@ -1,8 +1,8 @@
-<img src="focus.svg" alt="Focus icon" width="96" align="left">
-
 # Focus
 
 A Linux desktop app for reading and researching appellate records.
+
+<img src="focus.svg" alt="Focus icon" width="96" align="left">
 
 - Browse transcripts and page images with bookmarks, search, and citation navigation.
 - Read hearing, report, and minute-order summaries alongside the record.
