@@ -2,11 +2,17 @@
 
 ## Release status
 
-This installer is **unpublished**. `scripts/install-release.json` deliberately has
-no source ref. A separate, explicit release operation must publish the tested
-commit and pin that full 40-character commit before an executable download command
-is advertised. `main` is not a release pin. Local tests do not establish a
-clean-machine Ubuntu/Fedora release certification. See [validation](source-install-validation.md).
+The public installer pins tested source commit
+[`b89c62ef47ca6ae2c424ce31559c702bbf2a9394`](https://github.com/jessemcg/focus/commit/b89c62ef47ca6ae2c424ce31559c702bbf2a9394).
+Copy the command from the [README Install section](../README.md#install).
+`main` is not an executable release pin. Publication does not establish complete
+clean-machine Ubuntu/Fedora certification; see [validation](source-install-validation.md).
+
+Release metadata is committed **after** the tested source snapshot, avoiding a
+self-referential Git hash. The installed snapshot's own manifest may still say
+unpublished; the download command supplies its explicit published source ref.
+Use the online README or current release-metadata checkout for fresh installs;
+receipt-owned installed checkouts support `--resume`/`--repair` without repinning.
 
 ## What is installed
 
@@ -47,7 +53,7 @@ environment, desktop-entry or icon collisions stop installation. In particular,
 the public installer will **not take over Jesse's maintained environment/launchers**.
 Do not work around a collision by deleting private configuration.
 
-## Terminal workflow (after explicit publication)
+## Terminal workflow
 
 Use a published checkout as the installer payload, with a **new, nonexistent**
 source destination. An existing unowned checkout is not silently adopted; choose
@@ -65,20 +71,21 @@ The installer prints eleven numbered stages and `[CHECK]`, `[OK]`, `[ACTION]`,
 and reasons before running them; prompts read the controlling terminal, never the
 download stream. No shell tracing or authentication transcripts are recorded.
 
-### Download-command publication template — NOT a current release command
+### Copyable command and readable bootstrap
 
-The reviewed outer bootstrap is `scripts/download-bootstrap.sh.in`. After a
-separately authorized release operation pins/publishes a tested full commit in
-`scripts/install-release.json`, a maintainer can render both equivalent forms:
+The reviewed outer bootstrap is `scripts/download-bootstrap.sh.in`. The release
+metadata pins the published tested full commit in `scripts/install-release.json`.
+From the current release-metadata checkout, render both equivalent forms:
 
 ```sh
 python3 scripts/print-install-command.py --expanded
 python3 scripts/print-install-command.py
 ```
 
-These commands only print instructions; they never publish/download/install. Both
-currently refuse to print an executable command because the release is unpinned.
-A pin alone is not proof that a commit has actually been published/tested.
+These commands only print instructions; they never publish/download/install.
+The one-line output is reproduced verbatim in the README's Install section.
+An unpinned manifest still refuses to emit a command; a pin alone is not proof
+that a commit has actually been published/tested.
 
 The rendered outer command checks supported mutable hosts, uses an existing curl
 or wget, and, if neither exists, visibly previews/authorizes official curl

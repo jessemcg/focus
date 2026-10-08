@@ -2,22 +2,27 @@
 
 ## Delivery status
 
-Implemented, **not published or deployed**. `scripts/install-release.json` retains
-`source_ref: null`; the command renderer refuses an executable download command.
-A separately authorized release must publish/pin the tested source. No production
-Git commit/push, real installer run, provider login, paid verification or private
-configuration migration was performed. Existing user edits and staged README
-changes were preserved. The unchanged `uv.lock` is now tracked without committing.
+**Published and pinned at Jesse's explicit request**, after implementation
+validation. Source commit `b89c62ef47ca6ae2c424ce31559c702bbf2a9394` is on
+`origin/main`; a subsequent release-metadata commit pins it and adds the README
+command. The unchanged `uv.lock` is committed. Unrelated Open Case UI edits and
+staged README UI wording remain uncommitted/preserved.
+
+No local production installation/deployment, provider login, paid verification
+or private configuration migration was performed. Publication is not a claim of
+complete Ubuntu/Fedora release certification.
 
 Coordinated public desktop templates/exporter live in the independent
 `Desktop_Files` repository; its maintained launchers and unrelated pending changes
-were not modified or deployed by this work. Future commits stay separate.
+were not modified or deployed by this work. Template/exporter source was committed
+separately as `98b0be989981f7a620bf6ccb2cff291bc59c649f`; that repository has no
+remote. End users download Focus's exported copies, not Desktop_Files.
 
 ## Evidence
 
 | Check | Result / boundary |
 | --- | --- |
-| Full Focus pytest suite | **501 passed**, one existing GTK CSS deprecation warning; disposable source/environment, not production runtime |
+| Full Focus pytest suite | **503 passed** on the final publication candidate with optional metrics test infrastructure (source snapshot: 502); standalone final metadata checkout without sibling metrics: **492 passed, 11 optional integration skips**. One existing GTK CSS deprecation warning; disposable environments, not production runtime |
 | Lifecycle tests | Local synthetic Git clone/pin/named branch; install, failed verification, resume, repair preserving edits and ownership, partial-download removal; package/uv/auth operations mocked |
 | Real installed Pi | Actual Focus record/follow-up extensions against a loopback-only synthetic SSE provider; structured `focus_record` Python helper, guarded read, submit tool and real artifact parser succeeded; no persisted session |
 | Rejected provider | Loopback HTTP 500; one request, no automatic retry or settings save |
@@ -66,8 +71,11 @@ capture/private umask and reran final code; earlier failures remain in local log
   persistent provider authentication or paid provider acceptance was performed.
   Package transactions and those third-party/auth flows are mocked in lifecycle
   tests; local image native provisioning does not certify every installer prompt.
-- No public download one-liner was executed/published. A failed-download fixture
-  proves a partial script is not executed; an unpinned manifest blocks generation.
+- The public command is now published. Its generated quoting round-trips exactly
+  to the reviewed readable bootstrap and passes shell syntax checks. Pinned
+  download artifacts are checked against the published Git objects; no production
+  installer execution occurred. Failed-download and unpinned-manifest fixtures
+  remain covered.
 - Shared package/Pi/Node cleanup is separately requested and consented; real shared
   cleanup was not performed. Credential/session deletion intentionally has no switch.
 
@@ -78,5 +86,8 @@ Do not describe these results as complete Ubuntu/Fedora release certification.
 Disposable evidence is under `/tmp/focus-source-validation-nf63uwek`:
 `full-tests.log`, `standalone-provision.log`, `gui-before.log`, `gui-after.log`, and
 `images/{ubuntu24,fedora44}-acceptance-serial.log`; temporary image fixtures and
-prior failure logs are retained there. These paths are machine-local temporary
-artifacts, not synchronized deployment or an enduring release attestation.
+prior failure logs are retained there. Publication-candidate checks and original
+index/diff recovery records are at
+`~/.cache/focus-publication-x_mbi_xj/{tests.log,publication-tests.log,standalone-publication-tests.log,original.index,worktree.patch,index.patch}`.
+These paths are machine-local temporary artifacts, not synchronized deployment
+or an enduring release attestation.

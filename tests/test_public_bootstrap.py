@@ -34,6 +34,18 @@ def test_pinned_one_liner_round_trips_to_reviewed_script(tmp_path):
     subprocess.run(["/bin/bash", "-n"], input=expanded, text=True, check=True)
 
 
+def test_readme_command_matches_published_pin():
+    import json
+    ref = json.loads((ROOT / "scripts/install-release.json").read_text()).get("source_ref")
+    if ref is None:
+        return  # Source snapshots precede their separate publication metadata.
+    command = subprocess.check_output(["python3", str(ROOT / "scripts/print-install-command.py")], text=True).strip()
+    documented = (ROOT / "README.md").read_text().split("```bash\n", 1)[1].split("\n```", 1)[0]
+    assert documented == command
+    assert ref in documented
+    assert len(documented.splitlines()) == 1
+
+
 def test_interrupted_download_never_executes_partial_script(tmp_path):
     from test_source_installer import m
     try:
