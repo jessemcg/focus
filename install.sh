@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Complete-file bootstrap; never execute a partially downloaded stream.
+set -euo pipefail
+umask 077
+if (( EUID == 0 )); then printf '[FAIL] Run as the desktop user, not root.\n' >&2; exit 1; fi
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+dry_run=0
+resuming=0
+for arg in "$@"; do
+  [[ "$arg" != --dry-run && "$arg" != --help && "$arg" != -h ]] || dry_run=1
+  [[ "$arg" != --resume && "$arg" != --repair ]] || resuming=1
+done
+if (( ! dry_run && ! resuming )) && [[ -z "${FOCUS_INSTALL_REF:-}" ]]; then
+  if [[ ! -f "$root/scripts/install-release.json" ]] || grep -q '"source_ref": null' "$root/scripts/install-release.json"; then
+    printf '[FAIL] No published tested source ref; installation is gated before prerequisite changes.\n' >&2
+    exit 1
+  fi
+fi
+# Reject unsupported hosts before even bootstrapping Python/curl.
+if [[ -e /run/ostree-booted || -d /sysroot/ostree ]]; then
+  printf '[FAIL] Immutable/rpm-ostree systems are not supported.\n' >&2; exit 1
+fi
+source /etc/os-release
+family=''
+base=" ${ID:-} ${ID_LIKE:-} "
+case "${ID:-}:${VARIANT_ID:-}" in
+  bazzite:*|silverblue:*|kinoite:*|fedora:silverblue|fedora:kinoite|fedora:coreos)
+    printf '[FAIL] Immutable desktop provisioning is unsupported.\n' >&2; exit 1 ;;
+esac
+if [[ "$base" == *' ubuntu '* ]]; then
+  version="${UBUNTU_VERSION_ID:-${VERSION_ID:-}}"
+  if [[ "$version" != 24.04 && "$version" != 26.04 && ( "${ID:-}" == ubuntu || ( "${UBUNTU_CODENAME:-}" != noble && "${UBUNTU_CODENAME:-}" != resolute ) ) ]]; then
+    printf '[FAIL] Requires Ubuntu base 24.04 or 26.04.\n' >&2; exit 1
+  fi
+  family=apt
+elif [[ "$base" == *' fedora '* && ( "${FEDORA_VERSION_ID:-${VERSION_ID:-}}" == 43 || "${FEDORA_VERSION_ID:-${VERSION_ID:-}}" == 44 ) ]]; then
+  family=dnf
+else printf '[FAIL] Unsupported distribution/base.\n' >&2; exit 1
+fi
+case "$(uname -m)" in x86_64|aarch64) ;; *) printf '[FAIL] Unsupported architecture.\n' >&2; exit 1 ;; esac
+bootstrap_before=()
+bootstrap_added=()
+need=()
+command -v python3 >/dev/null || need+=(python3)
+if [[ ! -f "$root/scripts/focus_maintenance.py" ]]; then
+  command -v curl >/dev/null || command -v wget >/dev/null || need+=(curl)
+fi
+if (( ${#need[@]} )); then
+  printf '[ACTION] Bootstrap prerequisites missing: %s\n' "${need[*]}"
+  if (( dry_run )); then printf '[WARN] Install prerequisites first to continue full dry-run.\n'; exit 1; fi
+  if [[ "$family" == apt ]]; then
+    mapfile -t bootstrap_before < <(dpkg-query -W '-f=${binary:Package}\t${db:Status-Status}\n' | awk '$2 == "installed" {sub(/:.*/, "", $1); print $1}')
+    apt-get --simulate install "${need[@]}"
+  else
+    mapfile -t bootstrap_before < <(rpm -qa --qf '%{NAME}\n')
+    dnf --assumeno install "${need[@]}" || [[ $? == 1 ]]
+  fi
+  printf '[WAIT] Authorize shown bootstrap transaction? Type yes: ' >/dev/tty
+  IFS= read -r answer </dev/tty
+  [[ "$answer" == yes ]] || exit 1
+  if [[ "$family" == apt ]]; then sudo apt-get install "${need[@]}"; else sudo dnf install "${need[@]}"; fi
+  # All transaction additions (including transitives), not just requested names.
+  if [[ "$family" == apt ]]; then
+    mapfile -t after < <(dpkg-query -W '-f=${binary:Package}\t${db:Status-Status}\n' | awk '$2 == "installed" {sub(/:.*/, "", $1); print $1}')
+  else mapfile -t after < <(rpm -qa --qf '%{NAME}\n'); fi
+  for name in "${after[@]}"; do
+    found=0
+    for prior in "${bootstrap_before[@]}"; do [[ "$name" != "$prior" ]] || found=1; done
+    (( found )) || bootstrap_added+=("$name")
+  done
+fi
+export FOCUS_BOOTSTRAP_PACKAGES="${FOCUS_BOOTSTRAP_PACKAGES:-} ${bootstrap_added[*]}"
+if [[ -f "$root/scripts/focus_maintenance.py" ]]; then
+  exec python3 -I "$root/scripts/focus_maintenance.py" install --payload-root "$root" "$@"
+fi
+# Publication must inject a reviewed, tested full commit; main is never an executable release ref.
+ref="${FOCUS_INSTALL_REF:-}"
+if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+  printf '[FAIL] No published tested source ref. Use the checkout instructions; release publication is pending.\n' >&2; exit 1
+fi
+temporary="$(mktemp -d -t focus-bootstrap.XXXXXXXX)"
+trap 'rm -rf -- "$temporary"' EXIT
+mkdir -p "$temporary/scripts"
+fetch() {
+  printf '[ACTION] Download complete file: %s\n' "$1"
+  if command -v curl >/dev/null; then curl --fail --location --proto '=https' --tlsv1.2 "$1" --output "$2";
+  else wget --https-only --output-document="$2" "$1"; fi
+}
+fetch "https://raw.githubusercontent.com/jessemcg/focus/$ref/scripts/focus_maintenance.py" "$temporary/scripts/focus_maintenance.py"
+printf '{"source_ref":"%s"}\n' "$ref" > "$temporary/scripts/install-release.json"
+python3 -I "$temporary/scripts/focus_maintenance.py" install --payload-root "$temporary" "$@"

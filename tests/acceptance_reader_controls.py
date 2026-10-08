@@ -19,8 +19,8 @@ source = Path(__file__).resolve().parents[1]
 sandbox = root / "source"
 shutil.copytree(source / "focus", sandbox / "focus", ignore=shutil.ignore_patterns("__pycache__"))
 for name in ("SYSTEM.md", "extensions", "skills"):
-    origin = source / ".pi" / name
-    target = sandbox / ".pi" / name
+    origin = source / "focus/agent_resources" / name
+    target = sandbox / "focus/agent_resources" / name
     target.parent.mkdir(parents=True, exist_ok=True)
     if origin.is_dir():
         shutil.copytree(origin, target)

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Focus
+Comment=Read records and ask record-grounded questions
+Exec=@COMMAND_EXEC@ %f
+Icon=@ICON@
+Terminal=false
+Categories=Office;Utility;
+StartupNotify=true
+StartupWMClass=com.mcglaw.Focus

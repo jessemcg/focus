@@ -3,11 +3,12 @@
 __pycache__/
 /.pytest_cache/
 /.run-metrics/
-/uv.lock
 /.venv/
+/.focus-install.json
 /legacy_versions/
 config.json
 /local_current_case_focus.py
 
 # Local PI project runtime state (seeded from defaults)
 .pi/settings.json
+/pi-verification.json

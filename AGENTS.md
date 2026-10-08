@@ -1,5 +1,20 @@
 # Repository Guidelines
 
+Public source installation is standalone: see docs/source-install.md. The maintained
+runtime below is Jesse's separate workflow, not a public installer dependency.
+Installer tests use disposable HOME/XDG/source/runtime paths and synthetic providers;
+never run installers, onboarding or paid verification against real settings/credentials.
+
+## Machine-local runtime
+
+Read ../UvEnvironments/README.md. Use `../UvEnvironments/project-env sync Focus`
+for locked provisioning and `../UvEnvironments/project-env run Focus COMMAND`
+for execution (managed Python 3.13, all hosts). Before any uv examples below, source
+`../UvEnvironments/terminal.sh Focus` in a dedicated subshell and stop on failure;
+it verifies local runtime and disables automatic sync/downloads. Cross-project calls
+select the callee explicitly; same-project Python children use sys.executable.
+Never create a Dropbox .venv or use production environments for disposable tests.
+
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
 - `focus/app.py`: main `Focus` application class; owns transcript browsing, the always-visible TOC sidebar (Forms first, then Hearings/Reports/Minute Orders to match the Case Tools strip), the always-visible Case Tools panel, dual-view state, image view, grep, summary browsing, and embedded Agent orchestration.
@@ -16,20 +31,20 @@
 - `focus/reading_position.py`: bounded least-recently-used in-memory cache of per-answer viewport anchors plus scroll fractions; eviction only loses a reading position.
 - `focus/saved_answers.py`: durable per-case saved-answer store at `<record-layout-root>/.focus/saved-answers/<answer-uuid>.json`, with typed GTK-independent list/load/save/delete results, atomic private publication, and safe handling of malformed, unknown-schema, symlinked, hard-linked, special, or broad-permission entries.
 - `focus/ui/`: secondary Libadwaita widgets and windows such as the saved-answer split-button popover, settings, and the D-Bus command reference.
-- `.pi/settings.json`: Git-ignored local PI provider/model selection for embedded Agent sessions. The application seeds it from `DEFAULT_PROJECT_PI_SETTINGS` in `focus/pi_runtime.py` when missing; never commit it.
-- `.pi/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.
-- `.pi/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions and the canonical titled-answer style (opening `# Title` plus `*Subtitle*`, then the substantive body). `.pi/SYSTEM.md` delegates to this skill rather than duplicating the style rule; title/subtitle formatting is non-blocking and never triggers a retry.
-- `.pi/extensions/focus-record-agent.ts`: the sole model-facing explicitly loaded extension. It registers the shell-free structured record tool and terminating answer handoff, guards text-page access, leaves the provider/model output limit unchanged (no Focus-imposed token cap or search/page/map budget), and captures one best-effort fallback answer.
-- `.pi/extensions/focus-followup-bridge.ts`: the explicitly loaded, non-model-facing follow-up bridge. It starts a private Unix-domain socket on `session_start`, closes/unlinks it idempotently on `session_shutdown`, tracks starting/busy/ready/closed state from `agent_start`/`agent_settled`, rejects concurrent or non-idle submissions, and forwards literal user text with `pi.sendUserMessage(text, { expandPromptTemplates: false })`. It registers no tools and must never read transcripts, prompts, or credentials.
+- Existing `.pi/settings.json` (or standalone XDG `pi/settings.json`): private PI provider/model selection for embedded Agent sessions. The application seeds it from `DEFAULT_PROJECT_PI_SETTINGS` in `focus/pi_runtime.py` when missing; never commit it.
+- `focus/agent_resources/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.
+- `focus/agent_resources/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions and the canonical titled-answer style (opening `# Title` plus `*Subtitle*`, then the substantive body). `focus/agent_resources/SYSTEM.md` delegates to this skill rather than duplicating the style rule; title/subtitle formatting is non-blocking and never triggers a retry.
+- `focus/agent_resources/extensions/focus-record-agent.ts`: the sole model-facing explicitly loaded extension. It registers the shell-free structured record tool and terminating answer handoff, guards text-page access, leaves the provider/model output limit unchanged (no Focus-imposed token cap or search/page/map budget), and captures one best-effort fallback answer.
+- `focus/agent_resources/extensions/focus-followup-bridge.ts`: the explicitly loaded, non-model-facing follow-up bridge. It starts a private Unix-domain socket on `session_start`, closes/unlinks it idempotently on `session_shutdown`, tracks starting/busy/ready/closed state from `agent_start`/`agent_settled`, rejects concurrent or non-idle submissions, and forwards literal user text with `pi.sendUserMessage(text, { expandPromptTemplates: false })`. It registers no tools and must never read transcripts, prompts, or credentials.
 - `scripts/focus-agent-vte.sh`: disables extension discovery, explicitly loads the staged Focus record extension, the staged follow-up bridge when present, and the optional sibling `PiRunMetrics/run-collector.ts` observer, and uses `--no-session`. Preserve live follow-ups, answer artifacts, workspace cleanup, and exactly `read,focus_record,submit_focus_answer`. The observer registers no tools and must not alter prompts or results. Copy Trace and transcript preservation are removed; old archives remain untouched. By Jesse's explicit storage preference, metrics default to the Git-ignored project directory `.run-metrics/runs/` (which may sync through Dropbox), with private permissions. A separate Focus-owned saved-answer library (`<case>/.focus/saved-answers/`) is user-invoked only (the Save Answer control) and must never be written by metrics, tests, or one-off commands. Preserve the absolute `PI_RUN_METRICS_ROOT` override. Never store transcripts, use case bundles, modify private configuration, or migrate/delete old archives implicitly.
 - `config.json`: user-specific settings (input_dir, fonts, highlights, Agent command and speech file); do not commit it.
 - `legacy_versions/`: historical snapshots; avoid editing unless you intend to port fixes back.
 - `prompts/`: change notes and UI prompt history.
 - Always use modern Libadwaita GUI elements over plain vanilla GTK4. Buttons should always be in the flat style.
-- `pyproject.toml` and the local ignored `uv.lock`: define the Python 3.13 runtime and dependencies (PyGObject and markdown-it-py); keep the environment in sync when packages change.
+- `pyproject.toml` and the reproducible `uv.lock`: define the Python 3.13 runtime and dependencies (PyGObject and markdown-it-py); keep the environment in sync when packages change.
 
 ## Build, Test, and Development Commands
-- `uv sync`: resolve and install dependencies into the managed environment.
+- `../UvEnvironments/project-env sync Focus`: explicitly provision locked local dependencies.
 - `uv run focus`: launch the GTK viewer using the active case configuration.
 - `uv run focus /path/to/case_bundle`: launch Focus with a one-time input directory override.
 - `uv run focus refresh-current-case --quiet`: update Focus `config.json` from the currently selected case.

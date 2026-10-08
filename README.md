@@ -1,5 +1,24 @@
 # Focus
 
+## Public editable-source setup
+
+See [source installation, required Pi onboarding, development and removal](docs/source-install.md).
+The Ubuntu/Fedora source installer uses an external uv environment and XDG settings,
+not sibling projects. `focus doctor` and `focus setup-pi` are application commands.
+Release publication is pending: no executable one-liner is advertised yet.
+See [native/mocked/untested validation coverage](docs/source-install-validation.md).
+
+## Jesse's maintained machine-local runtime
+
+Use `../UvEnvironments/project-env sync Focus` for locked managed-Python-3.13
+provisioning (Home/Work/Laptop) and `../UvEnvironments/project-env run Focus focus`
+for no-install execution. Before any uv examples below, run
+`source ../UvEnvironments/terminal.sh Focus` in a dedicated project subshell and stop
+if it fails. It verifies local runtime and disables automatic sync/downloads.
+Never put this selection in global shell startup. Cross-project calls select the
+callee through the helper; same-project Python children retain sys.executable.
+See ../UvEnvironments/README.md for isolated test overrides.
+
 The passive metrics wrapper now delegates to sibling `PiRunMetrics/launch_adapter.py` using system Python, with bounded executable-only version/Git probes. Collection requires Pi >=0.87.1; unavailable/incompatible collection warns and fails open without upgrading Pi. The source-project archive default and code-owned tags no longer depend on a staged configuration root or inherited parent-app tags. Existing answer artifacts, model/tools and `--no-session` remain unchanged. New embedded launches use the updated wrapper; use sibling **Pi Run Metrics** for readiness, reports and an existing-session PiPlanner request. No archived data is moved or removed.
 
 <img src="focus.svg" alt="Focus icon" width="128" align="left">
@@ -33,12 +52,13 @@ Focus does not load embeddings, retrieval chunks, Chroma, or any other vector da
 Install the Python environment:
 
 ```bash
-uv sync
+../UvEnvironments/project-env sync Focus
+source ../UvEnvironments/terminal.sh Focus || exit
 ```
 
 ## Install and authorize PI
 
-Install PI and authorize the providers/models you intend to use. Focus copies only its checked-in `.pi` project resources into a disposable workspace; credentials remain in PI's global auth store.
+Install PI and authorize the providers/models you intend to use. Focus copies only its checked-in `focus/agent_resources` into a disposable workspace; credentials remain in PI's global auth store.
 
 In **Settings → Agent**:
 
@@ -174,7 +194,7 @@ See [category acceptance and screenshots](docs/record-category-acceptance.md).
 
 ## Configuration
 
-Focus stores local application settings in `config.json` (ignored by Git). The Settings window is a single page with **Display**, **Highlights**, and **Agent** sections. Settings include:
+Focus stores application settings in the effective `FOCUS_CONFIG_DIR`/XDG directory for public installs, or existing checkout-local `config.json` without that override (ignored by Git). No legacy settings are migrated. The Settings window is a single page with **Display**, **Highlights**, and **Agent** sections. Settings include:
 
 - PI Agent command, speech question file, and PI model/reasoning effort.
 - Fonts, highlight phrases, and colors.
@@ -182,9 +202,9 @@ Focus stores local application settings in `config.json` (ignored by Git). The S
 Choose the input directory using **Open Case…** in the header or menu, not the
 Settings window. Configured input directories support absolute paths or `~` for
 the home directory; Focus stores selected paths as absolute paths. Literal `$HOME`
-is not expanded in configuration. Settings and PI resources remain checkout-local;
-Python, uv, GTK/Libadwaita (and VTE for Agent sessions), and optional PI must be
-available on the host. This does not make a wheel or copied executable self-contained.
+is not expanded in configuration. Embedded PI resources ship in `focus/agent_resources`; provider/model selections
+remain in the effective settings directory. Python, uv, GTK/Libadwaita (and VTE for
+Agent sessions) must be available on the host. Public installation requires verified PI. This does not make a wheel or copied executable self-contained.
 
 Obsolete embedding/vector-question credentials and settings are removed when configuration is loaded, and retired summarization/extraction credentials and model profiles are dropped when settings are saved. Never commit `config.json` or private case data.
 
@@ -194,7 +214,7 @@ The **Case Tools** panel is always visible; select **Agent Q&A**. The composer h
 
 Starting a new question creates one private disposable workspace and stages its system prompt, skill, settings, Focus extension, and explicit follow-up bridge. PI uses `--no-session`; live interactive follow-ups and app-owned answer artifacts remain available without persisted transcripts. Extension discovery stays disabled. The sibling PiRunMetrics observer is explicitly loaded when available, with the same tool allowlist and model selection. Credentials remain in PI's global auth store.
 
-The checked-in default is Fireworks DeepSeek V4 Pro 0813 at low reasoning. Focus disables auto-compaction for these embedded sessions and keeps transient provider retry enabled. Focus does not override the model/provider's native output limit; any response ceiling comes from Pi's model definition or the provider.
+New profiles contain policy defaults at low reasoning, without a forced provider/model. Required onboarding supplies an authenticated selection; existing private selections are preserved. Focus disables auto-compaction for these embedded sessions and keeps transient provider retry enabled. Focus does not override the model/provider's native output limit; any response ceiling comes from Pi's model definition or the provider.
 
 The Agent has only guarded `read`, the shell-free structured `focus_record` tool, and terminating `submit_focus_answer`. Record reads are confined to the active bundle's `text_pages/`; images remain forbidden, and corpus-wide grep is not available to the Agent. The structured tool provides navigation-only context, compact ranked search (six results by default), citation/page lookup, document inspection, and targeted map-section inspection. Search diversifies results across individual query variants, reports each match's query indexes and source-document label, and favors date-matched contemporaneous event materials over later historical summaries for causal queries. Search, page reading, and targeted map inspection are uncapped by Focus; the only finite limits are the provider's context window and output size.
 
@@ -313,7 +333,9 @@ gdbus call --session \
 - `focus/ui/settings.py`: settings UI.
 - `focus/ui/commands.py`: D-Bus command reference.
 - `scripts/focus-agent-vte.sh`: ephemeral PI launcher with discovery disabled, explicit Focus record/bridge and optional sibling metrics extensions, `--no-session`, and the strict `read,focus_record,submit_focus_answer` tool allowlist.
-- `.pi/`: checked-in PI system prompt, canonical Agent Skill, settings, the Focus record/answer extension, and the explicitly loaded live follow-up bridge extension.
+- `focus/agent_resources/`: checked-in embedded system prompt, canonical Agent Skill and explicit record/follow-up extensions, outside coding-agent project discovery.
+- `scripts/focus_maintenance.py`, `install.sh`, `uninstall.sh`: receipt-bound stdlib source maintenance; `scripts/focus-env` never provisions during run.
+- `focus/paths.py`, `focus/setup_pi.py`: GTK-independent path resolution, diagnostics and required Pi verification.
 - `tests/`: pytest coverage.
 
 ## Tests

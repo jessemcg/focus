@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import select
 import subprocess
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,12 +10,12 @@ from typing import Any, Sequence
 
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-PROJECT_PI_SETTINGS_PATH = PROJECT_DIR / ".pi" / "settings.json"
+from .paths import pi_settings_file
+
+PROJECT_PI_SETTINGS_PATH = pi_settings_file()
 # `.pi/settings.json` is local runtime state (git-ignored); seed it from these
 # application defaults when it is missing so a fresh checkout can run the Agent.
 DEFAULT_PROJECT_PI_SETTINGS: dict[str, Any] = {
-    "defaultProvider": "fireworks",
-    "defaultModel": "accounts/fireworks/models/deepseek-v4-pro-0813",
     "defaultThinkingLevel": "low",
     "enableSkillCommands": True,
     "compaction": {"enabled": False},
@@ -162,116 +160,28 @@ def _pi_rpc_response(
     request: dict[str, Any],
     *,
     timeout: float,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    from .pi_rpc import response
     try:
-        process = subprocess.Popen(
-            command,
-            cwd=PROJECT_DIR,
-            env=_pi_process_environment(command),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-    except OSError as exc:
-        raise PiRuntimeError(f"Unable to start PI model query: {exc}") from exc
-
-    output_lines: list[str] = []
-    response: dict[str, Any] | None = None
-    timed_out = False
-    io_error: OSError | ValueError | None = None
-    try:
-        if process.stdin is None or process.stdout is None:
-            raise PiRuntimeError("Unable to open PI RPC input and output.")
-        process.stdin.write(json.dumps(request, ensure_ascii=True) + "\n")
-        process.stdin.flush()
-        deadline = time.monotonic() + timeout
-        while response is None:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                break
-            ready, _writable, _errors = select.select(
-                [process.stdout],
-                [],
-                [],
-                remaining,
-            )
-            if not ready:
-                timed_out = True
-                break
-            line = process.stdout.readline()
-            if not line:
-                break
-            output_lines.append(line.rstrip())
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if (
-                isinstance(payload, dict)
-                and payload.get("type") == "response"
-                and payload.get("command") == request.get("type")
-            ):
-                response = payload
-    except (OSError, ValueError) as exc:
-        io_error = exc
-    finally:
-        if process.stdin is not None and not process.stdin.closed:
-            process.stdin.close()
-        if timed_out and process.poll() is None:
-            process.terminate()
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2)
-        if process.stdout is not None and not process.stdout.closed:
-            try:
-                remainder = process.stdout.read()
-            except OSError as exc:
-                if io_error is None:
-                    io_error = exc
-            else:
-                if remainder:
-                    output_lines.extend(remainder.splitlines())
-            process.stdout.close()
-
-    if timed_out:
-        raise PiRuntimeError(f"PI model query timed out after {timeout} seconds.")
-    if io_error is not None:
-        raise PiRuntimeError(
-            f"PI model query communication failed: {io_error}"
-        ) from io_error
-    if response is not None:
-        return response
-
-    detail = "\n".join(output_lines).strip()
-    if len(detail) > 500:
-        detail = detail[-500:]
-    if process.returncode:
-        raise PiRuntimeError(
-            f"PI model query failed with exit code {process.returncode}"
-            + (f": {detail}" if detail else ".")
-        )
-    raise PiRuntimeError("PI did not return an available-model response.")
+        return response(command, request, timeout=timeout,
+                        environment=environment if environment is not None else _pi_process_environment(command))
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise PiRuntimeError(f"PI model query failed: {exc}") from exc
 
 
 def available_pi_models(
     pi_command: Sequence[str],
     *,
     timeout: float = PI_MODEL_DISCOVERY_TIMEOUT_SECONDS,
+    environment: dict[str, str] | None = None,
 ) -> list[PiModel]:
     command = _pi_discovery_command(pi_command)
     response = _pi_rpc_response(
         command,
         {"type": "get_available_models"},
         timeout=timeout,
+        **({"environment": environment} if environment is not None else {}),
     )
     if response.get("success") is not True:
         error = str(response.get("error") or "unknown RPC error").strip()

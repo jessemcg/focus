@@ -28,6 +28,17 @@ def _cmd_refresh_current_case(args: argparse.Namespace) -> int:
     return current_case_main(argv)
 
 
+def _cmd_setup_pi(args: argparse.Namespace) -> int:
+    from .setup_pi import setup
+    from .pi_runtime import PiRuntimeError
+    import subprocess
+    try:
+        return setup(args)
+    except (PiRuntimeError, OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
+        print(f"[FAIL] Pi setup incomplete: {exc}", file=sys.stderr)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="focus")
     subparsers = parser.add_subparsers(dest="command")
@@ -46,12 +57,24 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_parser.add_argument("--config", type=Path, default=None)
     refresh_parser.add_argument("--quiet", action="store_true")
     refresh_parser.set_defaults(func=_cmd_refresh_current_case)
+    doctor_parser = subparsers.add_parser("doctor", help="read-only installation diagnostics")
+    doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.set_defaults(func=lambda args: __import__("focus.setup_pi", fromlist=["doctor"]).doctor(args.json))
+    setup_parser = subparsers.add_parser("setup-pi", help="authenticate, select and verify Pi")
+    setup_parser.add_argument("--executable")
+    setup_parser.add_argument("--login", action="store_true")
+    setup_parser.add_argument("--provider")
+    setup_parser.add_argument("--model")
+    setup_parser.add_argument("--thinking")
+    setup_parser.add_argument("--approve-verification", action="store_true",
+                              help="explicit consent to one potentially billable synthetic run")
+    setup_parser.set_defaults(func=_cmd_setup_pi)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args_list = list(sys.argv[1:] if argv is None else argv)
-    if not args_list or args_list[0] not in {"app", "refresh-current-case", "-h", "--help"}:
+    if not args_list or args_list[0] not in {"app", "refresh-current-case", "doctor", "setup-pi", "-h", "--help"}:
         args_list.insert(0, "app")
     parser = build_parser()
     args = parser.parse_args(args_list)

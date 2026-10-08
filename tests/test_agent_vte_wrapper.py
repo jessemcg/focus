@@ -139,6 +139,7 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
         "arg=--no-prompt-templates",
         "arg=--no-themes",
         "arg=--no-context-files",
+        "arg=--no-mcp",
         "arg=--system-prompt",
         f"arg={workspace}/.pi/SYSTEM.md",
         "arg=--skill",
@@ -161,6 +162,9 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
 
 
 def test_pi_wrapper_loads_shared_observer_without_changing_tools(tmp_path) -> None:
+    if not (WRAPPER.parents[1].parent / "PiRunMetrics/launch_adapter.py").is_file():
+        import pytest
+        pytest.skip("Optional sibling PiRunMetrics integration is not installed")
     collector = tmp_path / "collector.ts"
     collector.write_text("// synthetic observer\n")
     output, workspace, prompt_path, completed = _run_wrapper(

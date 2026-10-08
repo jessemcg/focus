@@ -16,11 +16,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = FOCUS_PI_PROJECT_DIR / "extensions" / "focus-record-agent.ts"
 
 
-def test_pi_project_settings_defaults_preserve_pro_low_and_disable_compaction() -> None:
+def test_pi_project_settings_defaults_preserve_policy_without_forcing_model() -> None:
     settings = DEFAULT_PROJECT_PI_SETTINGS
 
-    assert settings["defaultProvider"] == "fireworks"
-    assert settings["defaultModel"] == "accounts/fireworks/models/deepseek-v4-pro-0813"
+    assert "defaultProvider" not in settings
+    assert "defaultModel" not in settings
     assert settings["defaultThinkingLevel"] == "low"
     assert settings["compaction"] == {"enabled": False}
     assert settings["retry"] == {"enabled": True}

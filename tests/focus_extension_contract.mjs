@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url, { moduleCache: false, alias: {
   '@earendil-works/pi-ai': join(pkg, 'node_modules/@earendil-works/pi-ai/dist/compat.js'),
   typebox: require.resolve('typebox'),
 } });
-const factory = await jiti.import(resolve('..', '.pi/extensions/focus-record-agent.ts'), { default: true });
+const factory = await jiti.import(resolve('..', 'focus/agent_resources/extensions/focus-record-agent.ts'), { default: true });
 globalThis.fetch = () => { throw new Error('Network forbidden'); };
 const root = process.env.FOCUS_CONTRACT_ROOT;
 const text = join(root, 'bundle/text_pages'); const runtime = join(root, 'runtime');

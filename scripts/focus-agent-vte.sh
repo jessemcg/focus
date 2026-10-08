@@ -4,6 +4,7 @@ set -euo pipefail
 prompt_file="${FOCUS_AGENT_PROMPT_FILE:-}"
 case_root="${FOCUS_AGENT_CASE_ROOT:-$PWD}"
 pi_project_dir="${FOCUS_PI_PROJECT_DIR:-}"
+pi_settings_file="${FOCUS_PI_SETTINGS_FILE:-$pi_project_dir/settings.json}"
 answer_artifact="${FOCUS_AGENT_ANSWER_ARTIFACT:-}"
 run_id="${FOCUS_AGENT_RUN_ID:-}"
 runtime_dir="${FOCUS_AGENT_RUNTIME_DIR:-}"
@@ -51,8 +52,8 @@ if [[ ! -d "$case_root" ]]; then
   exit 2
 fi
 
-if [[ -z "$pi_project_dir" || ! -f "$pi_project_dir/settings.json" ]]; then
-  printf 'Focus PI project settings not found: %s\n' "$pi_project_dir/settings.json" >&2
+if [[ -z "$pi_project_dir" || ! -f "$pi_settings_file" ]]; then
+  printf 'Focus PI project settings not found: %s\n' "$pi_settings_file" >&2
   exit 2
 fi
 
@@ -91,13 +92,22 @@ fi
 
 mkdir -p "$workspace/tmp"
 mkdir -p "$workspace/.pi"
-cp -a "$pi_project_dir/." "$workspace/.pi/"
+# Stage only application-owned resources, never developer .pi discovery content.
+mkdir -p "$workspace/.pi/extensions" "$workspace/.pi/skills/focus-answer-record-questions"
+cp "$pi_settings_file" "$workspace/.pi/settings.json"
+cp "$pi_project_dir/SYSTEM.md" "$workspace/.pi/SYSTEM.md"
+cp "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" "$workspace/.pi/skills/focus-answer-record-questions/SKILL.md"
+cp "$pi_project_dir/extensions/focus-record-agent.ts" "$workspace/.pi/extensions/"
+if [[ -f "$pi_project_dir/extensions/focus-followup-bridge.ts" ]]; then
+  cp "$pi_project_dir/extensions/focus-followup-bridge.ts" "$workspace/.pi/extensions/"
+fi
 metrics_args=()
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+export PI_RUN_METRICS_ROOT="${PI_RUN_METRICS_ROOT:-$project_root/.run-metrics/runs}"
 # NUL-delimited metadata only; never eval shell text or pass prompt content.
 metrics_values=()
 helper="$project_root/../PiRunMetrics/launch_adapter.py"
-if [[ -r "$helper" && -x /usr/bin/python3 ]]; then
+if [[ "${PI_RUN_METRICS_ENABLED:-1}" != 0 && -r "$helper" && -x /usr/bin/python3 ]]; then
   mapfile -d '' -t metrics_values < <(/usr/bin/python3 "$helper" --shell \
     --project "$project_root" --app focus --workflow record_question -- "${agent_command[@]}")
 fi
@@ -128,6 +138,7 @@ prompt="$(cat "$prompt_file")"
   --no-prompt-templates \
   --no-themes \
   --no-context-files \
+  --no-mcp \
   --system-prompt "$workspace/.pi/SYSTEM.md" \
   --skill "$workspace/.pi/skills/focus-answer-record-questions/SKILL.md" \
   --tools read,focus_record,submit_focus_answer \

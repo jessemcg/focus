@@ -76,7 +76,9 @@ PROSE_INSERT_RECORD_CITATIONS_ACTION = "insert-record-citations"
 
 GLib.set_application_name(APPLICATION_NAME)
 
-CONFIG_FILE = PROJECT_DIR / "config.json"
+from .paths import AGENT_RESOURCES, config_file
+
+CONFIG_FILE = config_file()
 CONFIG_KEY_INPUT_DIR = "input_dir"
 CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE = "speech_agent_source_file"
 DEFAULT_SPEECH_AGENT_SOURCE_FILE = "/dev/shm/speech.txt"
@@ -96,7 +98,7 @@ EMBEDDED_AI_PANEL_HEIGHT_DIVISOR = 3
 EMBEDDED_AI_PANEL_MIN_HEIGHT = 260
 DEFAULT_PI_AGENT_COMMAND = "pi"
 FOCUS_RECORD_AGENT_HELPER = PROJECT_DIR / "focus" / "agent_helper.py"
-FOCUS_PI_PROJECT_DIR = PROJECT_DIR / ".pi"
+FOCUS_PI_PROJECT_DIR = AGENT_RESOURCES
 FOCUS_PI_SYSTEM_PROMPT_FILE = FOCUS_PI_PROJECT_DIR / "SYSTEM.md"
 FOCUS_PI_EXTENSION_FILE = (
     FOCUS_PI_PROJECT_DIR / "extensions" / "focus-record-agent.ts"
@@ -565,6 +567,7 @@ def _write_config(config: dict[str, Any]) -> None:
         else:
             serializable[key] = value
     try:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
     except OSError:
         pass

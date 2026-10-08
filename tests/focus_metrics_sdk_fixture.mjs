@@ -59,7 +59,9 @@ script.push({ stopReason: 'stop', content: text }); // separately settled litera
 let abortReady;
 const waitingForAbort = new Promise(resolve => { abortReady = resolve; });
 const provider = { ...model, apiKey: 'synthetic-not-a-key', models: [model], streamSimple(_model, context, options) {
-  contexts.push(JSON.parse(JSON.stringify(context)));
+  // Recent Pi includes wall-clock tool duration in context; it is not semantic
+  // observer output and cannot be compared across independent fixture runs.
+  contexts.push(JSON.parse(JSON.stringify(context, (key, value) => key === 'durationMs' ? undefined : value)));
   const stream = new ai.AssistantMessageEventStream();
   const next = script[calls++]; assert.ok(next, 'unexpected continuation');
   const finish = () => {

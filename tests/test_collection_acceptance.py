@@ -40,7 +40,7 @@ def setup(tmp_path):
         pytest.skip('Installed Pi SDK and sibling PiRunMetrics required')
     case = _write_case_bundle(tmp_path)
     project = tmp_path / 'pi-project'
-    shutil.copytree(PROJECT / '.pi/extensions', project / 'extensions')
+    shutil.copytree(PROJECT / 'focus/agent_resources/extensions', project / 'extensions')
     skill = project / 'skills/focus-answer-record-questions'
     skill.mkdir(parents=True)
     (skill / 'SKILL.md').write_text('---\nname: focus-answer-record-questions\ndescription: Synthetic test\n---\nSynthetic instructions.\n')

@@ -49,7 +49,7 @@ from .agent_followup import (
 )
 from .answer_metadata import parse_answer_metadata
 from .answer_presentation import answer_context_label
-from .pi_runtime import PiSettingsError, ensure_project_pi_settings
+from .pi_runtime import PiSettingsError, ensure_project_pi_settings, PROJECT_PI_SETTINGS_PATH
 from .reading_position import AnswerPositionCache
 from .saved_answers import (
     AgentAnswerSnapshot,
@@ -6832,10 +6832,8 @@ class Focus(Adw.Application):
         )
 
     def _agent_python_path(self) -> str:
-        venv_python = PROJECT_DIR / ".venv" / "bin" / "python"
-        if venv_python.is_file():
-            return str(venv_python)
-        return sys.executable or "python3"
+        # Same-project helpers retain the verified interpreter used to launch Focus.
+        return sys.executable
 
     def _create_agent_workspace(self) -> Path:
         cache_root = Path(
@@ -7593,7 +7591,7 @@ class Focus(Adw.Application):
         except PiSettingsError as exc:
             self._ai_transient_toast(f"Unable to initialize PI settings: {exc}")
             return
-        pi_settings = FOCUS_PI_PROJECT_DIR / "settings.json"
+        pi_settings = PROJECT_PI_SETTINGS_PATH
         if (
             not pi_settings.is_file()
             or not FOCUS_PI_SYSTEM_PROMPT_FILE.is_file()
@@ -7663,6 +7661,7 @@ class Focus(Adw.Application):
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
                 "FOCUS_PI_PROJECT_DIR": str(FOCUS_PI_PROJECT_DIR),
+                "FOCUS_PI_SETTINGS_FILE": str(pi_settings),
                 "FOCUS_AGENT_COMMAND_ARGC": str(len(command_argv)),
             }
         )

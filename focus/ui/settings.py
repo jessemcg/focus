@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 
 from focus.core import *  # noqa: F401,F403
+from focus.paths import pi_settings_file
 from focus.pi_runtime import (
     PiModel,
     PiRuntimeError,
@@ -378,9 +379,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         pi_configuration_row = Adw.ActionRow(
             title="PI configuration",
             subtitle=(
-                "The selected provider, model, and reasoning effort are saved in "
-                "project .pi/settings.json; credentials remain in your "
-                "global PI configuration."
+                f"Provider, model, and reasoning: {pi_settings_file()}; "
+                "credentials remain in your global PI configuration."
             ),
         )
         agent_row.add_row(pi_configuration_row)
