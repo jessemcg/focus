@@ -8,6 +8,12 @@ validation. Source commit `b89c62ef47ca6ae2c424ce31559c702bbf2a9394` is on
 command. The unchanged `uv.lock` is committed. Unrelated Open Case UI edits and
 staged README UI wording remain uncommitted/preserved.
 
+At Jesse's request the README command was subsequently shortened to a complete-file
+curl loader. Bootstrap commit `efd8e75f58139a6d7d92cab01dcf38370d12bd3a` publishes
+the exact reviewed bootstrap with the same source pin; no app/runtime change.
+The short command requires pre-installed curl (wget alternative available), while
+`--inline` retains the prior no-downloader/self-contained provisioning form.
+
 No local production installation/deployment, provider login, paid verification
 or private configuration migration was performed. Publication is not a claim of
 complete Ubuntu/Fedora release certification.
@@ -22,7 +28,7 @@ remote. End users download Focus's exported copies, not Desktop_Files.
 
 | Check | Result / boundary |
 | --- | --- |
-| Full Focus pytest suite | **503 passed** on the final publication candidate with optional metrics test infrastructure (source snapshot: 502); standalone final metadata checkout without sibling metrics: **492 passed, 11 optional integration skips**. One existing GTK CSS deprecation warning; disposable environments, not production runtime |
+| Full Focus pytest suite | **511 passed** after short-loader refinement with optional metrics test infrastructure (initial source snapshot: 502, initial publication: 503); standalone latest metadata checkout without sibling metrics: **500 passed, 11 optional integration skips**. One existing GTK CSS deprecation warning; disposable environments, not production runtime |
 | Lifecycle tests | Local synthetic Git clone/pin/named branch; install, failed verification, resume, repair preserving edits and ownership, partial-download removal; package/uv/auth operations mocked |
 | Real installed Pi | Actual Focus record/follow-up extensions against a loopback-only synthetic SSE provider; structured `focus_record` Python helper, guarded read, submit tool and real artifact parser succeeded; no persisted session |
 | Rejected provider | Loopback HTTP 500; one request, no automatic retry or settings save |
@@ -71,11 +77,12 @@ capture/private umask and reran final code; earlier failures remain in local log
   persistent provider authentication or paid provider acceptance was performed.
   Package transactions and those third-party/auth flows are mocked in lifecycle
   tests; local image native provisioning does not certify every installer prompt.
-- The public command is now published. Its generated quoting round-trips exactly
-  to the reviewed readable bootstrap and passes shell syntax checks. Pinned
-  download artifacts are checked against the published Git objects; no production
-  installer execution occurred. Failed-download and unpinned-manifest fixtures
-  remain covered.
+- The public command is published. The retained `--inline` form round-trips to
+  the reviewed bootstrap. The new short curl/wget loaders are tested with local
+  synthetic downloads for failure/partial refusal, successful execution, argument
+  forwarding, child exit status, mode-600 temporary files, paths containing spaces,
+  quotes/metacharacters, cleanup, and mktemp failure. Published bootstrap bytes
+  match the template/source pin. No production installer execution occurred.
 - Shared package/Pi/Node cleanup is separately requested and consented; real shared
   cleanup was not performed. Credential/session deletion intentionally has no switch.
 
@@ -89,5 +96,7 @@ Disposable evidence is under `/tmp/focus-source-validation-nf63uwek`:
 prior failure logs are retained there. Publication-candidate checks and original
 index/diff recovery records are at
 `~/.cache/focus-publication-x_mbi_xj/{tests.log,publication-tests.log,standalone-publication-tests.log,original.index,worktree.patch,index.patch}`.
+Short-loader follow-up logs/index recovery are at
+`~/.cache/focus-command-simplify-6c7nuif8/{tests.log,standalone-tests.log,index.patch,worktree.patch}`.
 These paths are machine-local temporary artifacts, not synchronized deployment
 or an enduring release attestation.

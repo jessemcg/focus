@@ -11,7 +11,7 @@ def command_fixture(tmp_path, ref):
     scripts = tmp_path / "scripts"; scripts.mkdir()
     for name in ("print-install-command.py", "download-bootstrap.sh.in"):
         shutil.copyfile(ROOT / "scripts" / name, scripts / name)
-    (scripts / "install-release.json").write_text(json.dumps({"source_ref": ref}))
+    (scripts / "install-release.json").write_text(json.dumps({"source_ref": ref, "bootstrap_ref": "b" * 40}))
     return scripts
 
 
@@ -23,9 +23,9 @@ def test_unpublished_command_is_not_advertised(tmp_path):
     assert "bash -c" not in result.stdout
 
 
-def test_pinned_one_liner_round_trips_to_reviewed_script(tmp_path):
+def test_inline_one_liner_round_trips_to_reviewed_script(tmp_path):
     scripts = command_fixture(tmp_path, "a" * 40)
-    command = subprocess.check_output(["python3", str(scripts / "print-install-command.py")], text=True).strip()
+    command = subprocess.check_output(["python3", str(scripts / "print-install-command.py"), "--inline"], text=True).strip()
     expanded = subprocess.check_output(["python3", str(scripts / "print-install-command.py"), "--expanded"], text=True)
     assert len(command.splitlines()) == 1
     # Decode the outer shell quoting without executing the bootstrap or fetching.
@@ -42,8 +42,11 @@ def test_readme_command_matches_published_pin():
     command = subprocess.check_output(["python3", str(ROOT / "scripts/print-install-command.py")], text=True).strip()
     documented = (ROOT / "README.md").read_text().split("```bash\n", 1)[1].split("\n```", 1)[0]
     assert documented == command
-    assert ref in documented
+    release = json.loads((ROOT / "scripts/install-release.json").read_text())
+    assert release["bootstrap_ref"] in documented
     assert len(documented.splitlines()) == 1
+    assert len(documented) < 350
+    assert (ROOT / "scripts/install-bootstrap.sh").read_text() == (ROOT / "scripts/download-bootstrap.sh.in").read_text().replace("@REF@", ref)
 
 
 def test_interrupted_download_never_executes_partial_script(tmp_path):

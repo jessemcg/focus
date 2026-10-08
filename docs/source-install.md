@@ -73,31 +73,39 @@ download stream. No shell tracing or authentication transcripts are recorded.
 
 ### Copyable command and readable bootstrap
 
-The reviewed outer bootstrap is `scripts/download-bootstrap.sh.in`. The release
-metadata pins the published tested full commit in `scripts/install-release.json`.
-From the current release-metadata checkout, render both equivalent forms:
+The README now uses a short **curl download-then-run loader**. It requires curl
+already installed; if absent, install it through your distro's software manager
+first. Manually installed curl is pre-existing shared software and is retained.
+The loader downloads the complete `scripts/install-bootstrap.sh` from immutable
+bootstrap commit `efd8e75f58139a6d7d92cab01dcf38370d12bd3a` into a unique mode-600
+file, refuses execution on download failure, forwards arguments and removes the
+file without hiding the command's exit status. It is not `curl | bash`.
+
+The published bootstrap is exactly `scripts/download-bootstrap.sh.in` rendered
+with source pin `b89c62ef47ca6ae2c424ce31559c702bbf2a9394`. It retains platform
+checks, source-installer inspection/consent and required Pi onboarding. Source and
+bootstrap are independently pinned in `scripts/install-release.json`, not `main`.
+Review the [published bootstrap](https://github.com/jessemcg/focus/blob/efd8e75f58139a6d7d92cab01dcf38370d12bd3a/scripts/install-bootstrap.sh)
+before running the short command if desired.
+
+From the current release-metadata checkout, print (never execute) these forms:
 
 ```sh
-python3 scripts/print-install-command.py --expanded
-python3 scripts/print-install-command.py
+python3 scripts/print-install-command.py                    # README's short curl command
+python3 scripts/print-install-command.py --downloader wget  # short alternative if wget is installed
+python3 scripts/print-install-command.py --expanded          # readable full bootstrap
+python3 scripts/print-install-command.py --inline            # previous self-contained long command
 ```
 
-These commands only print instructions; they never publish/download/install.
-The one-line output is reproduced verbatim in the README's Install section.
-An unpinned manifest still refuses to emit a command; a pin alone is not proof
-that a commit has actually been published/tested.
-
-The rendered outer command checks supported mutable hosts, uses an existing curl
-or wget, and, if neither exists, visibly previews/authorizes official curl
-provisioning and carries the successful package delta in
-`FOCUS_BOOTSTRAP_PACKAGES`. It downloads the complete pinned script into a unique
-private temporary directory, stops on download failure, offers inspection, asks
-before execution, reads approvals from `/dev/tty`, and cleans its download files.
-The one-line form uses Bash ANSI-C quoting of that same readable script; it is
-not `curl | bash`. Any packages introduced before a later download failure are
-reported and retained rather than silently removed. The checkout bootstrap can
-likewise offer missing prerequisites. A checksum fetched from the same source is
-transport corruption detection, not independent authentication.
+If neither downloader exists and you do not want to install one manually, use
+`--inline` from a checkout. That self-contained form visibly previews/authorizes
+official curl provisioning and carries its successful package delta in
+`FOCUS_BOOTSTRAP_PACKAGES`. The bootstrap offers inspection before executing the
+source installer, reads approvals from `/dev/tty`, and cleans its download files.
+Introduced packages are reported/retained if a later download fails. The checkout
+installer can likewise offer missing prerequisites. Unpinned manifests refuse
+command generation. A checksum from the same source detects transport corruption,
+not independent authentication.
 
 ## Pi is required
 

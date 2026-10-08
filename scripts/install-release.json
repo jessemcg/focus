@@ -1,6 +1,7 @@
 {
   "schema": 1,
   "source_ref": "b89c62ef47ca6ae2c424ce31559c702bbf2a9394",
+  "bootstrap_ref": "efd8e75f58139a6d7d92cab01dcf38370d12bd3a",
   "status": "published; tested source commit pinned",
   "desktop_templates_commit": "98b0be989981f7a620bf6ccb2cff291bc59c649f"
 }
