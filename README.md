@@ -3,6 +3,9 @@
 <img src="focus.svg" alt="Focus icon" width="96" align="left">
 
 A Linux desktop app for reading and researching appellate records.
+Reads record bundles prepared by [RecordPrep](https://github.com/jessemcg/record-prep)
+and uses the [Pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent)
+for AI questions.
 
 - Browse transcripts and page images with bookmarks, search, and citation navigation.
 - Read hearing, report, and minute-order summaries alongside the record.
