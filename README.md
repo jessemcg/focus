@@ -1,3 +1,5 @@
+<img src="focus.svg" alt="Focus icon" width="96">
+
 # Focus
 
 A Linux desktop app for reading and researching appellate records.
