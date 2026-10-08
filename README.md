@@ -1,4 +1,4 @@
-<img src="focus.svg" alt="Focus icon" width="96">
+<img src="focus.svg" alt="Focus icon" width="96" align="left">
 
 # Focus
 
