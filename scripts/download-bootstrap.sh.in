@@ -1,10 +1,8 @@
 #!/bin/sh
-# Publication template; prints/executes only after a tested commit is pinned.
+# Public bootstrap: install the latest main source.
 set -eu
 umask 077
-ref='@REF@'
-case "$ref" in *[!0-9a-f]*|'') printf '[FAIL] Unpublished source ref.\n'; exit 1 ;; esac
-[ "${#ref}" = 40 ] || exit 1
+ref='main'
 [ "$(id -u)" != 0 ] || { printf '[FAIL] Run as the desktop user.\n'; exit 1; }
 [ ! -e /run/ostree-booted ] && [ ! -d /sysroot/ostree ] || { printf '[FAIL] Immutable desktop unsupported.\n'; exit 1; }
 . /etc/os-release
@@ -61,4 +59,4 @@ case "$inspect" in n|N) ;; *) if command -v less >/dev/null 2>&1; then less "$te
 printf '[WAIT] Execute the inspected source installer? Type yes: ' >/dev/tty
 IFS= read -r answer </dev/tty
 [ "$answer" = yes ] || exit 1
-FOCUS_INSTALL_REF="$ref" FOCUS_BOOTSTRAP_PACKAGES="$introduced" bash "$temp/install.sh" "$@"
+FOCUS_INSTALL_REF="$ref" FOCUS_BOOTSTRAP_PACKAGES="$introduced" bash "$temp/install.sh" "$@" </dev/tty

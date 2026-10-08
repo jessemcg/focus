@@ -11,11 +11,27 @@ from test_public_bootstrap import command_fixture
 
 
 @pytest.mark.parametrize("downloader", ["curl", "wget"])
+def test_simple_pipeline_forwards_arguments_and_child_status(tmp_path, downloader):
+    scripts = command_fixture(tmp_path, None)
+    command = subprocess.check_output([sys.executable, str(scripts / "print-install-command.py"),
+                                       "--downloader", downloader], text=True).strip()
+    bin_dir = tmp_path / "bin"; bin_dir.mkdir()
+    fake = bin_dir / downloader
+    fake.write_text("#!/bin/sh\nprintf '%s\\n' 'printf \"%s\\n\" \"$@\"' 'exit 17'\n")
+    fake.chmod(0o755)
+    result = subprocess.run(["/bin/bash", "-c", command + ' -s -- --source-dir "synthetic source"'],
+                            env=dict(os.environ, PATH=str(bin_dir) + ":/usr/bin:/bin"),
+                            capture_output=True, text=True)
+    assert result.returncode == 17
+    assert result.stdout.splitlines() == ["--source-dir", "synthetic source"]
+
+
+@pytest.mark.parametrize("downloader", ["curl", "wget"])
 @pytest.mark.parametrize("download_status,child_status", [(7, 0), (0, 0), (0, 17)])
 def test_short_loader_complete_download_status_args_and_cleanup(tmp_path, downloader, download_status, child_status):
     scripts = command_fixture(tmp_path, "a" * 40)
     command = subprocess.check_output([sys.executable, str(scripts / "print-install-command.py"),
-                                       "--downloader", downloader], text=True).strip()
+                                       "--download-first", "--downloader", downloader], text=True).strip()
     assert len(command) < 350 and len(command.splitlines()) == 1
     bin_dir = tmp_path / "bin"; bin_dir.mkdir()
     # Spaces, quotes and shell metacharacters must remain path data in the trap.
@@ -42,25 +58,25 @@ sys.exit({download_status})
     assert record["mode"] == 0o600
     assert not Path(record["path"]).exists()
     assert not list(temporary.iterdir())
-    assert any("/" + "b" * 40 + "/scripts/install-bootstrap.sh" in arg for arg in record["args"])
+    assert any("/main/scripts/install-bootstrap.sh" in arg for arg in record["args"])
     if download_status:
         assert not executed.exists()  # never execute a partial/failed download
     else:
         assert executed.read_text().splitlines() == ["--source-dir", "synthetic source"]
 
 
-def test_short_loader_rejects_unpinned_bootstrap(tmp_path):
+def test_short_loader_accepts_unpinned_bootstrap(tmp_path):
     scripts = command_fixture(tmp_path, "a" * 40)
     (scripts / "install-release.json").write_text(json.dumps({"source_ref": "a" * 40}))
     result = subprocess.run([sys.executable, str(scripts / "print-install-command.py")],
                             text=True, capture_output=True)
-    assert result.returncode != 0 and not result.stdout
-    assert "Unpublished bootstrap" in result.stderr
+    assert result.returncode == 0
+    assert "/main/scripts/install-bootstrap.sh | bash" in result.stdout
 
 
 def test_short_loader_stops_if_temporary_file_creation_fails(tmp_path):
     scripts = command_fixture(tmp_path, "a" * 40)
-    command = subprocess.check_output([sys.executable, str(scripts / "print-install-command.py")], text=True).strip()
+    command = subprocess.check_output([sys.executable, str(scripts / "print-install-command.py"), "--download-first"], text=True).strip()
     bin_dir = tmp_path / "bin"; bin_dir.mkdir()
     (bin_dir / "mktemp").write_text("#!/bin/sh\nexit 9\n")
     (bin_dir / "mktemp").chmod(0o755)

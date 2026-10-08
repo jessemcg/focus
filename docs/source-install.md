@@ -2,17 +2,15 @@
 
 ## Release status
 
-The public installer pins tested source commit
-[`b89c62ef47ca6ae2c424ce31559c702bbf2a9394`](https://github.com/jessemcg/focus/commit/b89c62ef47ca6ae2c424ce31559c702bbf2a9394).
+Fresh installs download the bootstrap and installer from `main` and clone the
+latest `origin/main` source. There is no release-pin publication step. The actual
+installed commit is recorded in the receipt for diagnostics, not version selection.
 Copy the command from the [README Install section](../README.md#install).
-`main` is not an executable release pin. Publication does not establish complete
-clean-machine Ubuntu/Fedora certification; see [validation](source-install-validation.md).
+This does not establish complete clean-machine Ubuntu/Fedora certification;
+see [validation](source-install-validation.md).
 
-Release metadata is committed **after** the tested source snapshot, avoiding a
-self-referential Git hash. The installed snapshot's own manifest may still say
-unpublished; the download command supplies its explicit published source ref.
-Use the online README or current release-metadata checkout for fresh installs;
-receipt-owned installed checkouts support `--resume`/`--repair` without repinning.
+Existing receipt-owned checkouts support `--resume`/`--repair` without replacing
+local source. Installing latest code does not mean silently updating existing installs.
 
 ## What is installed
 
@@ -73,26 +71,28 @@ download stream. No shell tracing or authentication transcripts are recorded.
 
 ### Copyable command and readable bootstrap
 
-The README now uses a short **curl download-then-run loader**. It requires curl
-already installed; if absent, install it through your distro's software manager
-first. Manually installed curl is pre-existing shared software and is retained.
-The loader downloads the complete `scripts/install-bootstrap.sh` from immutable
-bootstrap commit `efd8e75f58139a6d7d92cab01dcf38370d12bd3a` into a unique mode-600
-file, refuses execution on download failure, forwards arguments and removes the
-file without hiding the command's exit status. It is not `curl | bash`.
+The README uses **curl | bash**, following `main`. It requires curl already
+installed; if absent, install it through your distro's software manager first.
+Manually installed curl is pre-existing shared software and is retained.
+This executes the bootstrap as it arrives and trusts the current repository code.
+Use the optional `--download-first` form below to download the complete bootstrap
+before execution; it refuses execution on download failure and cleans its temporary file.
 
-The published bootstrap is exactly `scripts/download-bootstrap.sh.in` rendered
-with source pin `b89c62ef47ca6ae2c424ce31559c702bbf2a9394`. It retains platform
-checks, source-installer inspection/consent and required Pi onboarding. Source and
-bootstrap are independently pinned in `scripts/install-release.json`, not `main`.
-Review the [published bootstrap](https://github.com/jessemcg/focus/blob/efd8e75f58139a6d7d92cab01dcf38370d12bd3a/scripts/install-bootstrap.sh)
-before running the short command if desired.
+The published bootstrap is exactly `scripts/download-bootstrap.sh.in`. It retains
+platform checks, source-installer inspection/consent and required Pi onboarding.
+Review the [bootstrap](https://github.com/jessemcg/focus/blob/main/scripts/install-bootstrap.sh)
+before running the command if desired. Add arguments using `bash -s --`, for example:
 
-From the current release-metadata checkout, print (never execute) these forms:
+```sh
+curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install-bootstrap.sh | bash -s -- --source-dir "$HOME/Applications/Focus source"
+```
+
+From a checkout, print (never execute) these forms:
 
 ```sh
 python3 scripts/print-install-command.py                    # README's short curl command
 python3 scripts/print-install-command.py --downloader wget  # short alternative if wget is installed
+python3 scripts/print-install-command.py --download-first    # complete-file alternative
 python3 scripts/print-install-command.py --expanded          # readable full bootstrap
 python3 scripts/print-install-command.py --inline            # previous self-contained long command
 ```
@@ -103,9 +103,8 @@ official curl provisioning and carries its successful package delta in
 `FOCUS_BOOTSTRAP_PACKAGES`. The bootstrap offers inspection before executing the
 source installer, reads approvals from `/dev/tty`, and cleans its download files.
 Introduced packages are reported/retained if a later download fails. The checkout
-installer can likewise offer missing prerequisites. Unpinned manifests refuse
-command generation. A checksum from the same source detects transport corruption,
-not independent authentication.
+installer can likewise offer missing prerequisites. No release manifest or commit
+pin is required to generate the command.
 
 ## Pi is required
 

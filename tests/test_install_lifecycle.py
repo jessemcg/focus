@@ -59,6 +59,29 @@ def lifecycle(sandbox, monkeypatch, tmp_path):
     return paths, args, calls, failing
 
 
+def test_default_installs_latest_main_and_repair_preserves_checkout(lifecycle, monkeypatch):
+    paths, args, calls, _ = lifecycle
+    monkeypatch.delenv("FOCUS_INSTALL_REF")
+    repo = Path(m.REPOSITORY)
+    (repo / "latest.txt").write_text("new main code")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Synthetic", "-c",
+                    "user.email=synthetic@example.invalid", "commit", "-qm", "latest"], check=True)
+    latest = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    # A different remote default branch must not change the main selection.
+    subprocess.run(["git", "-C", str(repo), "checkout", "-qb", "other", "HEAD~1"], check=True)
+    assert m.install(args) == 0
+    receipt = m.private_json(paths["state"] / "receipt.json")
+    assert receipt["source_ref"] == "main" and receipt["source_revision"] == latest
+    assert (paths["source"] / "latest.txt").read_text() == "new main code"
+    (paths["source"] / "latest.txt").write_text("local edits")
+    calls.clear()
+    args.repair = True
+    assert m.install(args) == 0
+    assert (paths["source"] / "latest.txt").read_text() == "local edits"
+    assert not any(call[:2] == ["git", "clone"] or "switch" in call or "fetch" in call for call in calls)
+
+
 def test_complete_repair_and_normal_uninstall(lifecycle):
     paths, args, calls, _ = lifecycle
     assert m.install(args) == 0

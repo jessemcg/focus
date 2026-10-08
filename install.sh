@@ -5,17 +5,9 @@ umask 077
 if (( EUID == 0 )); then printf '[FAIL] Run as the desktop user, not root.\n' >&2; exit 1; fi
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 dry_run=0
-resuming=0
 for arg in "$@"; do
   [[ "$arg" != --dry-run && "$arg" != --help && "$arg" != -h ]] || dry_run=1
-  [[ "$arg" != --resume && "$arg" != --repair ]] || resuming=1
 done
-if (( ! dry_run && ! resuming )) && [[ -z "${FOCUS_INSTALL_REF:-}" ]]; then
-  if [[ ! -f "$root/scripts/install-release.json" ]] || grep -q '"source_ref": null' "$root/scripts/install-release.json"; then
-    printf '[FAIL] No published tested source ref; installation is gated before prerequisite changes.\n' >&2
-    exit 1
-  fi
-fi
 # Reject unsupported hosts before even bootstrapping Python/curl.
 if [[ -e /run/ostree-booted || -d /sysroot/ostree ]]; then
   printf '[FAIL] Immutable/rpm-ostree systems are not supported.\n' >&2; exit 1
@@ -73,10 +65,10 @@ export FOCUS_BOOTSTRAP_PACKAGES="${FOCUS_BOOTSTRAP_PACKAGES:-} ${bootstrap_added
 if [[ -f "$root/scripts/focus_maintenance.py" ]]; then
   exec python3 -I "$root/scripts/focus_maintenance.py" install --payload-root "$root" "$@"
 fi
-# Publication must inject a reviewed, tested full commit; main is never an executable release ref.
-ref="${FOCUS_INSTALL_REF:-}"
-if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-  printf '[FAIL] No published tested source ref. Use the checkout instructions; release publication is pending.\n' >&2; exit 1
+# Fresh installs follow the latest main; explicit commits remain usable for diagnostics.
+ref="${FOCUS_INSTALL_REF:-main}"
+if [[ ! "$ref" =~ ^(main|[0-9a-f]{40})$ ]]; then
+  printf '[FAIL] Source ref must be main or a full commit.\n' >&2; exit 1
 fi
 temporary="$(mktemp -d -t focus-bootstrap.XXXXXXXX)"
 trap 'rm -rf -- "$temporary"' EXIT
@@ -87,5 +79,5 @@ fetch() {
   else wget --https-only --output-document="$2" "$1"; fi
 }
 fetch "https://raw.githubusercontent.com/jessemcg/focus/$ref/scripts/focus_maintenance.py" "$temporary/scripts/focus_maintenance.py"
-printf '{"source_ref":"%s"}\n' "$ref" > "$temporary/scripts/install-release.json"
+export FOCUS_INSTALL_REF="$ref"
 python3 -I "$temporary/scripts/focus_maintenance.py" install --payload-root "$temporary" "$@"

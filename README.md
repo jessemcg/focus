@@ -6,20 +6,19 @@ For mutable Ubuntu **24.04/26.04** and Fedora **43/44** desktops (x86_64/aarch64
 Run in a **Bash terminal as your normal user**, with `curl` installed (not sudo):
 
 ```bash
-bash -c 'f=$(mktemp) || exit; trap "rm -f \"\$f\"" EXIT; curl -fL --proto =https --tlsv1.2 https://raw.githubusercontent.com/jessemcg/focus/efd8e75f58139a6d7d92cab01dcf38370d12bd3a/scripts/install-bootstrap.sh -o "$f" && bash "$f" "$@"' --
+curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install-bootstrap.sh | bash
 ```
 
-The command downloads a [pinned bootstrap](https://github.com/jessemcg/focus/blob/efd8e75f58139a6d7d92cab01dcf38370d12bd3a/scripts/install-bootstrap.sh)
-to a temporary file before running it—not `curl | bash`. The bootstrap still
-pins source [`b89c62e`](https://github.com/jessemcg/focus/commit/b89c62ef47ca6ae2c424ce31559c702bbf2a9394)
-and offers inspection before running the source installer.
+Fresh installs use the latest code on `main`, not a pinned release.
+The bootstrap offers inspection before running the downloaded source installer.
 If `curl` is missing, install it through your distro's software manager first;
 a wget alternative and self-contained bootstrap are in the installation docs.
 Missing dependencies require explicit approval; Pi login/model
 selection and a consented synthetic Agent verification are mandatory (provider
 billing may apply). It creates an editable Git checkout at `~/Focus` and an
 external uv environment. Existing foreign installations are not overwritten.
-Append `--source-dir "$HOME/Applications/Focus source"` to choose a new destination.
+Replace the final `bash` with `bash -s -- --source-dir "$HOME/Applications/Focus source"`
+to choose a new destination.
 
 See [readable installation instructions, development and removal](docs/source-install.md)
 and [native/mocked/untested validation coverage](docs/source-install-validation.md).

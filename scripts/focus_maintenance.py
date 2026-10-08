@@ -312,7 +312,7 @@ def validate_receipt(data: dict, paths: dict[str, Path]) -> None:
         raise MaintenanceError("Unknown installation phase")
     if not isinstance(data.get("tool_versions", {}), dict) or not isinstance(data.get("config_created", False), bool):
         raise MaintenanceError("Malformed installation metadata")
-    if "source_ref" in data and not re.fullmatch(r"[0-9a-f]{40}", str(data["source_ref"])):
+    if "source_ref" in data and not re.fullmatch(r"main|[0-9a-f]{40}", str(data["source_ref"])):
         raise MaintenanceError("Malformed source ref")
     if data.get("paths") != {k: str(v) for k, v in paths.items()}:
         raise MaintenanceError("Receipt destinations disagree with independently derived paths")
@@ -675,13 +675,9 @@ def install(args) -> int:
                 if paths[name].exists():
                     raise MaintenanceError(f"Unowned destination already exists: {paths[name]}")
             approve("Proceed with these paths? Native transactions, Pi login and verification have separate consent")
-            payload = Path(args.payload_root) if args.payload_root else Path(__file__).resolve().parent.parent
-            ref = os.environ.get("FOCUS_INSTALL_REF", "")
-            if not ref:
-                manifest = payload / "scripts/install-release.json"
-                ref = json.loads(manifest.read_text()).get("source_ref", "")
-            if not re.fullmatch(r"[0-9a-f]{40}", str(ref)):
-                raise MaintenanceError("No published tested commit selected. Release publication is pending; use FOCUS_INSTALL_REF only for an explicitly reviewed commit")
+            ref = os.environ.get("FOCUS_INSTALL_REF") or "main"
+            if not re.fullmatch(r"main|[0-9a-f]{40}", ref):
+                raise MaintenanceError("Source ref must be main or a full commit")
             data = {"schema": SCHEMA, "installation_id": uuid.uuid4().hex, "phase": "preflight",
                     "paths": {key: str(value) for key, value in paths.items()}, "source_ref": ref,
                     "created": [], "files": {}, "tool_versions": {}, "package_family": family,
@@ -740,7 +736,8 @@ def install(args) -> int:
                 with tempfile.TemporaryDirectory(prefix=".focus-clone-", dir=paths["source"].parent) as temp:
                     clone = Path(temp) / "source"
                     execute(["git", "clone", REPOSITORY, str(clone)])
-                    execute(["git", "-C", str(clone), "switch", "--create", "focus-install", data["source_ref"]])
+                    execute(["git", "-C", str(clone), "switch", "--create", "focus-install",
+                             "origin/main" if data["source_ref"] == "main" else data["source_ref"]])
                     marker(clone, data["installation_id"], paths["source"])
                     data["created"].append("source"); save()
                     os.rename(clone, paths["source"])

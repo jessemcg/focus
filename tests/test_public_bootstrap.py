@@ -15,12 +15,12 @@ def command_fixture(tmp_path, ref):
     return scripts
 
 
-def test_unpublished_command_is_not_advertised(tmp_path):
+def test_command_needs_no_release_manifest(tmp_path):
     scripts = command_fixture(tmp_path, None)
+    (scripts / "install-release.json").unlink()
     result = subprocess.run(["python3", str(scripts / "print-install-command.py")], capture_output=True, text=True)
-    assert result.returncode != 0
-    assert "no executable one-liner" in result.stderr
-    assert "bash -c" not in result.stdout
+    assert result.returncode == 0
+    assert result.stdout.strip() == "curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install-bootstrap.sh | bash"
 
 
 def test_inline_one_liner_round_trips_to_reviewed_script(tmp_path):
@@ -34,19 +34,14 @@ def test_inline_one_liner_round_trips_to_reviewed_script(tmp_path):
     subprocess.run(["/bin/bash", "-n"], input=expanded, text=True, check=True)
 
 
-def test_readme_command_matches_published_pin():
-    import json
-    ref = json.loads((ROOT / "scripts/install-release.json").read_text()).get("source_ref")
-    if ref is None:
-        return  # Source snapshots precede their separate publication metadata.
+def test_readme_command_matches_latest_main():
     command = subprocess.check_output(["python3", str(ROOT / "scripts/print-install-command.py")], text=True).strip()
     documented = (ROOT / "README.md").read_text().split("```bash\n", 1)[1].split("\n```", 1)[0]
     assert documented == command
-    release = json.loads((ROOT / "scripts/install-release.json").read_text())
-    assert release["bootstrap_ref"] in documented
+    assert "/main/scripts/install-bootstrap.sh | bash" in documented
     assert len(documented.splitlines()) == 1
     assert len(documented) < 350
-    assert (ROOT / "scripts/install-bootstrap.sh").read_text() == (ROOT / "scripts/download-bootstrap.sh.in").read_text().replace("@REF@", ref)
+    assert (ROOT / "scripts/install-bootstrap.sh").read_text() == (ROOT / "scripts/download-bootstrap.sh.in").read_text()
 
 
 def test_interrupted_download_never_executes_partial_script(tmp_path):
@@ -69,7 +64,7 @@ exit 7
 ''')
     curl.chmod(0o755)
     script = tmp_path / "bootstrap.sh"
-    script.write_text((ROOT / "scripts/download-bootstrap.sh.in").read_text().replace("@REF@", "a" * 40))
+    script.write_text((ROOT / "scripts/download-bootstrap.sh.in").read_text())
     env = dict(os.environ, PATH=str(bindir) + ":/usr/bin:/bin")
     result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True)
     assert result.returncode == 7
