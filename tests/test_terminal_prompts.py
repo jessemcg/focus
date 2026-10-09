@@ -48,7 +48,7 @@ print('PROMPT_OK', flush=True)
     try:
         output = b""
         deadline = time.monotonic() + 10
-        prompt = b"Press Enter to continue with Pi" if "continue_pi_install" in action else b"TEST_PROMPT"
+        prompt = b"Press Enter to install Pi" if "continue_pi_install" in action else b"TEST_PROMPT"
         while prompt not in output and time.monotonic() < deadline:
             if process.poll() is not None:
                 break

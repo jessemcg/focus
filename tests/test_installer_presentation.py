@@ -34,7 +34,7 @@ def test_status_styles_and_real_stage_progress(terminal):
     assert "4/8 stages passed" in grouped
     last = m.status_text("CHECK", "8/8 Final checks", terminal)
     assert "7/8 stages passed" in last
-    done = m.status_text("OK", "Installation COMPLETE", terminal)
+    done = m.status_text("OK", m.INSTALL_SUCCESS, terminal)
     assert "8/8 stages passed" in done
     assert "[━━━━━━━━]" in done
     assert "stages passed" not in m.status_text("FAIL", "Incomplete", terminal)
@@ -74,7 +74,7 @@ m['say']('CHECK', '1/8 Platform')
 m['say']('OK', 'Native packages ready')
 m['say']('WARN', 'Approval required')
 m['say']('CHECK', '8/8 Final checks')
-m['say']('OK', 'Installation COMPLETE (synthetic presentation only)')
+m['say']('OK', m['INSTALL_SUCCESS'])
 """
     try:
         result = subprocess.run([sys.executable, "-c", code], stdin=subprocess.DEVNULL,

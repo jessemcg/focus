@@ -124,7 +124,7 @@ def test_focus_completes_before_optional_pi_and_survives_failure(lifecycle, monk
     def optional(env):
         assert m.private_json(paths["state"] / "receipt.json")["phase"] == "complete"
         assert paths["desktop"].exists() and paths["command"].exists()
-        assert "Focus is installed and ready to use" in capsys.readouterr().out
+        assert m.INSTALL_SUCCESS in capsys.readouterr().out
         if failure is not None:
             raise failure
 
@@ -134,7 +134,7 @@ def test_focus_completes_before_optional_pi_and_survives_failure(lifecycle, monk
     assert paths["desktop"].exists()
     assert not any("setup-pi" in call or "doctor" in call for call in calls)
     output = capsys.readouterr().out
-    assert "Focus remains installed" in output
+    assert ("Pi installer finished" if failure is None else "Focus remains installed") in output
     assert "Incomplete at" not in output
 
 
@@ -173,7 +173,7 @@ def test_old_incomplete_pi_receipt_can_finish_without_pi(lifecycle, capsys):
     args.resume = True
     assert m.install(args) == 0
     assert m.private_json(paths["state"] / "receipt.json")["phase"] == "complete"
-    assert "Pi installation skipped" in capsys.readouterr().out
+    assert "Pi skipped" in capsys.readouterr().out
 
 
 def test_optional_pi_complete_download_runs_in_existing_terminal(monkeypatch, tmp_path):
@@ -209,6 +209,16 @@ def test_optional_pi_download_failure_never_executes(monkeypatch):
     monkeypatch.setattr(m.subprocess, "run", lambda *a, **kw: pytest.fail("Executed failed download"))
     with pytest.raises(m.MaintenanceError, match="download failure"):
         m.install_optional_pi({})
+
+
+def test_success_ending_is_short_and_has_no_command_paths(lifecycle, capsys):
+    _, args, _, _ = lifecycle
+    assert m.install(args) == 0
+    ending = capsys.readouterr().out.split(m.INSTALL_SUCCESS, 1)[1]
+    assert "/login" in ending and "Focus Settings" in ending
+    assert "optional" in ending
+    for removed in ("Launch:", "Edit:", "Develop:", "Repair:", "Uninstall", "bin/python", "find_pi", "curl -", "[CHECK]"):
+        assert removed not in ending
 
 
 def test_readme_has_one_focus_uninstall_command():

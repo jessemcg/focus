@@ -120,7 +120,9 @@ pin is required to generate the command.
 
 Focus installation requires **no Pi, AI account, model selection or paid verification**.
 After installing the runtime, commands and desktop entry, the installer saves a
-completed receipt and confirms **“Focus is installed and ready to use.”**
+completed receipt and confirms **“Focus is installed. Open it from your applications
+menu.”** The closing screen contains only this confirmation and optional Pi guidance,
+not developer commands or installation paths.
 
 Only then does it check whether Pi is present. If Pi is missing, press **Enter**
 to run its official installer in the current terminal, or type **skip** to finish.

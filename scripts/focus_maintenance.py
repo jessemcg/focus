@@ -27,6 +27,7 @@ from pathlib import Path
 
 SCHEMA = 1
 INSTALL_STAGES = 8
+INSTALL_SUCCESS = "Focus is installed. Open it from your applications menu."
 REPOSITORY = "https://github.com/jessemcg/focus"
 UV_VERSION = "0.11.8"
 APP_ID = "com.mcglaw.Focus"
@@ -72,7 +73,7 @@ def status_text(kind: str, message: str, stream) -> str:
     label = f"{symbols.get(kind, '●')} {kind}" if unicode else kind
     text = f"\033[1;{colors.get(kind, '36')}m{label}\033[0m  {message}"
     stage = re.match(rf"(\d+)/{INSTALL_STAGES}\s", message) if kind == "CHECK" else None
-    complete = kind == "OK" and message.startswith("Installation COMPLETE")
+    complete = kind == "OK" and message == INSTALL_SUCCESS
     if stage or complete:
         # Filled cells mean stages passed, not elapsed time or download percentage.
         done = INSTALL_STAGES if complete else max(0, min(INSTALL_STAGES - 1, int(stage.group(1)) - 1))
@@ -110,8 +111,9 @@ def approve(message: str, exact: str = "yes") -> None:
 
 
 def execute(command: list[str], *, env: dict | None = None, cwd: Path | None = None,
-            capture: bool = False, check: bool = True) -> subprocess.CompletedProcess:
-    say("ACTION" if not capture else "CHECK", shlex.join(str(c) for c in command))
+            capture: bool = False, check: bool = True, announce: bool = True) -> subprocess.CompletedProcess:
+    if announce:
+        say("ACTION" if not capture else "CHECK", shlex.join(str(c) for c in command))
     result = subprocess.run(command, env=env, cwd=cwd, capture_output=capture, text=True,
                             check=False, timeout=120 if capture else None)
     if check and result.returncode:
@@ -693,7 +695,7 @@ def continue_pi_install() -> bool:
     """Optional after-success prompt: EOF, skip and Ctrl+C all leave Focus ready."""
     try:
         with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
-            writer.write("Press Enter to continue with Pi installation, or type skip to finish: ")
+            writer.write("Press Enter to install Pi, or type skip to finish: ")
             writer.flush()
             answer = reader.readline()
             return bool(answer) and not answer.strip()
@@ -706,43 +708,41 @@ def install_optional_pi(env: dict[str, str]) -> None:
     with tempfile.TemporaryDirectory(prefix="focus-optional-pi-") as directory:
         script = Path(directory) / "install.sh"
         execute(["curl", "--fail", "--location", "--proto", "=https", "--tlsv1.2",
-                 "https://pi.dev/install.sh", "--output", str(script)], env=env)
+                 "https://pi.dev/install.sh", "--output", str(script)], env=env, announce=False)
         with open("/dev/tty", "r+b", buffering=0) as tty:
             subprocess.run(["sh", str(script)], cwd=directory, env=env,
                            stdin=tty, stdout=tty, stderr=tty, check=True)
 
 
 def offer_pi_install(paths: dict[str, Path], data: dict, save, env: dict[str, str]) -> None:
-    say("INFO", "Optional AI features: Pi is separate from the completed Focus installation.")
-    print("To enable AI questions, open Pi and use /login to enter an API key or sign in.\n"
-          "After login, your available models can be selected in the Focus Settings window.\n"
-          "No login or paid AI verification is required to finish installing Focus.", flush=True)
     python = str(paths["environment"] / "bin/python")
     found = execute([python, "-c", "from focus.setup_pi import find_pi; print(find_pi())"],
-                    env=env, capture=True).stdout.strip()
+                    env=env, capture=True, announce=False).stdout.strip()
     if found:
-        say("OK", f"Pi is already installed: {found}. No Pi installation is needed.")
+        say("OK", "Pi is already installed.")
+    else:
+        say("INFO", "For AI features, install Pi next. This is optional.")
+    print("In Pi, use /login to enter an API key or sign in.\n"
+          "Then choose an available model in Focus Settings.", flush=True)
+    if found:
         return
-    say("INFO", "Pi is not installed. The next optional step is to install it for AI features.")
-    print("You can also do this later: curl -fsSL https://pi.dev/install.sh | sh", flush=True)
     if not continue_pi_install():
-        say("OK", "Pi installation skipped. Focus is installed and ready to use.")
+        say("OK", "Pi skipped. You can install it later.")
         return
     pi_root = Path(data["pi_agent_dir"])
     node_root = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "pi-node"
     candidates = [pi_root / "install", pi_root / "bin/pi", node_root]
     previous = data.setdefault("pi_preexisting", {str(path): path.exists() or path.is_symlink() for path in candidates})
     save()
-    say("ACTION", "Starting Pi's official installer here. Focus installation is already complete.")
+    say("ACTION", "Starting the Pi installer...")
     try:
         install_optional_pi(env)
     finally:
         data["introduced_pi_resources"] = sorted(set(data.get("introduced_pi_resources", [])) |
                                                   {path for path, existed in previous.items() if not existed and Path(path).exists()})
         save()  # Ownership only; never turn the completed receipt back into 'pi'.
-    say("OK", "Pi installer finished. Focus remains installed and ready to use.")
-    print("Next: open Pi, run /login to enter an API key or sign in, then select an\n"
-          "available model in Focus Settings. No Focus install resume is needed.", flush=True)
+    say("OK", "Pi installer finished.")
+    print("Next: use /login in Pi, then choose a model in Focus Settings.", flush=True)
 
 
 def install(args) -> int:
@@ -884,12 +884,7 @@ def install(args) -> int:
             verify_environment(paths, data["installation_id"])
             execute([str(paths["command"]), "--help"], env=env, capture=True)
             stage("complete")
-            say("OK", "Installation COMPLETE")
-            say("OK", "Focus is installed and ready to use. Open Focus from your applications menu.")
-            print(f"Launch: {shlex.quote(str(paths['command']))}\nEdit: {paths['source']}\n"
-                  f"Develop: {paths['source']}/scripts/focus-env sync --dev\n"
-                  f"Repair: {paths['source']}/install.sh --source-dir {shlex.quote(str(paths['source']))} --repair\n"
-                  f"Uninstall preview: {paths['uninstall_command']} --dry-run")
+            say("OK", INSTALL_SUCCESS)
         except (Exception, KeyboardInterrupt):
             say("FAIL", f"Incomplete at {data['phase']}; owned changes retained, credentials not rolled back")
             print(f"Resume: {shlex.quote(str(paths['source'] / 'install.sh'))} --source-dir {shlex.quote(str(paths['source']))} --resume\n"
@@ -901,7 +896,7 @@ def install(args) -> int:
         try:
             offer_pi_install(paths, data, save, env)
         except (Exception, KeyboardInterrupt) as exc:
-            say("WARN", f"Optional Pi setup stopped: {exc}. Focus remains installed and ready to use.")
+            say("WARN", f"Pi setup stopped: {exc}. Focus remains installed.")
     return 0
 
 
