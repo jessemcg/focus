@@ -24,6 +24,9 @@ from focus.setup_pi import ask
     ("maintenance['approve']('TEST_PROMPT')", "", False),
     ("assert ask('TEST_PROMPT') == 'chosen model'", "chosen model", True),
     ("maintenance['approve']('TEST_PROMPT', 'exact path')", "exact path", True),
+    ("maintenance['approve']('TEST_PROMPT', '')", "", True),
+    ("maintenance['approve']('TEST_PROMPT', '')", "no", False),
+    ("maintenance['approve']('TEST_PROMPT', '')", None, False),
 ])
 def test_prompt_uses_controlling_terminal_not_stdin(action, answer, success):
     master, slave = os.openpty()
@@ -51,7 +54,9 @@ print('PROMPT_OK', flush=True)
             process.kill()
             _, errors = process.communicate(timeout=5)
             pytest.fail(f"No terminal prompt: {output!r} {errors!r}")
-        os.write(master, (answer + "\n").encode())
+        if action == "maintenance['approve']('TEST_PROMPT', '')":
+            assert b"Press Enter to continue" in output
+        os.write(master, b"\x04" if answer is None else (answer + "\n").encode())
         stdout, stderr = process.communicate(timeout=5)
         assert (process.returncode == 0) == success, stderr.decode()
         assert (b"PROMPT_OK" in stdout) == success

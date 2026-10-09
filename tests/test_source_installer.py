@@ -298,7 +298,10 @@ def test_retry_after_first_approval_failure_reuses_lock(sandbox, monkeypatch):
     lockfile = paths["state"] / "maintenance.lock"
     inode = lockfile.stat().st_ino
     assert list(paths["state"].iterdir()) == [lockfile]
-    monkeypatch.setattr(m, "approve", lambda *args: None)
+    def continue_with_enter(message, exact="yes"):
+        assert exact == ""
+
+    monkeypatch.setattr(m, "approve", continue_with_enter)
 
     def stop_before_provisioning(*args):
         raise RuntimeError("STOP_AFTER_RECEIPT")
@@ -308,6 +311,18 @@ def test_retry_after_first_approval_failure_reuses_lock(sandbox, monkeypatch):
         m.install(args)
     assert lockfile.stat().st_ino == inode
     assert m.private_json(paths["state"] / "receipt.json")["phase"] == "preflight"
+
+
+def test_native_install_approval_uses_enter(monkeypatch):
+    packages = m.Packages("apt")
+    monkeypatch.setattr(packages, "preview", lambda names: None)
+    approvals = []
+    commands = []
+    monkeypatch.setattr(m, "approve", lambda message, exact="yes": approvals.append(exact))
+    monkeypatch.setattr(m, "execute", lambda command: commands.append(command))
+    packages.install(["git"])
+    assert approvals == [""]
+    assert commands == [["sudo", "apt-get", "install", "git"]]
 
 
 def test_unowned_state_is_preserved(sandbox, monkeypatch):

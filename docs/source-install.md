@@ -67,7 +67,9 @@ another destination. `--resume`/`--repair` apply only to a receipt-owned install
 The installer prints eleven numbered stages and `[CHECK]`, `[OK]`, `[ACTION]`,
 `[WAIT]`, `[WARN]`, `[FAIL]` markers. Output is ASCII/no-color. It prints commands
 and reasons before running them; prompts read the controlling terminal, never the
-download stream. No shell tracing or authentication transcripts are recorded.
+download stream. The initial path confirmation and native dependency approval use
+**Enter to continue**, or **Ctrl+C to cancel**. Removal and paid-verification
+confirmations remain explicit. No shell tracing or authentication transcripts are recorded.
 
 ### Copyable command and readable bootstrap
 

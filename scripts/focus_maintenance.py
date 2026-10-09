@@ -54,8 +54,12 @@ def approve(message: str, exact: str = "yes") -> None:
     try:
         # Text update mode requires seeking; terminals are not seekable.
         with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
-            writer.write(f"[WAIT] {message}\nType {exact!r} to continue: "); writer.flush()
-            value = reader.readline().strip()
+            prompt = f"Type {exact!r} to continue: " if exact else "Press Enter to continue, or Ctrl+C to cancel: "
+            writer.write(f"[WAIT] {message}\n{prompt}"); writer.flush()
+            line = reader.readline()
+            if not line:
+                raise MaintenanceError("Canceled; retained changes remain resumable")
+            value = line.strip()
     except OSError as exc:
         raise MaintenanceError("No controlling terminal; explicit approval required") from exc
     if value != exact:
@@ -233,7 +237,7 @@ class Packages:
         if not names:
             say("OK", "Native packages already installed"); return
         self.preview(names)
-        approve("Authorize exactly the previewed native dependency transaction? sudo may ask separately")
+        approve("Install the previewed native dependencies. sudo may ask separately.", "")
         execute(["sudo", "apt-get" if self.family == "apt" else "dnf", "install", *names])
 
     def cleanup(self, introduced: list[str]) -> None:
@@ -680,7 +684,7 @@ def install(args) -> int:
             # Reuse its inode under the lock; unlinking it could split concurrency.
             if any(path.name != "maintenance.lock" for path in paths["state"].iterdir()):
                 raise MaintenanceError("Unowned nonempty maintenance state; refusing takeover")
-            approve("Proceed with these paths? Native transactions, Pi login and verification have separate consent")
+            approve("Continue with these paths. Dependencies, Pi login and AI verification have separate confirmations.", "")
             ref = os.environ.get("FOCUS_INSTALL_REF") or "main"
             if not re.fullmatch(r"main|[0-9a-f]{40}", ref):
                 raise MaintenanceError("Source ref must be main or a full commit")
