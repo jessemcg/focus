@@ -1321,7 +1321,10 @@ def discover_pi_agent_command(
     if executable:
         return executable
     home_dir = (home or Path.home()).expanduser()
-    candidates = [home_dir / ".local" / "bin" / "pi"]
+    # An explicit test/home root must not fall back to the real user's Pi store.
+    agent_dir = (Path(os.environ.get("PI_CODING_AGENT_DIR", str(home_dir / ".pi" / "agent")))
+                 if home is None else home_dir / ".pi" / "agent")
+    candidates = [agent_dir / "bin" / "pi", home_dir / ".local" / "bin" / "pi"]
     installer_candidates = list(
         (home_dir / ".local" / "share" / "pi-node").glob("node-*/bin/pi")
     )

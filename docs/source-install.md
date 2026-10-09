@@ -65,8 +65,8 @@ another destination. `--resume`/`--repair` apply only to a receipt-owned install
 ```
 
 The installer shows a welcome banner, colored status labels, check marks and an
-eleven-stage progress bar in interactive terminals. The bar counts stages passed,
-not elapsed time; it fills only after final verification succeeds. Native package
+eight-stage progress bar in interactive terminals. The bar counts stages passed,
+not elapsed time; it fills after the final Focus runtime/launcher checks succeed. Native package
 managers keep their own live progress visible. Output is append-only: no screen
 clearing, hidden errors or spinner interfering with prompts. Non-Unicode terminals
 use ASCII symbols. Redirected output, `TERM=dumb` and `NO_COLOR` use plain
@@ -86,7 +86,7 @@ Use the optional `--download-first` form below to download the complete bootstra
 before execution; it refuses execution on download failure and cleans its temporary file.
 
 The published bootstrap is exactly `scripts/download-bootstrap.sh.in`. It retains
-platform checks, dependency approvals and required Pi onboarding. After downloading
+platform checks and dependency approvals. Pi is optional after Focus completes. After downloading
 the complete installer, it starts setup directly: no source-code viewer or extra
 execution prompt. Package previews print in the terminal without opening a pager.
 Review the [bootstrap](https://github.com/jessemcg/focus/blob/main/scripts/install-bootstrap.sh)
@@ -116,54 +116,37 @@ Introduced packages are reported/retained if a later download fails. The checkou
 installer can likewise offer missing prerequisites. No release manifest or commit
 pin is required to generate the command.
 
-## Pi is required
+## Optional Pi setup — after Focus is installed
 
-Installation is incomplete until a synthetic live Agent verification succeeds.
-There is **no `--skip-pi` or reader-only completion path**.
+Focus installation requires **no Pi, AI account, model selection or paid verification**.
+After installing the runtime, commands and desktop entry, the installer saves a
+completed receipt and confirms **“Focus is installed and ready to use.”**
 
-`focus setup-pi` preserves compatible Pi installations, including the current
-managed `PI_CODING_AGENT_DIR/bin/pi` layout. Initially tested interface baseline:
-Pi 1.1.0, Node 22.19+. A missing Pi offers its official installer (downloaded fully
-before execution) in a **separate terminal window**. Keep the original Focus
-installer open: it waits, then checks Pi and continues automatically. When the
-Pi installer finishes, press Enter in its window to return. You do not need to
-restart your shell or manually resume Focus just because Pi was installed.
-An incompatible existing Pi is not replaced silently. No `sudo npm install` is used.
+Only then does it check whether Pi is present. If Pi is missing, press **Enter**
+to run its official installer in the current terminal, or type **skip** to finish.
+There is no separate-window handoff or return protocol in this installation flow.
+The Pi script is downloaded completely before execution; no `sudo npm install`
+is used. An existing Pi is retained, not reinstalled. Missing terminal input,
+skipping, cancellation or Pi failure cannot undo Focus's completed installation,
+change its receipt to incomplete, or require a Focus resume.
 
-If no provider is available, Focus offers Pi login in another terminal during the
-same setup run. Run `/login` and complete the subscription/API-key authentication,
-then `/quit` and press Enter to return. `focus setup-pi --login` explicitly opens
-this login flow too. Pi runs in a neutral temporary directory with no discovered
-extensions or persistent session. Pi owns its normal auth store; Focus never copies
-credentials or captures login transcripts.
+To enable AI features afterward:
 
-Supported terminal launchers are Ptyxis, GNOME Terminal, Konsole and XTerm. Without
-a supported desktop terminal, setup stays in the current terminal and continues
-after the interactive step exits. Closing the new window early or an unsuccessful
-command leaves setup incomplete, never falsely reports completion or reruns the
-installer automatically. Focus's offline
-bounded RPC query lists available models, offers numbered/search choices, and
-lists supported reasoning levels. This selection does not change the global
-coding-model default.
+1. Open Pi (`pi`; follow its PATH instructions if necessary).
+2. Run **`/login`** to enter an API key or sign in to a provider.
+3. Open **Focus Settings** and select one of the now-available models.
 
-Verification uses the desktop launch environment, with no login-shell initialization
-or terminal-only API-key variables. Use persistent Pi `/login` where necessary.
-Then authorize **one small synthetic Agent verification run** (provider billing
-may apply). It reads temporary text, uses the real guarded tools, explicitly
-loaded extensions and answer-artifact parser, disables retry/compaction, has a
-90-second deadline and uses no real documents. Provider/model/auth checks alone
-are not proof of accepted requests. Failure/cancel/declined consent retains an
-incomplete receipt; retries are explicit, not automatic. Focus saves executable,
-provider, model and reasoning only after this succeeds, using application-owned
-settings-save functions. After desktop integration and final checks, the original
-terminal confirms **“Focus is installed and ready to use”** and explains how to
-launch it. The maintenance shell does not rewrite private settings.
+Focus discovers the managed `PI_CODING_AGENT_DIR/bin/pi` installation without
+requiring a new login shell or installer-written settings. Credentials remain in
+Pi's own store. The installer neither logs in for you nor runs an AI request.
+AI use from Focus may incur provider charges. Basic record browsing remains
+available without Pi.
 
-For already-authenticated scripted use, `setup-pi` accepts `--executable`,
-`--provider`, `--model`, `--thinking`, and explicit `--approve-verification`.
-Installation accepts provider/model/thinking/verification and `--login` too.
-Without a controlling terminal it stops whenever another approval is needed;
-there is no generic `--yes` that silently authorizes package changes or billing.
+The separate `focus setup-pi` command remains an advanced, explicitly invoked
+onboarding/verification tool; it is **not called by the installer**. Its optional
+synthetic verification requires explicit paid-run approval and does not determine
+whether Focus is installed. Legacy installer `--login`, provider/model/thinking
+and verification flags no longer run AI onboarding; use Focus Settings instead.
 
 ## Resume, repair and diagnostics
 
@@ -181,7 +164,7 @@ Pi auth changes are not automatically rolled back on failure. The receipt record
 installation ID, phase, canonical paths, actual commit, dependency fingerprint,
 tool versions, ownership hashes, created resources and package deltas, not case
 content or credentials. An installed maintenance copy and uninstall command are
-available even before native/source/auth stages finish. A concurrent operation is
+available even before native/source stages finish. A concurrent operation is
 locked out. Use the receipt/installed maintenance path printed on failure if source
 has not downloaded yet; rerun the original installer with `--resume`.
 
@@ -189,6 +172,7 @@ has not downloaded yet; rerun the original installer with `--resume`.
 Pi's own configuration can run. It never sends a model prompt or refreshes OAuth
 credentials. It distinguishes current credential availability from a previous
 successful synthetic verification and reports native/resources/editable binding.
+Its AI-readiness failures do not mean the independent Focus installation failed.
 
 ## Launch, settings and development
 

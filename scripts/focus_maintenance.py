@@ -26,6 +26,7 @@ import uuid
 from pathlib import Path
 
 SCHEMA = 1
+INSTALL_STAGES = 8
 REPOSITORY = "https://github.com/jessemcg/focus"
 UV_VERSION = "0.11.8"
 APP_ID = "com.mcglaw.Focus"
@@ -70,14 +71,14 @@ def status_text(kind: str, message: str, stream) -> str:
     unicode = terminal_symbols(stream)
     label = f"{symbols.get(kind, '●')} {kind}" if unicode else kind
     text = f"\033[1;{colors.get(kind, '36')}m{label}\033[0m  {message}"
-    stage = re.match(r"(\d+)/11\s", message) if kind == "CHECK" else None
+    stage = re.match(rf"(\d+)/{INSTALL_STAGES}\s", message) if kind == "CHECK" else None
     complete = kind == "OK" and message.startswith("Installation COMPLETE")
     if stage or complete:
         # Filled cells mean stages passed, not elapsed time or download percentage.
-        done = 11 if complete else max(0, min(10, int(stage.group(1)) - 1))
+        done = INSTALL_STAGES if complete else max(0, min(INSTALL_STAGES - 1, int(stage.group(1)) - 1))
         filled, empty = ("━", "─") if unicode else ("#", "-")
-        bar = filled * done + empty * (11 - done)
-        text = f"\n\033[36m[{bar}]\033[0m {done}/11 stages passed\n{text}"
+        bar = filled * done + empty * (INSTALL_STAGES - done)
+        text = f"\n\033[36m[{bar}]\033[0m {done}/{INSTALL_STAGES} stages passed\n{text}"
     return text
 
 
@@ -88,7 +89,7 @@ def say(kind: str, message: str) -> None:
 def welcome() -> None:
     if styled_terminal(sys.stdout):
         print("\n\033[1;36mFocus\033[0m  \033[1mLet's get you set up.\033[0m\n"
-              "We'll guide you through dependencies, AI setup and a final check.\n",
+              "We'll install Focus first. Optional Pi setup comes afterward.\n",
               flush=True)
 
 
@@ -688,18 +689,76 @@ def uninstall(args) -> int:
     return 0
 
 
+def continue_pi_install() -> bool:
+    """Optional after-success prompt: EOF, skip and Ctrl+C all leave Focus ready."""
+    try:
+        with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
+            writer.write("Press Enter to continue with Pi installation, or type skip to finish: ")
+            writer.flush()
+            answer = reader.readline()
+            return bool(answer) and not answer.strip()
+    except (OSError, KeyboardInterrupt):
+        return False
+
+
+def install_optional_pi(env: dict[str, str]) -> None:
+    """Run the official installer only after Focus has finished; no GUI handoff."""
+    with tempfile.TemporaryDirectory(prefix="focus-optional-pi-") as directory:
+        script = Path(directory) / "install.sh"
+        execute(["curl", "--fail", "--location", "--proto", "=https", "--tlsv1.2",
+                 "https://pi.dev/install.sh", "--output", str(script)], env=env)
+        with open("/dev/tty", "r+b", buffering=0) as tty:
+            subprocess.run(["sh", str(script)], cwd=directory, env=env,
+                           stdin=tty, stdout=tty, stderr=tty, check=True)
+
+
+def offer_pi_install(paths: dict[str, Path], data: dict, save, env: dict[str, str]) -> None:
+    say("INFO", "Optional AI features: Pi is separate from the completed Focus installation.")
+    print("To enable AI questions, open Pi and use /login to enter an API key or sign in.\n"
+          "After login, your available models can be selected in the Focus Settings window.\n"
+          "No login or paid AI verification is required to finish installing Focus.", flush=True)
+    python = str(paths["environment"] / "bin/python")
+    found = execute([python, "-c", "from focus.setup_pi import find_pi; print(find_pi())"],
+                    env=env, capture=True).stdout.strip()
+    if found:
+        say("OK", f"Pi is already installed: {found}. No Pi installation is needed.")
+        return
+    say("INFO", "Pi is not installed. The next optional step is to install it for AI features.")
+    print("You can also do this later: curl -fsSL https://pi.dev/install.sh | sh", flush=True)
+    if not continue_pi_install():
+        say("OK", "Pi installation skipped. Focus is installed and ready to use.")
+        return
+    pi_root = Path(data["pi_agent_dir"])
+    node_root = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "pi-node"
+    candidates = [pi_root / "install", pi_root / "bin/pi", node_root]
+    previous = data.setdefault("pi_preexisting", {str(path): path.exists() or path.is_symlink() for path in candidates})
+    save()
+    say("ACTION", "Starting Pi's official installer here. Focus installation is already complete.")
+    try:
+        install_optional_pi(env)
+    finally:
+        data["introduced_pi_resources"] = sorted(set(data.get("introduced_pi_resources", [])) |
+                                                  {path for path, existed in previous.items() if not existed and Path(path).exists()})
+        save()  # Ownership only; never turn the completed receipt back into 'pi'.
+    say("OK", "Pi installer finished. Focus remains installed and ready to use.")
+    print("Next: open Pi, run /login to enter an API key or sign in, then select an\n"
+          "available model in Focus Settings. No Focus install resume is needed.", flush=True)
+
+
 def install(args) -> int:
     if os.getuid() == 0:
         raise MaintenanceError("Run as the desktop user, not root; sudo is only for approved native transactions")
     welcome()
-    say("CHECK", "1/11 Platform, permissions and destinations")
+    say("CHECK", "1/8 Platform, permissions and destinations")
     family = detect_platform()
     source = Path(args.source_dir or Path.home() / "Focus")
     paths = layout(source)
     receipt = paths["state"] / "receipt.json"
-    say("CHECK", "2/11 Proposed changes (no Focus binary package, no sibling projects)")
+    say("CHECK", "2/8 Proposed changes (no Focus binary package, no sibling projects)")
     for name, path in paths.items():
         print(f"  {name}: {path}")
+    if any(getattr(args, name, None) for name in ("login", "provider", "model", "thinking", "approve_verification")):
+        say("INFO", "AI onboarding options no longer run during installation. Use Pi /login and Focus Settings afterward.")
     if args.dry_run:
         if receipt.exists():
             data = private_json(receipt); validate_receipt(data, paths)
@@ -708,7 +767,7 @@ def install(args) -> int:
                 if paths[name].exists():
                     raise MaintenanceError(f"Unowned destination already exists: {paths[name]}")
         Packages(family).preview(Packages(family).missing())
-        say("OK", "Dry-run only; Pi verification required before completion")
+        say("OK", "Dry-run only; Pi is optional and not required to install Focus")
         return 0
     if not receipt.exists():
         for name in ("source", "environment", "python", "tools", "cache", "maintenance", "command", "uninstall_command", "desktop", "svg", "symbolic", "png"):
@@ -727,7 +786,7 @@ def install(args) -> int:
             # Reuse its inode under the lock; unlinking it could split concurrency.
             if any(path.name != "maintenance.lock" for path in paths["state"].iterdir()):
                 raise MaintenanceError("Unowned nonempty maintenance state; refusing takeover")
-            approve("Continue with these paths. Dependencies, Pi login and AI verification have separate confirmations.", "")
+            approve("Continue with these paths. Dependency installation has a separate confirmation. Pi is optional.", "")
             ref = os.environ.get("FOCUS_INSTALL_REF") or "main"
             if not re.fullmatch(r"main|[0-9a-f]{40}", ref):
                 raise MaintenanceError("Source ref must be main or a full commit")
@@ -758,7 +817,7 @@ def install(args) -> int:
                              f"exec /usr/bin/python3 -I {shell_value(paths['maintenance'] / 'focus_maintenance.py')} uninstall \"$@\"\n")
         owned_file("uninstall_command", paths["uninstall_command"], partial_uninstall.encode(), data, save, 0o755)
         try:
-            say("CHECK", "3/11 Native dependencies")
+            say("CHECK", "3/8 Native dependencies")
             stage("native")
             packages = Packages(family)
             before = set(data.get("packages_before", packages.snapshot()))
@@ -778,7 +837,7 @@ def install(args) -> int:
             for library, minimum in (("girepository-2.0", "2.80"), ("gtk4", "4.12"), ("libadwaita-1", "1.4")):
                 if not native_meets(library, minimum):
                     raise MaintenanceError(f"Native {library} requires {minimum}+. No blanket upgrade; correct official repositories then resume")
-            say("CHECK", "4/11 Editable Git source")
+            say("CHECK", "4/8 Editable Git source")
             stage("source")
             if paths["source"].exists():
                 bound(paths["source"], data["installation_id"], paths["source"])
@@ -809,7 +868,7 @@ def install(args) -> int:
             values = {"ENGINE": shell_value(paths["maintenance"] / "focus_maintenance.py")}
             owned_file("uninstall_command", paths["uninstall_command"], render(
                 (paths["source"] / "scripts/desktop/focus-uninstall.sh.in").read_text(), values), data, save, 0o755)
-            say("CHECK", "5/11 uv and managed Python; 6/11 locked editable dependencies")
+            say("CHECK", "5/8 uv and managed Python; 6/8 locked editable dependencies")
             stage("environment"); synchronize(paths, data, save)
             env = desktop_environment(paths, data)
             if data.get("config_created") and not paths["config"].exists():
@@ -817,43 +876,15 @@ def install(args) -> int:
                 marker(paths["config"], data["installation_id"], paths["source"])
             python = str(paths["environment"] / "bin/python")
             execute([python, "-c", "from focus.native_check import check_native; import sys; sys.exit(not check_native()['ok'])"], env=env)
-            say("CHECK", "7/11 Pi/Node; 8/11 authentication and model choice; 9/11 synthetic verification")
-            stage("pi")
-            pi_root = Path(data["pi_agent_dir"])
-            node_root = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "pi-node"
-            pi_candidates = [pi_root / "install", pi_root / "bin/pi", node_root]
-            previous = data.setdefault("pi_preexisting", {str(path): path.exists() or path.is_symlink() for path in pi_candidates}); save()
-            try:
-                command = [python, "-m", "focus", "setup-pi"]
-                existing_pi = shutil.which("pi")
-                if existing_pi:
-                    command += ["--executable", existing_pi]
-                if args.login:
-                    command.append("--login")
-                for name in ("provider", "model", "thinking"):
-                    if getattr(args, name, None):
-                        command += ["--" + name, getattr(args, name)]
-                if args.approve_verification:
-                    command.append("--approve-verification")
-                execute(command, env=env)
-            finally:
-                data["introduced_pi_resources"] = sorted(set(data.get("introduced_pi_resources", [])) |
-                                                         {path for path, existed in previous.items() if not existed and Path(path).exists()})
-                data["introduced_packages"] = sorted(set(data.get("introduced_packages", [])) | (packages.snapshot() - before)); save()
-            diagnostics = execute([python, "-m", "focus", "doctor", "--json"], env=env, capture=True)
-            if diagnostics.stdout.strip():
-                report = json.loads(diagnostics.stdout)
-                pi_version = report.get("checks", {}).get("pi", {})
-                data["tool_versions"].update(pi=pi_version.get("version", ""), node=pi_version.get("node", ""))
             version = execute([python, "--version"], env=env, capture=True)
             data["tool_versions"]["python"] = version.stdout.strip(); save()
-            say("CHECK", "10/11 Desktop entry, existing icons and commands")
+            say("CHECK", "7/8 Desktop entry, existing icons and commands")
             stage("desktop"); integration(paths, data, save)
-            say("CHECK", "11/11 Final no-provision checks")
+            say("CHECK", "8/8 Final Focus checks (no Pi or AI account required)")
             verify_environment(paths, data["installation_id"])
-            execute([str(paths["command"]), "doctor", "--json"], env=env)
+            execute([str(paths["command"]), "--help"], env=env, capture=True)
             stage("complete")
-            say("OK", "Installation COMPLETE (live synthetic Pi verification passed)")
+            say("OK", "Installation COMPLETE")
             say("OK", "Focus is installed and ready to use. Open Focus from your applications menu.")
             print(f"Launch: {shlex.quote(str(paths['command']))}\nEdit: {paths['source']}\n"
                   f"Develop: {paths['source']}/scripts/focus-env sync --dev\n"
@@ -865,6 +896,12 @@ def install(args) -> int:
                   f"Uninstall: /usr/bin/python3 {shlex.quote(str(paths['maintenance'] / 'focus_maintenance.py'))} uninstall --dry-run\n"
                   f"Receipt: {receipt}")
             raise
+        # Focus is already complete. Optional third-party work must never change
+        # that result or require resuming the Focus install.
+        try:
+            offer_pi_install(paths, data, save, env)
+        except (Exception, KeyboardInterrupt) as exc:
+            say("WARN", f"Optional Pi setup stopped: {exc}. Focus remains installed and ready to use.")
     return 0
 
 

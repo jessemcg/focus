@@ -15,6 +15,27 @@ def test_discover_pi_agent_command_finds_installer_layout(tmp_path) -> None:
     assert discover_pi_agent_command(tmp_path, path_env="") == str(pi_path)
 
 
+def test_discover_managed_pi_without_shell_path(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    agent = tmp_path / "custom agent"
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent))
+    pi = agent / "bin/pi"
+    pi.parent.mkdir(parents=True)
+    pi.write_text("#!/bin/sh\n")
+    pi.chmod(0o755)
+    assert discover_pi_agent_command(path_env="") == str(pi)
+    # Explicit fixture homes never accidentally select a real/custom store.
+    assert discover_pi_agent_command(tmp_path / "other home", path_env="") == "pi"
+
+
+def test_discover_default_managed_layout(tmp_path) -> None:
+    pi = tmp_path / ".pi/agent/bin/pi"
+    pi.parent.mkdir(parents=True)
+    pi.write_text("#!/bin/sh\n")
+    pi.chmod(0o755)
+    assert discover_pi_agent_command(tmp_path, path_env="") == str(pi)
+
+
 def test_resolve_pi_agent_argv_preserves_arguments(tmp_path, monkeypatch) -> None:
     pi_path = tmp_path / "pi"
     pi_path.write_text("#!/bin/sh\n", encoding="utf-8")

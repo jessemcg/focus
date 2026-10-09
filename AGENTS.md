@@ -1,7 +1,11 @@
 # Repository Guidelines
 
-Public source installation is standalone: see docs/source-install.md. The maintained
-runtime below is Jesse's separate workflow, not a public installer dependency.
+Public source installation is standalone: see docs/source-install.md. Focus must
+complete installation without Pi, login, model selection or paid verification.
+Save the completed receipt and show success before offering optional Pi installation;
+skipping/canceling/failing Pi must never turn Focus into an incomplete install.
+Users authenticate with Pi `/login` afterward and choose models in Focus Settings.
+The maintained runtime below is Jesse's separate workflow, not a public installer dependency.
 Installer tests use disposable HOME/XDG/source/runtime paths and synthetic providers;
 never run installers, onboarding or paid verification against real settings/credentials.
 

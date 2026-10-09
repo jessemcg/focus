@@ -23,11 +23,13 @@ With `curl` installed, run as your normal user—not with sudo:
 curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install-bootstrap.sh | bash
 ```
 
-Installs the latest `main` code into `~/Focus`. The installer asks before installing
-missing dependencies and guides you through Pi authentication, model selection,
-and a required AI verification run. Pi installation/login opens in a separate
-terminal while Focus waits and continues automatically afterward. Provider charges
-may apply.
+Installs the latest `main` code into `~/Focus` and asks before installing missing
+dependencies. Focus installs fully without Pi or an AI account.
+
+After confirming Focus is installed, setup offers to install Pi if it is missing.
+Press Enter to continue with Pi or type `skip` to finish. For AI features, open Pi
+and use `/login` to enter an API key or sign in. Then select an available model in
+**Focus Settings**. AI usage may incur provider charges.
 
 [Installation options, troubleshooting, and removal →](docs/source-install.md)
 
@@ -39,10 +41,9 @@ may apply.
 curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install-bootstrap.sh | bash -s -- --resume
 ```
 
-**Uninstall Focus:** close Focus, preview removal, then run it:
+**Uninstall Focus:** close Focus, then run:
 
 ```bash
-"$HOME/.local/bin/focus-uninstall" --dry-run
 "$HOME/.local/bin/focus-uninstall"
 ```
 

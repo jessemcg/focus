@@ -54,5 +54,5 @@ if command -v curl >/dev/null 2>&1; then
   curl -fL --proto '=https' --tlsv1.2 "$url" -o "$temp/install.sh"
 else wget --https-only -O "$temp/install.sh" "$url"; fi
 printf '[OK] Download complete. Starting Focus setup.\n'
-printf 'Setup will ask before installing missing dependencies or running paid AI verification.\n'
+printf 'Setup will ask before installing missing dependencies. Pi is optional after Focus is installed.\n'
 FOCUS_INSTALL_REF="$ref" FOCUS_BOOTSTRAP_PACKAGES="$introduced" bash "$temp/install.sh" "$@" </dev/tty

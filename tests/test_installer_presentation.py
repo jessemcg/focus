@@ -27,16 +27,16 @@ def terminal(monkeypatch):
 def test_status_styles_and_real_stage_progress(terminal):
     assert "✓" in m.status_text("OK", "Ready", terminal)
     assert "✗" in m.status_text("FAIL", "Stopped", terminal)
-    first = m.status_text("CHECK", "1/11 Platform", terminal)
-    assert "0/11 stages passed" in first
-    assert "[───────────]" in first
-    grouped = m.status_text("CHECK", "7/11 Pi; 8/11 login; 9/11 verification", terminal)
-    assert "6/11 stages passed" in grouped
-    last = m.status_text("CHECK", "11/11 Final checks", terminal)
-    assert "10/11 stages passed" in last
-    done = m.status_text("OK", "Installation COMPLETE (verified)", terminal)
-    assert "11/11 stages passed" in done
-    assert "[━━━━━━━━━━━]" in done
+    first = m.status_text("CHECK", "1/8 Platform", terminal)
+    assert "0/8 stages passed" in first
+    assert "[────────]" in first
+    grouped = m.status_text("CHECK", "5/8 Python; 6/8 dependencies", terminal)
+    assert "4/8 stages passed" in grouped
+    last = m.status_text("CHECK", "8/8 Final checks", terminal)
+    assert "7/8 stages passed" in last
+    done = m.status_text("OK", "Installation COMPLETE", terminal)
+    assert "8/8 stages passed" in done
+    assert "[━━━━━━━━]" in done
     assert "stages passed" not in m.status_text("FAIL", "Incomplete", terminal)
     assert "stages passed" not in m.status_text("OK", "Dry-run only", terminal)
 
@@ -51,7 +51,7 @@ def test_plain_output_is_unchanged(terminal, monkeypatch, mode):
     else:
         monkeypatch.setenv("TERM", "dumb")
     for kind in ("CHECK", "OK", "ACTION", "WAIT", "WARN", "FAIL"):
-        assert m.status_text(kind, "1/11 Message", stream) == f"[{kind}] 1/11 Message"
+        assert m.status_text(kind, "1/8 Message", stream) == f"[{kind}] 1/8 Message"
     monkeypatch.setattr(m.sys, "stdout", stream)
     m.welcome()
     assert stream.getvalue() == ""
@@ -59,9 +59,9 @@ def test_plain_output_is_unchanged(terminal, monkeypatch, mode):
 
 def test_ascii_terminal_has_safe_symbols(terminal):
     terminal.encoding = "ascii"
-    text = m.status_text("CHECK", "3/11 Dependencies", terminal)
+    text = m.status_text("CHECK", "3/8 Dependencies", terminal)
     text.encode("ascii")
-    assert "[##---------]" in text
+    assert "[##------]" in text
 
 
 def test_actual_terminal_output(terminal):
@@ -70,10 +70,10 @@ def test_actual_terminal_output(terminal):
 import runpy
 m = runpy.run_path({str(ROOT / 'scripts/focus_maintenance.py')!r})
 m['welcome']()
-m['say']('CHECK', '1/11 Platform')
+m['say']('CHECK', '1/8 Platform')
 m['say']('OK', 'Native packages ready')
 m['say']('WARN', 'Approval required')
-m['say']('CHECK', '11/11 Final checks')
+m['say']('CHECK', '8/8 Final checks')
 m['say']('OK', 'Installation COMPLETE (synthetic presentation only)')
 """
     try:
@@ -87,7 +87,7 @@ m['say']('OK', 'Installation COMPLETE (synthetic presentation only)')
         text = output.decode()
         assert "Let's get you set up." in text
         assert "\033[1;32m✓ OK\033[0m" in text
-        assert "11/11 stages passed" in text
+        assert "8/8 stages passed" in text
         assert "\033[2J" not in text  # never clear output/history
     finally:
         os.close(master)

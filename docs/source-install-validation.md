@@ -1,6 +1,23 @@
 # Source-install validation — 2026-10-08
 
-## Pi terminal handoff — 2026-10-09
+## Independent Focus installation — 2026-10-09
+
+Supersedes the mandatory Pi/verification and terminal-handoff installation flows
+below. Focus now completes its eight stages and records/shows success **before**
+checking for or offering Pi. Missing Pi is optional (Enter to install, skip/EOF/
+cancel to finish), runs in the existing terminal, and never changes Focus's
+completed status. Users run Pi `/login` afterward, then select models in Focus
+Settings. The README shows only one normal Focus uninstall command.
+
+Validation: **569 pytest tests passed**. Lifecycle fixtures cover completion with
+no Pi, optional success/failure/cancellation, existing-Pi preservation, discovery
+failure, ownership retention and recovery of old `phase=pi` receipts. Tests also
+exercise Enter/skip/EOF on a private controlling terminal, a synthetic Pi script
+attached to an existing terminal, download-failure refusal, and managed Pi discovery
+without shell PATH changes. No real Pi install, login, paid request, production
+settings write or clean-machine release certification was performed.
+
+## Historical Pi terminal handoff — 2026-10-09 (superseded for installation)
 
 The Pi installer/login now opens in a separate terminal while the original Focus
 setup waits, rechecks Pi and continues without a manual resume. Missing provider

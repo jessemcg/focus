@@ -27,6 +27,9 @@ from focus.setup_pi import ask
     ("maintenance['approve']('TEST_PROMPT', '')", "", True),
     ("maintenance['approve']('TEST_PROMPT', '')", "no", False),
     ("maintenance['approve']('TEST_PROMPT', '')", None, False),
+    ("assert maintenance['continue_pi_install']()", "", True),
+    ("assert not maintenance['continue_pi_install']()", "skip", True),
+    ("assert not maintenance['continue_pi_install']()", None, True),
 ])
 def test_prompt_uses_controlling_terminal_not_stdin(action, answer, success):
     master, slave = os.openpty()
@@ -45,12 +48,13 @@ print('PROMPT_OK', flush=True)
     try:
         output = b""
         deadline = time.monotonic() + 10
-        while b"TEST_PROMPT" not in output and time.monotonic() < deadline:
+        prompt = b"Press Enter to continue with Pi" if "continue_pi_install" in action else b"TEST_PROMPT"
+        while prompt not in output and time.monotonic() < deadline:
             if process.poll() is not None:
                 break
             if select.select([master], [], [], 0.1)[0]:
                 output += os.read(master, 65536)
-        if b"TEST_PROMPT" not in output:
+        if prompt not in output:
             process.kill()
             _, errors = process.communicate(timeout=5)
             pytest.fail(f"No terminal prompt: {output!r} {errors!r}")
