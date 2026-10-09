@@ -46,8 +46,50 @@ class MaintenanceError(RuntimeError):
     pass
 
 
+def styled_terminal(stream) -> bool:
+    return (stream.isatty() and os.environ.get("TERM", "dumb") != "dumb"
+            and "NO_COLOR" not in os.environ)
+
+
+def terminal_symbols(stream) -> bool:
+    try:
+        "✓✗→●!━─".encode(stream.encoding or "ascii")
+        return True
+    except (UnicodeError, LookupError):
+        return False
+
+
+def status_text(kind: str, message: str, stream) -> str:
+    """Append-only styling: no cursor tricks, hidden output or fake time estimates."""
+    if not styled_terminal(stream):
+        return f"[{kind}] {message}"
+    colors = {"CHECK": "36", "OK": "32", "ACTION": "34", "WAIT": "33",
+              "WARN": "33", "FAIL": "31", "INFO": "36"}
+    symbols = {"CHECK": "●", "OK": "✓", "ACTION": "→", "WAIT": "→",
+               "WARN": "!", "FAIL": "✗", "INFO": "●"}
+    unicode = terminal_symbols(stream)
+    label = f"{symbols.get(kind, '●')} {kind}" if unicode else kind
+    text = f"\033[1;{colors.get(kind, '36')}m{label}\033[0m  {message}"
+    stage = re.match(r"(\d+)/11\s", message) if kind == "CHECK" else None
+    complete = kind == "OK" and message.startswith("Installation COMPLETE")
+    if stage or complete:
+        # Filled cells mean stages passed, not elapsed time or download percentage.
+        done = 11 if complete else max(0, min(10, int(stage.group(1)) - 1))
+        filled, empty = ("━", "─") if unicode else ("#", "-")
+        bar = filled * done + empty * (11 - done)
+        text = f"\n\033[36m[{bar}]\033[0m {done}/11 stages passed\n{text}"
+    return text
+
+
 def say(kind: str, message: str) -> None:
-    print(f"[{kind}] {message}", flush=True)
+    print(status_text(kind, message, sys.stdout), flush=True)
+
+
+def welcome() -> None:
+    if styled_terminal(sys.stdout):
+        print("\n\033[1;36mFocus\033[0m  \033[1mLet's get you set up.\033[0m\n"
+              "We'll guide you through dependencies, AI setup and a final check.\n",
+              flush=True)
 
 
 def approve(message: str, exact: str = "yes") -> None:
@@ -55,7 +97,7 @@ def approve(message: str, exact: str = "yes") -> None:
         # Text update mode requires seeking; terminals are not seekable.
         with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
             prompt = f"Type {exact!r} to continue: " if exact else "Press Enter to continue, or Ctrl+C to cancel: "
-            writer.write(f"[WAIT] {message}\n{prompt}"); writer.flush()
+            writer.write(status_text("WAIT", message, writer) + "\n" + prompt); writer.flush()
             line = reader.readline()
             if not line:
                 raise MaintenanceError("Canceled; retained changes remain resumable")
@@ -649,6 +691,7 @@ def uninstall(args) -> int:
 def install(args) -> int:
     if os.getuid() == 0:
         raise MaintenanceError("Run as the desktop user, not root; sudo is only for approved native transactions")
+    welcome()
     say("CHECK", "1/11 Platform, permissions and destinations")
     family = detect_platform()
     source = Path(args.source_dir or Path.home() / "Focus")

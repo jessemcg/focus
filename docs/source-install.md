@@ -64,9 +64,14 @@ another destination. `--resume`/`--repair` apply only to a receipt-owned install
 ./install.sh --source-dir "$HOME/Applications/Focus source"
 ```
 
-The installer prints eleven numbered stages and `[CHECK]`, `[OK]`, `[ACTION]`,
-`[WAIT]`, `[WARN]`, `[FAIL]` markers. Output is ASCII/no-color. It prints commands
-and reasons before running them; prompts read the controlling terminal, never the
+The installer shows a welcome banner, colored status labels, check marks and an
+eleven-stage progress bar in interactive terminals. The bar counts stages passed,
+not elapsed time; it fills only after final verification succeeds. Native package
+managers keep their own live progress visible. Output is append-only: no screen
+clearing, hidden errors or spinner interfering with prompts. Non-Unicode terminals
+use ASCII symbols. Redirected output, `TERM=dumb` and `NO_COLOR` use plain
+`[CHECK]`, `[OK]`, `[ACTION]`, `[WAIT]`, `[WARN]`, `[FAIL]` markers without styling.
+It prints commands and reasons before running them; prompts read the controlling terminal, never the
 download stream. The initial path confirmation and native dependency approval use
 **Enter to continue**, or **Ctrl+C to cancel**. Removal and paid-verification
 confirmations remain explicit. No shell tracing or authentication transcripts are recorded.
