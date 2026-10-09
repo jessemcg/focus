@@ -250,7 +250,7 @@ RECORD_FONT_FAMILY_OPTIONS: tuple[tuple[str, str], ...] = (
     ),
     ("Lato", 'Lato, Carlito, "Noto Sans", "Liberation Sans", sans-serif'),
 )
-DEFAULT_RECORD_FONT_FAMILY_NAME = RECORD_FONT_FAMILY_OPTIONS[0][0]
+DEFAULT_RECORD_FONT_FAMILY_NAME = "TeX Gyre Schola"
 LEGACY_RECORD_FONT_FAMILY_ALIASES: dict[str, str] = {
     "Georgia": "Caladea",
     "Merriweather": "Bitstream Charter",

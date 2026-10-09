@@ -106,7 +106,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         header.add_css_class("flat")
         header.set_title_widget(Adw.WindowTitle(title="Settings"))
         save_btn = Gtk.Button(label="Save")
-        save_btn.add_css_class("suggested-action")
+        # suggested-action uses an accent-background foreground; combining it
+        # with flat can leave white text on the light header's neutral background.
         save_btn.add_css_class("flat")
         save_btn.connect("clicked", self._on_save_clicked)
         header.pack_end(save_btn)
