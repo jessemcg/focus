@@ -18,6 +18,7 @@ from pathlib import Path
 from .paths import AGENT_RESOURCES, PROJECT_DIR, config_file, pi_settings_file, verification_file
 from .pi_runtime import (PiModel, PiRuntimeError, available_pi_models,
                          save_project_pi_runtime)
+from .setup_terminal import SetupTerminalError, run_in_terminal
 
 BASELINE = (1, 1, 0)
 REQUIRED_FLAGS = ("--offline", "--no-session", "--no-extensions", "--no-context-files",
@@ -26,7 +27,7 @@ REQUIRED_FLAGS = ("--offline", "--no-session", "--no-extensions", "--no-context-
 
 def desktop_environment(executable: str = "") -> dict[str, str]:
     """Reproduce the public launcher, not terminal-only keys or shell startup."""
-    keys = ("HOME", "USER", "LOGNAME", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
+    keys = ("HOME", "USER", "LOGNAME", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
             "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
             "XDG_STATE_HOME", "XDG_CACHE_HOME", "PI_CODING_AGENT_DIR", "FOCUS_CONFIG_DIR")
     env = {key: os.environ[key] for key in keys if key in os.environ}
@@ -103,9 +104,27 @@ def install_pi() -> None:
         script = Path(cwd) / "install.sh"
         subprocess.run(["curl", "--fail", "--location", "--proto", "=https", "--tlsv1.2",
                         "https://pi.dev/install.sh", "--output", str(script)], check=True)
-        # Authentication remains attached to the terminal and is never captured.
-        with open("/dev/tty", "r+b", buffering=0) as tty:
-            subprocess.run(["sh", str(script)], cwd=cwd, stdin=tty, stdout=tty, stderr=tty, check=True)
+        try:
+            run_in_terminal(["sh", str(script)], title="Focus - Install Pi",
+                            instructions="Follow Pi's installer below. When it finishes, press Enter to return to Focus.\n"
+                            "If Pi suggests restarting your shell, you can ignore that for Focus setup.",
+                            env=desktop_environment())
+        except SetupTerminalError as exc:
+            raise PiRuntimeError(str(exc)) from exc
+
+
+def login_pi(executable: str) -> None:
+    consent("[WAIT] Connect an AI provider in Pi? Run /login, finish authentication, then /quit to return to Focus")
+    try:
+        run_in_terminal([executable, "--no-session", "--no-extensions", "--no-skills",
+                         "--no-context-files", "--no-prompt-templates", "--no-themes", "--no-mcp"],
+                        title="Focus - Sign in to Pi",
+                        instructions="In Pi, type /login and follow the provider's instructions.\n"
+                        "When signed in, type /quit, then press Enter to return to Focus.\n"
+                        "Focus will let you choose a model and confirm any paid verification separately.",
+                        env=desktop_environment(executable))
+    except SetupTerminalError as exc:
+        raise PiRuntimeError(str(exc)) from exc
 
 
 def credential_ready(executable: str, model: PiModel) -> bool:
@@ -221,15 +240,18 @@ def setup(args: argparse.Namespace) -> int:
         install_pi(); executable = find_pi()
     if not compatibility(executable).get("ok"):
         raise PiRuntimeError("Pi 1.1.0+ with Node 22.19+ and required interfaces is required")
-    if args.login:
-        consent("[WAIT] Open neutral Pi for /login? Complete provider login, then exit Pi")
-        with tempfile.TemporaryDirectory(prefix="focus-login-") as cwd, open("/dev/tty", "r+b", buffering=0) as tty:
-            subprocess.run([executable, "--no-session", "--no-extensions", "--no-skills",
-                            "--no-context-files", "--no-prompt-templates", "--no-themes", "--no-mcp"],
-                           cwd=cwd, env=desktop_environment(executable), stdin=tty, stdout=tty, stderr=tty, check=True)
+    print("[OK] Pi is installed and compatible. Continuing Focus setup.", flush=True)
+    logged_in = args.login
+    if logged_in:
+        login_pi(executable)
     models = discover(executable)
+    if not models and not logged_in:
+        print("[INFO] Pi needs an AI provider before Focus can continue. Let's connect one now.", flush=True)
+        login_pi(executable)
+        logged_in = True
+        models = discover(executable)
     if not models:
-        raise PiRuntimeError("No available models. Run focus setup-pi --login; installation incomplete")
+        raise PiRuntimeError("No available models after Pi login; installation remains incomplete")
     if args.provider and args.model:
         model = next((m for m in models if m.settings_key == (args.provider, args.model)), None)
         if model is None:
@@ -248,7 +270,11 @@ def setup(args: argparse.Namespace) -> int:
     if level not in model.supported_thinking_levels:
         raise PiRuntimeError("Unsupported reasoning level; choose a listed level")
     if not credential_ready(executable, model):
-        raise PiRuntimeError("Credentials unavailable to desktop launcher. Use Pi /login, not a terminal-only key")
+        if not logged_in:
+            print("[INFO] The selected model needs a Pi login available to desktop apps.", flush=True)
+            login_pi(executable)
+        if not credential_ready(executable, model):
+            raise PiRuntimeError("Credentials unavailable after Pi login; installation remains incomplete")
     if not args.approve_verification:
         consent("[ACTION] Send ONE small synthetic verification run? Provider billing may apply; no real documents, no automatic retry")
     print("[WAIT] Verifying actual Focus tools and answer artifact (90-second deadline)")

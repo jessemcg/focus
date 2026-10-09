@@ -509,7 +509,7 @@ def owned_file(key: str, target: Path, content: bytes, data: dict, save, mode: i
 
 
 def desktop_environment(paths: dict[str, Path], data: dict) -> dict[str, str]:
-    env = {key: os.environ[key] for key in ("HOME", "USER", "LOGNAME", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY",
+    env = {key: os.environ[key] for key in ("HOME", "USER", "LOGNAME", "LANG", "TERM", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY",
            "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME") if key in os.environ}
     env.update(PATH="/usr/local/bin:/usr/bin:/bin", FOCUS_CONFIG_DIR=str(paths["config"]), PI_RUN_METRICS_ENABLED="0")
     if data.get("pi_agent_dir"):
@@ -854,6 +854,7 @@ def install(args) -> int:
             execute([str(paths["command"]), "doctor", "--json"], env=env)
             stage("complete")
             say("OK", "Installation COMPLETE (live synthetic Pi verification passed)")
+            say("OK", "Focus is installed and ready to use. Open Focus from your applications menu.")
             print(f"Launch: {shlex.quote(str(paths['command']))}\nEdit: {paths['source']}\n"
                   f"Develop: {paths['source']}/scripts/focus-env sync --dev\n"
                   f"Repair: {paths['source']}/install.sh --source-dir {shlex.quote(str(paths['source']))} --repair\n"

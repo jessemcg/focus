@@ -1,5 +1,27 @@
 # Source-install validation — 2026-10-08
 
+## Pi terminal handoff — 2026-10-09
+
+The Pi installer/login now opens in a separate terminal while the original Focus
+setup waits, rechecks Pi and continues without a manual resume. Missing provider
+login is offered in the same run. Final successful installation explicitly says
+“Focus is installed and ready to use.”
+
+Validation on the current home desktop: **556 pytest tests passed**. Added tests
+cover terminal argv/wait contracts, successful/failed child status, early window
+closure, launch failure without replay, acknowledgement/EOF, private temporary
+status cleanup, same-terminal fallback, and install → login → explicitly approved
+verification → application-owned save ordering. X11 display authorization paths
+are preserved without copying credential contents.
+
+Linux Computer Use exercised two actual Ptyxis windows using a synthetic command:
+the original remained waiting, the child showed its finish/return prompt, and
+Enter closed the child and automatically returned to the original's success
+message. Both test windows were closed. Temporary HOME/XDG paths were used;
+no production Pi installation, login, paid API request or user-settings change.
+Other terminal launchers have argv fixture coverage, not local desktop acceptance.
+This is not a new clean-machine Ubuntu/Fedora installation certification.
+
 ## Current rolling installer
 
 At Jesse's request, the default command is now `curl -fsSL .../main/scripts/install-bootstrap.sh | bash`.

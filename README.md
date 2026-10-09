@@ -25,9 +25,38 @@ curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install
 
 Installs the latest `main` code into `~/Focus`. The installer asks before installing
 missing dependencies and guides you through Pi authentication, model selection,
-and a required AI verification run. Provider charges may apply.
+and a required AI verification run. Pi installation/login opens in a separate
+terminal while Focus waits and continues automatically afterward. Provider charges
+may apply.
 
 [Installation options, troubleshooting, and removal →](docs/source-install.md)
+
+## Resume or uninstall
+
+**Resume an interrupted Focus installation:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install-bootstrap.sh | bash -s -- --resume
+```
+
+**Uninstall Focus:** close Focus, preview removal, then run it:
+
+```bash
+"$HOME/.local/bin/focus-uninstall" --dry-run
+"$HOME/.local/bin/focus-uninstall"
+```
+
+This keeps your source checkout, settings, case documents and Pi installation.
+See [removal options](docs/source-install.md#removal) for optional cleanup.
+
+**Uninstall Pi:** run its official installer and choose **Uninstall Pi**:
+
+```bash
+curl -fsSL https://pi.dev/install.sh | sh
+```
+
+Pi may also serve other apps; removing it disables their Pi features, including
+Focus's AI questions. Pi credentials and saved sessions are retained.
 
 ## Get started
 

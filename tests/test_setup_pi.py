@@ -49,10 +49,12 @@ def test_bounded_offline_discovery_and_reasoning(fake_pi):
 def test_terminal_only_credentials_not_in_desktop_environment(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "SYNTHETIC_DO_NOT_LEAK")
     monkeypatch.setenv("VIRTUAL_ENV", "/other")
+    monkeypatch.setenv("XAUTHORITY", "/synthetic/display-auth")
     monkeypatch.setenv("PI_CODING_AGENT_DIR", "/configured/store")
     env = s.desktop_environment("/absolute/bin/pi")
     assert "OPENAI_API_KEY" not in env and "VIRTUAL_ENV" not in env
     assert env["PI_CODING_AGENT_DIR"] == "/configured/store"
+    assert env["XAUTHORITY"] == "/synthetic/display-auth"
     assert env["PATH"].startswith("/absolute/bin:")
 
 
@@ -105,8 +107,83 @@ def test_onboarding_failures_are_incomplete(fake_pi, monkeypatch, failure):
         args.approve_verification = False
         def declined(*a): raise PiRuntimeError("Declined")
         monkeypatch.setattr(s, "consent", declined)
+    def canceled_login(*a):
+        raise PiRuntimeError("Synthetic login declined")
+    monkeypatch.setattr(s, "login_pi", canceled_login)
     monkeypatch.setattr(s, "verify", lambda *a: pytest.fail("unapproved verification"))
     with pytest.raises(PiRuntimeError): s.setup(args)
+
+
+@pytest.mark.parametrize("needs_install,needs_login,models_visible", [
+    (True, True, False), (False, True, False), (True, False, True), (False, True, True),
+])
+def test_setup_continues_through_install_login_and_verification(fake_pi, tmp_path, monkeypatch, capsys,
+                                                               needs_install, needs_login, models_visible):
+    from focus import core
+    events = []
+    installed = not needs_install
+    signed_in = not needs_login
+    model = PiModel("synthetic", "fixture", "Fixture", ("off",))
+    args = argparse.Namespace(executable="", provider="synthetic", model="fixture", thinking="off",
+                              login=False, approve_verification=False)
+    monkeypatch.setattr(s, "find_pi", lambda: str(fake_pi) if installed else "")
+    monkeypatch.setattr(s, "compatibility", lambda executable: {"ok": bool(executable)})
+
+    def install():
+        nonlocal installed
+        events.append("install")
+        installed = True
+
+    def login(executable):
+        nonlocal signed_in
+        assert executable == str(fake_pi)
+        events.append("login")
+        signed_in = True
+
+    monkeypatch.setattr(s, "install_pi", install)
+    monkeypatch.setattr(s, "login_pi", login)
+    monkeypatch.setattr(s, "discover", lambda executable: [model] if signed_in or models_visible else [])
+    monkeypatch.setattr(s, "credential_ready", lambda *args: signed_in)
+    monkeypatch.setattr(s, "consent", lambda message: events.append("paid consent"))
+    monkeypatch.setattr(s, "verify", lambda *args: events.append("verify"))
+    monkeypatch.setattr(s, "save_project_pi_runtime", lambda *args: events.append("save"))
+    monkeypatch.setattr(core, "CONFIG_FILE", tmp_path / "config.json")
+    assert s.setup(args) == 0
+    assert events == (["install"] if needs_install else []) + (["login"] if needs_login else []) + ["paid consent", "verify", "save"]
+    assert "Pi is installed and compatible" in capsys.readouterr().out
+    assert s.verification_file().exists()
+
+
+def test_install_pi_hands_off_downloaded_file(monkeypatch):
+    calls = []
+    monkeypatch.setattr(s, "consent", lambda message: None)
+
+    def download(command, **kwargs):
+        assert command[0] == "curl"
+        Path(command[-1]).write_text("# synthetic installer, never executed")
+
+    def terminal(command, **kwargs):
+        assert command[0] == "sh"
+        assert Path(command[1]).read_text().startswith("# synthetic")
+        assert "OPENAI_API_KEY" not in kwargs["env"]
+        calls.append(command[1])
+
+    monkeypatch.setenv("OPENAI_API_KEY", "SYNTHETIC_NOT_FOR_CHILD")
+    monkeypatch.setattr(s.subprocess, "run", download)
+    monkeypatch.setattr(s, "run_in_terminal", terminal)
+    s.install_pi()
+    assert len(calls) == 1 and not Path(calls[0]).exists()
+
+
+def test_login_terminal_is_neutral_and_has_no_prompt(monkeypatch):
+    calls = []
+    monkeypatch.setattr(s, "consent", lambda message: None)
+    monkeypatch.setattr(s, "run_in_terminal", lambda command, **kwargs: calls.append((command, kwargs)))
+    s.login_pi("/synthetic/pi")
+    command, options = calls[0]
+    assert command == ["/synthetic/pi", "--no-session", "--no-extensions", "--no-skills",
+                       "--no-context-files", "--no-prompt-templates", "--no-themes", "--no-mcp"]
+    assert "/login" in options["instructions"] and "/quit" in options["instructions"]
 
 
 def test_existing_incompatible_pi_is_not_replaced(fake_pi, monkeypatch):

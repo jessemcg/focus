@@ -124,12 +124,24 @@ There is **no `--skip-pi` or reader-only completion path**.
 `focus setup-pi` preserves compatible Pi installations, including the current
 managed `PI_CODING_AGENT_DIR/bin/pi` layout. Initially tested interface baseline:
 Pi 1.1.0, Node 22.19+. A missing Pi offers its official installer (downloaded fully
-before execution); its decisions remain visible. An incompatible existing Pi is
-not replaced silently. No `sudo npm install` is used.
+before execution) in a **separate terminal window**. Keep the original Focus
+installer open: it waits, then checks Pi and continues automatically. When the
+Pi installer finishes, press Enter in its window to return. You do not need to
+restart your shell or manually resume Focus just because Pi was installed.
+An incompatible existing Pi is not replaced silently. No `sudo npm install` is used.
 
-Use `focus setup-pi --login` to open Pi in a neutral temporary directory. Run
-`/login` and complete the subscription/API-key authentication in Pi, then exit.
-Pi owns its normal auth store; Focus never copies credentials. Focus's offline
+If no provider is available, Focus offers Pi login in another terminal during the
+same setup run. Run `/login` and complete the subscription/API-key authentication,
+then `/quit` and press Enter to return. `focus setup-pi --login` explicitly opens
+this login flow too. Pi runs in a neutral temporary directory with no discovered
+extensions or persistent session. Pi owns its normal auth store; Focus never copies
+credentials or captures login transcripts.
+
+Supported terminal launchers are Ptyxis, GNOME Terminal, Konsole and XTerm. Without
+a supported desktop terminal, setup stays in the current terminal and continues
+after the interactive step exits. Closing the new window early or an unsuccessful
+command leaves setup incomplete, never falsely reports completion or reruns the
+installer automatically. Focus's offline
 bounded RPC query lists available models, offers numbered/search choices, and
 lists supported reasoning levels. This selection does not change the global
 coding-model default.
@@ -143,7 +155,9 @@ loaded extensions and answer-artifact parser, disables retry/compaction, has a
 are not proof of accepted requests. Failure/cancel/declined consent retains an
 incomplete receipt; retries are explicit, not automatic. Focus saves executable,
 provider, model and reasoning only after this succeeds, using application-owned
-settings-save functions. The maintenance shell does not rewrite private settings.
+settings-save functions. After desktop integration and final checks, the original
+terminal confirms **“Focus is installed and ready to use”** and explains how to
+launch it. The maintenance shell does not rewrite private settings.
 
 For already-authenticated scripted use, `setup-pi` accepts `--executable`,
 `--provider`, `--model`, `--thinking`, and explicit `--approve-verification`.
