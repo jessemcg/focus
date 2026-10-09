@@ -52,9 +52,10 @@ def say(kind: str, message: str) -> None:
 
 def approve(message: str, exact: str = "yes") -> None:
     try:
-        with open("/dev/tty", "r+") as tty:
-            tty.write(f"[WAIT] {message}\nType {exact!r} to continue: "); tty.flush()
-            value = tty.readline().strip()
+        # Text update mode requires seeking; terminals are not seekable.
+        with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
+            writer.write(f"[WAIT] {message}\nType {exact!r} to continue: "); writer.flush()
+            value = reader.readline().strip()
     except OSError as exc:
         raise MaintenanceError("No controlling terminal; explicit approval required") from exc
     if value != exact:
@@ -610,7 +611,7 @@ def uninstall(args) -> int:
                         script = Path(temp) / "install.sh"
                         execute(["curl", "-fL", "https://pi.dev/install.sh", "-o", str(script)])
                         env = desktop_environment(paths, data); env["PATH"] = str(agent / "bin") + ":" + env["PATH"]
-                        with open("/dev/tty", "r+") as tty:
+                        with open("/dev/tty", "r+b", buffering=0) as tty:
                             subprocess.run(["sh", str(script)], env=env, cwd=temp, stdin=tty, stdout=tty, stderr=tty, check=True)
                 node_root = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "pi-node"
                 if str(node_root) in introduced and node_root.exists():

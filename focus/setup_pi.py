@@ -81,9 +81,10 @@ def compatibility(executable: str) -> dict:
 
 def ask(message: str) -> str:
     try:
-        with open("/dev/tty", "r+") as tty:
-            tty.write(message + " "); tty.flush()
-            answer = tty.readline()
+        # Use separate text streams: terminals cannot seek in text update mode.
+        with open("/dev/tty", "r") as reader, open("/dev/tty", "w") as writer:
+            writer.write(message + " "); writer.flush()
+            answer = reader.readline()
             if not answer:
                 raise PiRuntimeError("Onboarding canceled")
             return answer.strip()
@@ -103,7 +104,7 @@ def install_pi() -> None:
         subprocess.run(["curl", "--fail", "--location", "--proto", "=https", "--tlsv1.2",
                         "https://pi.dev/install.sh", "--output", str(script)], check=True)
         # Authentication remains attached to the terminal and is never captured.
-        with open("/dev/tty", "r+") as tty:
+        with open("/dev/tty", "r+b", buffering=0) as tty:
             subprocess.run(["sh", str(script)], cwd=cwd, stdin=tty, stdout=tty, stderr=tty, check=True)
 
 
@@ -222,7 +223,7 @@ def setup(args: argparse.Namespace) -> int:
         raise PiRuntimeError("Pi 1.1.0+ with Node 22.19+ and required interfaces is required")
     if args.login:
         consent("[WAIT] Open neutral Pi for /login? Complete provider login, then exit Pi")
-        with tempfile.TemporaryDirectory(prefix="focus-login-") as cwd, open("/dev/tty", "r+") as tty:
+        with tempfile.TemporaryDirectory(prefix="focus-login-") as cwd, open("/dev/tty", "r+b", buffering=0) as tty:
             subprocess.run([executable, "--no-session", "--no-extensions", "--no-skills",
                             "--no-context-files", "--no-prompt-templates", "--no-themes", "--no-mcp"],
                            cwd=cwd, env=desktop_environment(executable), stdin=tty, stdout=tty, stderr=tty, check=True)
