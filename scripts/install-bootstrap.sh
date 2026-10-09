@@ -35,7 +35,7 @@ if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
   snapshot > "$temp/before"
   if [ "$family" = apt ]; then
     apt-get --simulate install curl > "$temp/preview"
-    more "$temp/preview"
+    cat "$temp/preview"
     if grep -q '^Remv ' "$temp/preview"; then printf '[FAIL] Transaction would remove packages.\n'; exit 1; fi
   else
     dnf --assumeno install curl || [ "$?" = 1 ]
@@ -49,14 +49,10 @@ if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
   printf '[WARN] Bootstrap-introduced packages retained if later download fails: %s\n' "$introduced"
 fi
 url="https://raw.githubusercontent.com/jessemcg/focus/$ref/install.sh"
-printf '[ACTION] Download COMPLETE script from %s\n' "$url"
+printf '[ACTION] Downloading the Focus installer...\n'
 if command -v curl >/dev/null 2>&1; then
   curl -fL --proto '=https' --tlsv1.2 "$url" -o "$temp/install.sh"
 else wget --https-only -O "$temp/install.sh" "$url"; fi
-printf '[WAIT] Script downloaded to %s. Inspect before execution? [Y/n] ' "$temp/install.sh" >/dev/tty
-IFS= read -r inspect </dev/tty
-case "$inspect" in n|N) ;; *) if command -v less >/dev/null 2>&1; then less "$temp/install.sh" </dev/tty; else more "$temp/install.sh" </dev/tty; fi ;; esac
-printf '[WAIT] Execute the inspected source installer? Type yes: ' >/dev/tty
-IFS= read -r answer </dev/tty
-[ "$answer" = yes ] || exit 1
+printf '[OK] Download complete. Starting Focus setup.\n'
+printf 'Setup will ask before installing missing dependencies or running paid AI verification.\n'
 FOCUS_INSTALL_REF="$ref" FOCUS_BOOTSTRAP_PACKAGES="$introduced" bash "$temp/install.sh" "$@" </dev/tty

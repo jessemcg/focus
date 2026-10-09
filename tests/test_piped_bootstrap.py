@@ -45,7 +45,6 @@ else:
     ended = 0
     try:
         deadline = time.monotonic() + 15
-        sent_inspect = sent_approve = False
         while time.monotonic() < deadline:
             if select.select([fd], [], [], 0.1)[0]:
                 try:
@@ -57,12 +56,6 @@ else:
                 if not chunk:
                     break
                 output += chunk
-                if b"Inspect before execution?" in output and not sent_inspect:
-                    os.write(fd, b"n\n")
-                    sent_inspect = True
-                if b"Type yes:" in output and not sent_approve:
-                    os.write(fd, b"yes\n")
-                    sent_approve = True
             ended, status = os.waitpid(pid, os.WNOHANG)
             if ended:
                 break
@@ -72,6 +65,9 @@ else:
             _, status = os.waitpid(pid, 0)
         assert os.waitstatus_to_exitcode(status) == 0, output.decode(errors="replace")
         assert b"SYNTHETIC_INSTALL_OK" in output
+        assert b"Starting Focus setup." in output
+        assert b"Inspect before execution?" not in output
+        assert b"Type yes:" not in output
     finally:
         os.close(fd)
         try:

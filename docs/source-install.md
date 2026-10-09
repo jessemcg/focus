@@ -79,7 +79,9 @@ Use the optional `--download-first` form below to download the complete bootstra
 before execution; it refuses execution on download failure and cleans its temporary file.
 
 The published bootstrap is exactly `scripts/download-bootstrap.sh.in`. It retains
-platform checks, source-installer inspection/consent and required Pi onboarding.
+platform checks, dependency approvals and required Pi onboarding. After downloading
+the complete installer, it starts setup directly: no source-code viewer or extra
+execution prompt. Package previews print in the terminal without opening a pager.
 Review the [bootstrap](https://github.com/jessemcg/focus/blob/main/scripts/install-bootstrap.sh)
 before running the command if desired. Add arguments using `bash -s --`, for example:
 
@@ -100,8 +102,9 @@ python3 scripts/print-install-command.py --inline            # previous self-con
 If neither downloader exists and you do not want to install one manually, use
 `--inline` from a checkout. That self-contained form visibly previews/authorizes
 official curl provisioning and carries its successful package delta in
-`FOCUS_BOOTSTRAP_PACKAGES`. The bootstrap offers inspection before executing the
-source installer, reads approvals from `/dev/tty`, and cleans its download files.
+`FOCUS_BOOTSTRAP_PACKAGES`. The bootstrap reads required approvals from `/dev/tty`
+and cleans its download files. Source inspection is optional through the web link
+above, not an installation step.
 Introduced packages are reported/retained if a later download fails. The checkout
 installer can likewise offer missing prerequisites. No release manifest or commit
 pin is required to generate the command.
