@@ -284,6 +284,66 @@ def test_installer_publication_gate_and_no_root(sandbox, monkeypatch):
         m.install(argparse.Namespace(source_dir=str(paths["source"])))
 
 
+def test_retry_after_first_approval_failure_reuses_lock(sandbox, monkeypatch):
+    paths, _ = sandbox
+    monkeypatch.setattr(m, "detect_platform", lambda: "apt")
+    args = argparse.Namespace(source_dir=str(paths["source"]), dry_run=False)
+
+    def cancel(*args):
+        raise m.MaintenanceError("Synthetic first approval failure")
+
+    monkeypatch.setattr(m, "approve", cancel)
+    with pytest.raises(m.MaintenanceError, match="first approval failure"):
+        m.install(args)
+    lockfile = paths["state"] / "maintenance.lock"
+    inode = lockfile.stat().st_ino
+    assert list(paths["state"].iterdir()) == [lockfile]
+    monkeypatch.setattr(m, "approve", lambda *args: None)
+
+    def stop_before_provisioning(*args):
+        raise RuntimeError("STOP_AFTER_RECEIPT")
+
+    monkeypatch.setattr(m, "owned_file", stop_before_provisioning)
+    with pytest.raises(RuntimeError, match="STOP_AFTER_RECEIPT"):
+        m.install(args)
+    assert lockfile.stat().st_ino == inode
+    assert m.private_json(paths["state"] / "receipt.json")["phase"] == "preflight"
+
+
+def test_unowned_state_is_preserved(sandbox, monkeypatch):
+    paths, _ = sandbox
+    monkeypatch.setattr(m, "detect_platform", lambda: "apt")
+    monkeypatch.setattr(m, "approve", lambda *args: pytest.fail("Unexpected approval"))
+    paths["state"].mkdir(parents=True, mode=0o700)
+    foreign = paths["state"] / "foreign.txt"
+    foreign.write_text("keep me")
+    with pytest.raises(m.MaintenanceError, match="Unowned nonempty"):
+        m.install(argparse.Namespace(source_dir=str(paths["source"]), dry_run=False))
+    assert foreign.read_text() == "keep me"
+    assert not (paths["state"] / "receipt.json").exists()
+
+
+@pytest.mark.parametrize("kind", ["nonempty", "public", "hardlink", "symlink"])
+def test_unsafe_leftover_lock_is_not_adopted(sandbox, kind):
+    paths, _ = sandbox
+    paths["state"].mkdir(parents=True, mode=0o700)
+    target = paths["state"] / "maintenance.lock"
+    target.touch(mode=0o600)
+    if kind == "nonempty":
+        target.write_text("foreign data")
+    elif kind == "public":
+        target.chmod(0o644)
+    elif kind == "hardlink":
+        os.link(target, paths["state"] / "other")
+    else:
+        target.unlink()
+        target.symlink_to(paths["state"] / "missing")
+    with pytest.raises(m.MaintenanceError):
+        with m.lock(paths["state"]):
+            pytest.fail("Unsafe lock accepted")
+    assert target.exists() or target.is_symlink()
+
+
 def test_desktop_templates_render_paths_with_spaces(sandbox):
     paths, data = sandbox
     paths["source"].mkdir()

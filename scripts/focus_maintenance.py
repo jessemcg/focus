@@ -295,7 +295,10 @@ def lock(state: Path):
     target = state / "maintenance.lock"; safe_path(target)
     fd = os.open(target, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
-        if os.fstat(fd).st_uid != os.getuid() or os.fstat(fd).st_nlink != 1:
+        info = os.fstat(fd)
+        if (info.st_uid != os.getuid() or info.st_nlink != 1
+                or not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077
+                or info.st_size != 0):
             raise MaintenanceError("Unsafe lock file")
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -664,8 +667,6 @@ def install(args) -> int:
         for name in ("source", "environment", "python", "tools", "cache", "maintenance", "command", "uninstall_command", "desktop", "svg", "symbolic", "png"):
             if paths[name].exists():
                 raise MaintenanceError(f"Unowned destination already exists: {paths[name]}")
-        if paths["state"].exists() and any(paths["state"].iterdir()):
-            raise MaintenanceError("Unowned nonempty maintenance state; refusing takeover")
     with lock(paths["state"]):
         if receipt.exists():
             data = private_json(receipt); validate_receipt(data, paths)
@@ -675,6 +676,10 @@ def install(args) -> int:
             for name in ("source", "environment", "python", "tools", "cache", "maintenance", "command", "uninstall_command", "desktop", "svg", "symbolic", "png"):
                 if paths[name].exists():
                     raise MaintenanceError(f"Unowned destination already exists: {paths[name]}")
+            # A canceled first approval leaves only our empty lock, not a receipt.
+            # Reuse its inode under the lock; unlinking it could split concurrency.
+            if any(path.name != "maintenance.lock" for path in paths["state"].iterdir()):
+                raise MaintenanceError("Unowned nonempty maintenance state; refusing takeover")
             approve("Proceed with these paths? Native transactions, Pi login and verification have separate consent")
             ref = os.environ.get("FOCUS_INSTALL_REF") or "main"
             if not re.fullmatch(r"main|[0-9a-f]{40}", ref):
