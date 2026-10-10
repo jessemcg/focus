@@ -17,8 +17,7 @@ for AI questions.
 Focus is intentionally distributed as source rather than a Flatpak or Debian package,
 so you can easily adapt the code to your needs with the coding agent of your choice.
 
-For Ubuntu **24.04/26.04** and Fedora **43/44** desktops (x86_64/aarch64).
-Immutable distributions are not supported.
+The installer has been tested with Ubuntu and Fedora.
 
 With `curl` installed, run as your normal user—not with sudo:
 
