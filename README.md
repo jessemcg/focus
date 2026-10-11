@@ -73,6 +73,13 @@ Use **Agent Q&A** to ask questions and follow up. AI questions send selected rec
 text to your chosen model provider; check its confidentiality terms before using
 sensitive records. Verify answers against the source.
 
+## Practice profiles (in development)
+
+General Court Record and California Juvenile Dependency profile resources now live
+inside Focus. Validation and accepted-snapshot infrastructure are implemented;
+profile selection, editing, and Agent integration are not yet enabled. Existing
+behavior and settings are unchanged. See the [contract and implementation status](docs/practice-profiles.md).
+
 ## License
 
 See [LICENSE](LICENSE).

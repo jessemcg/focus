@@ -1,0 +1,1 @@
+Explain material dependency proceedings with the record's own terminology. Where relevant, distinguish safety allegations and findings, reunification services, visitation, placement, ancestry/ICWA inquiries, and permanency decisions. Separate each parent's circumstances and positions. A procedural label is not proof that required findings were made.

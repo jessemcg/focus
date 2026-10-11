@@ -1,0 +1,48 @@
+{
+  "query_terms": [
+    "why",
+    "reason",
+    "basis",
+    "remove",
+    "removed",
+    "removal",
+    "detain",
+    "detained",
+    "detention",
+    "petition",
+    "allegation",
+    "order",
+    "finding",
+    "sustain",
+    "sustained"
+  ],
+  "document_terms": [
+    "detention",
+    "addendum",
+    "jurisdiction",
+    "disposition",
+    "petition",
+    "minute order",
+    "hearing",
+    "removal order"
+  ],
+  "passage_terms": [
+    "reason for detention",
+    "reason for removal",
+    "removal reason",
+    "need for continued detention",
+    "unable and unwilling",
+    "unable to care",
+    "cannot take care",
+    "failed to follow through",
+    "caretaker absence",
+    "incapacity"
+  ],
+  "later_history_terms": [
+    "status review",
+    "366.26",
+    "adoption",
+    "permanency",
+    "legal history"
+  ]
+}

@@ -1,0 +1,1 @@
+Research the issue actually asked about within the organized court record. Prefer contemporaneous source evidence when explaining an event or ruling; consult later accounts for developments or contradictions without treating them as contemporaneous evidence. Do not presume a practice area, party relationship, or legal claim.

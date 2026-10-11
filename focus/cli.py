@@ -42,6 +42,9 @@ def _cmd_setup_pi(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="focus")
     subparsers = parser.add_subparsers(dest="command")
+    from .practice_profiles import add_profile_parser
+
+    add_profile_parser(subparsers)
 
     app_parser = subparsers.add_parser("app", help="launch the GTK app")
     app_parser.add_argument("directory", nargs="?", type=Path)
@@ -74,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args_list = list(sys.argv[1:] if argv is None else argv)
-    if not args_list or args_list[0] not in {"app", "refresh-current-case", "doctor", "setup-pi", "-h", "--help"}:
+    if not args_list or args_list[0] not in {"app", "refresh-current-case", "doctor", "setup-pi", "profiles", "-h", "--help"}:
         args_list.insert(0, "app")
     parser = build_parser()
     args = parser.parse_args(args_list)

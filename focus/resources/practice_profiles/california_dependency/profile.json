@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "profile_api": 1,
+  "specialty_id": "california-juvenile-dependency",
+  "application": "focus",
+  "display_name": "California Juvenile Dependency",
+  "description": "California Juvenile Dependency guidance owned by Focus.",
+  "version": "1.0.0",
+  "required_capabilities": [
+    "research-v1"
+  ],
+  "resources": {
+    "research": "research.md",
+    "answer_guidance": "answer-guidance.md",
+    "search": "search.json"
+  }
+}
