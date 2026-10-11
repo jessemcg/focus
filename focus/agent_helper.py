@@ -14,6 +14,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# Preserve the explicitly launched script entry point as well as `-m` use.
+# Resolve only this installed package, never a case's Python resources.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from focus.profile_artifacts import source_map_profile_metadata
+from focus.profile_contract import ProfileError
+from focus.preparation_context import preparation_context
+
 
 def _read_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as handle:
@@ -40,6 +48,10 @@ def _load_source_map(root: Path) -> dict[str, Any]:
         raise RecordError("map_unavailable", "Source map is missing, unreadable or invalid.") from exc
     if not isinstance(data, dict) or not isinstance(data.get("pages"), list):
         raise RecordError("map_unavailable", "Source map must be an object with pages.")
+    try:
+        source_map_profile_metadata(data)
+    except ProfileError as exc:
+        raise RecordError("map_unsupported", "Source map version or profile metadata is invalid or unsupported.") from exc
     return data
 
 
@@ -161,6 +173,10 @@ def _compact_citation_series(items: list[Any]) -> list[dict[str, Any]]:
 
 
 def _source_map_context_from_data(source_map: dict[str, Any]) -> dict[str, Any]:
+    try:
+        provenance = source_map_profile_metadata(source_map)
+    except ProfileError:
+        return _empty_source_map_context("unsupported_or_invalid_metadata")
     raw_pages = source_map.get("pages")
     raw_documents = source_map.get("documents", [])
     raw_participant_index = source_map.get("participant_index")
@@ -214,6 +230,8 @@ def _source_map_context_from_data(source_map: dict[str, Any]) -> dict[str, Any]:
         "status": "valid",
         "schema_version": source_map.get("schema_version", 1),
         "participant_index_schema_version": participant_index.get("schema_version"),
+        "preparation_provenance": provenance,
+        "practice_profile_status": "recorded" if provenance is not None else "legacy_unassigned",
         "case_name": source_map.get("case_name", ""),
         "counts": raw_counts,
         "citation_series": _compact_citation_series(raw_citation_series),
@@ -232,7 +250,9 @@ def _source_map_context_payload(root: Path) -> dict[str, Any]:
         return _empty_source_map_context("invalid")
     if not isinstance(source_map, dict):
         return _empty_source_map_context("invalid")
-    return _source_map_context_from_data(source_map)
+    context = _source_map_context_from_data(source_map)
+    context["preparation"] = preparation_context(root, context.get("preparation_provenance"))
+    return context
 
 
 def command_context(args: argparse.Namespace) -> None:

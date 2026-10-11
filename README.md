@@ -77,8 +77,11 @@ sensitive records. Verify answers against the source.
 
 General Court Record and California Juvenile Dependency profile resources now live
 inside Focus. Validation and accepted-snapshot infrastructure are implemented;
-profile selection, editing, and Agent integration are not yet enabled. Existing
-behavior and settings are unchanged. See the [contract and implementation status](docs/practice-profiles.md).
+profile selection, editing, and Agent integration are not yet enabled. The read-only
+research helper now understands profile-era preparation metadata and distinguishes
+selected preparation from published artifacts, without accepting instructions from
+a case. Legacy browsing and settings remain unchanged. See the
+[contract and implementation status](docs/practice-profiles.md).
 
 ## License
 

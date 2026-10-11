@@ -22,12 +22,16 @@ Never create a Dropbox .venv or use production environments for disposable tests
 ## Practice-profile foundation
 
 See `docs/practice-profiles.md` for the v1 contract and incomplete-integration status.
-`profile_contract.py`, `profile_store.py`, the common conformance tests and fixture
+`profile_contract.py`, `profile_store.py`, `profile_artifacts.py`, the common conformance tests and fixture
 are vendored identically in Focus and RecordPrep; coordinate contract changes but
 never import sibling resources at runtime. Bundled resources live in
 `focus/resources/practice_profiles/`. No startup/settings/generation path activates
 them yet. Keep legacy behavior unchanged until reader, producer, selection and UI
 integration are ready; private settings/case migration must remain explicit.
+The read-only helper accepts supported v3 source-map/participant metadata without
+loading profile instructions. `preparation_context.py` keeps selected preparation
+separate from published/map provenance. Unsupported metadata fails research-tool
+validation, not ordinary record browsing. See the artifact contracts in the docs.
 
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
