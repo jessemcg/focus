@@ -1882,7 +1882,7 @@ button.focus-case-tools-toggle {
   padding-right: 8px;
 }
 
-box.focus-case-tools-nav image.focus-toggle-icon {
+.focus-case-tools-nav image.focus-toggle-icon {
   color: alpha(@window_fg_color, 0.70);
 }
 

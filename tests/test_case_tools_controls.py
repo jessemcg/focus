@@ -311,11 +311,21 @@ class FakeMeasureWidget:
     def get_width(self) -> int:
         return 100
 
+    def compute_bounds(self, _target):
+        return True, SimpleNamespace(get_width=lambda: 120)
+
+    def get_margin_start(self):
+        return 12
+
+    def get_margin_end(self):
+        return 12
+
     def get_height(self) -> int:
         return self.natural
 
     def measure(self, _orientation: object, _for_size: int) -> tuple[int, int, int, int]:
         self.measure_calls += 1
+        self.last_for_size = _for_size
         return (0, self.natural, -1, -1)
 
 
@@ -690,6 +700,15 @@ def test_scroller_bounds_skip_unchanged_repeated_writes() -> None:
 
     assert scroller.calls == calls_after_first
     assert calls_after_first == [("min", -1), ("max", 207), ("min", 36)]
+
+
+def test_natural_height_uses_border_width_and_margins_not_content_width() -> None:
+    widget = FakeMeasureWidget(320)
+    assert Focus._widget_natural_height(widget) == 320
+    assert widget.last_for_size == 144  # 120px border box + 12px margins, not 100px content.
+    widget.compute_bounds = lambda _target: (False, None)
+    assert Focus._widget_natural_height(widget) == 320
+    assert widget.last_for_size == -1
 
 
 def test_panel_chrome_measurement_does_not_hide_the_body() -> None:

@@ -19,19 +19,29 @@ it verifies local runtime and disables automatic sync/downloads. Cross-project c
 select the callee explicitly; same-project Python children use sys.executable.
 Never create a Dropbox .venv or use production environments for disposable tests.
 
-## Practice-profile foundation
+## Practice profiles
 
-See `docs/practice-profiles.md` for the v1 contract and incomplete-integration status.
-`profile_contract.py`, `profile_store.py`, `profile_artifacts.py`, the common conformance tests and fixture
-are vendored identically in Focus and RecordPrep; coordinate contract changes but
-never import sibling resources at runtime. Bundled resources live in
-`focus/resources/practice_profiles/`. No startup/settings/generation path activates
-them yet. Keep legacy behavior unchanged until reader, producer, selection and UI
-integration are ready; private settings/case migration must remain explicit.
-The read-only helper accepts supported v3 source-map/participant metadata without
-loading profile instructions. `preparation_context.py` keeps selected preparation
-separate from published/map provenance. Unsupported metadata fails research-tool
-validation, not ordinary record browsing. See the artifact contracts in the docs.
+See `docs/practice-profiles.md` and `docs/practice-profiles-validation.md` for the
+implemented v1 contract, GUI workflow, runtime boundaries and validation limits.
+The six `profile_{contract,store,artifacts,workflows,editor_ui,manager_ui}.py`
+modules, shared conformance/workflow tests and docs are intentionally vendored
+identically in Focus and RecordPrep. Coordinate changes; never import a sibling
+app or its instructions at runtime. Bundled resources are app-owned and read-only.
+
+Focus requires explicit first-Q&A choice, including explicit Legacy. Opening cases
+and displaying old answers remain read-only. Defaults propose; they never silently
+rebind. Accepted research snapshots, source/map provenance and compiler bytes are
+pinned for launch, follow-up and final capture. Missing/stale instructions block new
+work without replacing prior output. Literal search preferences rank, never filter.
+Saved-answer schema 2 records research separately from consumed preparation;
+artifact descriptors and identity exchange never authorize instruction loading.
+
+Keep private configuration/cases untouched. Private customization copying is an
+explicit app-owned review flow, tested only with synthetic prose. Runtime settings
+and credentials never belong in profiles. Preserve legacy schema-1 answers and
+source-map 1/2 interpretation. Run isolated GUI workflows and synthetic answer
+switching as well as pytest after profile/UI changes; use simulated models only
+unless paid quality evaluation is separately authorized.
 
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.

@@ -54,6 +54,28 @@ def answer_quality_label(
     return ""
 
 
+def profile_context_label(context: bytes | None) -> str:
+    """Render recorded identities only; never load current defaults/instructions."""
+    if context is None:
+        return "Legacy / unassigned profile provenance"
+    from .research_profiles import research_context_payload
+    try:
+        value = research_context_payload(context)
+    except ValueError:
+        return "Profile provenance unavailable (unsupported metadata)"
+    research = value["research_profile_ref"]
+    preparation = value["preparation_provenance"]
+    prepared_ref = preparation["profile_ref"] if preparation else None
+    def label(ref):
+        if ref is None:
+            return "legacy / unassigned"
+        return f"{ref['specialty_id']} · {ref['version']} · {ref['content_sha256'][:8]}"
+    text = f"Research: {label(research)} — Preparation: {label(prepared_ref)}"
+    if research and prepared_ref and research["specialty_id"] != prepared_ref["specialty_id"]:
+        text += " — Different specialties"
+    return text
+
+
 def answer_context_label(
     *,
     is_saved: bool,

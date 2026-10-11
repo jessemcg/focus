@@ -48,7 +48,7 @@ from .agent_followup import (
     text_transport_error,
 )
 from .answer_metadata import parse_answer_metadata
-from .answer_presentation import answer_context_label
+from .answer_presentation import answer_context_label, profile_context_label
 from .pi_runtime import PiSettingsError, ensure_project_pi_settings, PROJECT_PI_SETTINGS_PATH
 from .reading_position import AnswerPositionCache
 from .saved_answers import (
@@ -289,6 +289,7 @@ class Focus(Adw.Application):
         self._agent_subview_toggle_guard = False
         self._agent_answer_poll_id: int | None = None
         self._agent_workspace_path: Path | None = None
+        self._agent_research_pin = None
         self._agent_run_id = ""
         self._agent_answer_artifact_path: Path | None = None
         self._agent_answer_revision = 0
@@ -574,6 +575,10 @@ class Focus(Adw.Application):
         header.set_title_widget(self._title_widget)
 
         header.pack_start(self._build_open_case_button())
+        self._practice_profile_button = Gtk.Button(label="Research: Legacy")
+        self._practice_profile_button.add_css_class("flat")
+        self._practice_profile_button.connect("clicked", lambda _button: self._open_practice_profiles())
+        header.pack_start(self._practice_profile_button)
 
         # Hamburger menu on the right
         menu_model = Gio.Menu()
@@ -795,7 +800,10 @@ class Focus(Adw.Application):
         self._ai_view_stack.set_vexpand(True)
         self._ai_view_stack.connect("notify::visible-child-name", self._on_ai_view_changed)
 
-        ai_nav_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        # Keep both groups on one row when they fit; wrap Saved Answers rather
+        # than forcing tiled/resized windows below the Case Tools minimum width.
+        ai_nav_row = self._build_wrapping_controls_box()
+        ai_nav_row.set_max_children_per_line(2)
         ai_nav_row.add_css_class("focus-case-tools-nav")
         ai_nav_row.set_hexpand(True)
         ai_nav_row.set_valign(Gtk.Align.CENTER)
@@ -836,11 +844,7 @@ class Focus(Adw.Application):
             ("text-x-generic-symbolic", "document-open-symbolic"),
         )
         ai_mode_strip.append(minutes_button)
-        ai_nav_row.append(ai_mode_strip)
-
-        nav_spacer = Gtk.Box()
-        nav_spacer.set_hexpand(True)
-        ai_nav_row.append(nav_spacer)
+        ai_nav_row.insert(ai_mode_strip, -1)
 
         # Saved Answers is a labeled split button kept at the right end of the
         # case-tools bar, away from the view toggles. The main part resumes the
@@ -852,7 +856,8 @@ class Focus(Adw.Application):
             on_primary=self._on_saved_answer_primary,
         )
         self._saved_answers_button = self._saved_answers_popover.button
-        ai_nav_row.append(self._saved_answers_button)
+        self._saved_answers_button.set_halign(Gtk.Align.END)
+        ai_nav_row.insert(self._saved_answers_button, -1)
         ai_header.append(ai_nav_row)
 
         status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1526,9 +1531,15 @@ class Focus(Adw.Application):
     def _widget_natural_height(widget: Gtk.Widget | None) -> int:
         if widget is None:
             return 0
-        allocated_width = max(0, int(widget.get_width()))
-        for_size = allocated_width if allocated_width > 0 else -1
         try:
+            # get_width() is the CSS content width, not the width accepted by
+            # measure(). Passing it subtracted padding/margins twice and caused
+            # allocation warnings at narrow widths. Bounds include the border
+            # area; explicit widget margins belong in the measurement too.
+            has_bounds, bounds = widget.compute_bounds(widget)
+            border_width = int(round(bounds.get_width())) if has_bounds else 0
+            for_size = (border_width + widget.get_margin_start() + widget.get_margin_end()
+                        if border_width > 0 else -1)
             _minimum, natural, _min_baseline, _nat_baseline = widget.measure(
                 Gtk.Orientation.VERTICAL,
                 for_size,
@@ -1820,6 +1831,7 @@ class Focus(Adw.Application):
             ai_state.raw = ""
             self._apply_ai_output_links("", ai_state)
         self._agent_workspace_path = None
+        self._agent_research_pin = None
         self._agent_answer_status = ""
         self._agent_last_answer_text = ""
         self._agent_live_snapshot = None
@@ -1874,6 +1886,8 @@ class Focus(Adw.Application):
         if self._title_widget:
             self._title_widget.set_title(title_text)
             self._title_widget.set_subtitle("")
+        from .profile_integration import update_indicator
+        update_indicator(self)
 
     def _set_text(self, text: str, highlights: list[tuple[int, int]] | None = None) -> None:
         if not self.textview:
@@ -5975,6 +5989,13 @@ class Focus(Adw.Application):
             return
         self._apply_input_dir(Path(file.get_path()))
 
+    def _open_practice_profiles(self, parent=None) -> None:
+        from .profile_integration import open_manager
+        try:
+            open_manager(self, parent)
+        except (ValueError, OSError) as exc:
+            self._ai_transient_toast(f"Practice Profiles unavailable: {exc}")
+
     def _on_open_ai_settings(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         try:
             window = self._ensure_ai_settings_window()
@@ -6731,7 +6752,8 @@ class Focus(Adw.Application):
         self._update_ai_status("Submitting follow-up…", spinning=True)
         threading.Thread(
             target=self._agent_followup_worker,
-            args=(endpoint, generation, text),
+            args=((endpoint, generation, text, self._agent_research_pin, self._record_layout.root)
+                  if getattr(self, "_agent_research_pin", None) is not None else (endpoint, generation, text)),
             daemon=True,
             name="focus-agent-followup",
         ).start()
@@ -6741,11 +6763,20 @@ class Focus(Adw.Application):
         endpoint: FollowUpEndpoint,
         generation: int,
         text: str,
+        research_pin=None,
+        case_root=None,
     ) -> None:
         state = ""
         error = ""
         try:
+            if research_pin is not None:
+                if research_pin.snapshot is not None:
+                    from .practice_profiles import profile_store
+                    profile_store().load_profile_snapshot(research_pin.snapshot.ref)
+                research_pin.assert_current(case_root)
             state = FollowUpClient(endpoint).submit(text)
+        except (ValueError, OSError):
+            error = "research_changed"
         except FollowUpBusy:
             error = "busy"
         except FollowUpUncertain:
@@ -6789,6 +6820,10 @@ class Focus(Adw.Application):
                 self._agent_terminal.grab_focus()
             self._update_ai_status(
                 "Follow-up submitted—Agent is working…", spinning=True
+            )
+        elif error == "research_changed":
+            self._set_agent_followup_message(
+                "Research resources or preparation inputs changed or became unavailable. Start a new session; restart Focus after application updates."
             )
         elif error == "busy":
             self._set_agent_followup_message(
@@ -6886,6 +6921,11 @@ class Focus(Adw.Application):
             question=question,
             partial=partial,
         )
+        pin = getattr(self, "_agent_research_pin", None)
+        context = None
+        if pin is not None:
+            from .research_profiles import research_context_bytes
+            context = research_context_bytes(pin.metadata())
         return AgentAnswerSnapshot(
             answer_id=new_answer_id(),
             markdown=artifact.markdown,
@@ -6897,6 +6937,7 @@ class Focus(Adw.Application):
             stop_reason=stop_reason,
             question=question,
             origin="live",
+            research_context=context,
         )
 
     def _display_agent_snapshot(
@@ -7139,6 +7180,7 @@ class Focus(Adw.Application):
             stop_reason=snapshot.stop_reason,
             capture=snapshot.capture,
         )
+        text += "\n" + profile_context_label(snapshot.research_context)
         label.set_text(text)
         label.set_visible(bool(text))
         question = (snapshot.question or "").strip()
@@ -7524,9 +7566,27 @@ class Focus(Adw.Application):
         if not question:
             self._ai_transient_toast("Enter a question to launch the Agent.")
             return
+        # Profile confirmation belongs to Focus's private choices, not a case's
+        # metadata. Failed preflight must preserve the currently displayed answer.
+        try:
+            from .research_selection import read_selection
+            from .research_profiles import ResearchPin
+            from .practice_profiles import profile_store
+            selection = read_selection(self._record_layout.root)
+            if selection is None:
+                self._ai_transient_toast("Confirm a research profile for this case before starting a new session.")
+                self._open_practice_profiles()
+                return
+            store = profile_store()
+            snapshot = store.load_profile_snapshot(selection.profile_ref) if selection.profile_ref else None
+            pending_pin = ResearchPin.capture(self._record_layout.root, snapshot, store=store)
+        except (ValueError, OSError):
+            self._ai_transient_toast("The selected research profile or preparation inputs are unavailable. Existing answers remain readable.")
+            return
         self._stop_agent_terminal()
         self._stop_agent_answer_polling()
         self._clear_agent_answer()
+        self._agent_research_pin = pending_pin
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._ai_settings = load_ai_settings()
         self._agent_initial_question = question
@@ -7615,6 +7675,19 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Unable to create Agent workspace: {exc}")
             return
         self._agent_workspace_path = workspace
+        research_resources = None
+        research_pin = getattr(self, "_agent_research_pin", None)
+        if research_pin is not None:
+            try:
+                research_pin.assert_current(self._record_layout.root)
+                if research_pin.snapshot is not None:
+                    from .research_profiles import stage_research_resources
+                    research_resources = stage_research_resources(research_pin, workspace)
+            except (ValueError, OSError):
+                shutil.rmtree(workspace, ignore_errors=True)
+                self._agent_workspace_path = None
+                self._ai_transient_toast("Research preparation changed or the pinned profile is unavailable. Start a new session.")
+                return
         self._cleanup_agent_answer_artifact()
         try:
             runtime_dir = focus_answer_runtime_dir()
@@ -7665,6 +7738,14 @@ class Focus(Adw.Application):
                 "FOCUS_AGENT_COMMAND_ARGC": str(len(command_argv)),
             }
         )
+        from .research_profiles import PROFILE_REF_ENV, INPUTS_ENV, CASE_ENV, COMPONENT_ENV
+        for key in (PROFILE_REF_ENV, INPUTS_ENV, CASE_ENV, COMPONENT_ENV):
+            env.pop(key, None)
+        if research_pin is not None:
+            env = research_pin.environment(env)
+        if research_resources is not None:
+            env["FOCUS_PI_PROJECT_DIR"] = str(research_resources)
+            env["FOCUS_AGENT_ANSWER_PROTOCOL"] = str(research_resources / "agent_answer.py")
         if self._agent_followup_endpoint is not None:
             env.update(
                 {
@@ -7706,6 +7787,8 @@ class Focus(Adw.Application):
 
         self._agent_terminal_active = True
         self._agent_terminal_closing = False
+        from .profile_integration import update_indicator
+        update_indicator(self)
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
@@ -7801,6 +7884,7 @@ class Focus(Adw.Application):
                 pass
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
+        self._agent_research_pin = None
         self._agent_question_queue = []
         self._agent_followup_pending = False
         self._invalidate_agent_followup()

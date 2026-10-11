@@ -11,7 +11,7 @@ from collections.abc import Callable
 
 from gi.repository import Adw, GLib, Gtk, Pango
 
-from ..answer_presentation import answer_quality_label, format_saved_at
+from ..answer_presentation import answer_quality_label, format_saved_at, profile_context_label
 from ..saved_answers import SavedAnswer, SavedAnswerListing
 
 PREFERRED_CONTENT_WIDTH = 480
@@ -259,8 +259,9 @@ class SavedAnswersPopover:
         row.set_activatable(True)
         row.set_focusable(True)
         row.set_use_markup(False)
-        row.set_tooltip_text(f"{title}\n{subtitle}")
-        self._set_accessible_label(row, f"{title}. {subtitle}")
+        provenance = profile_context_label(answer.research_context)
+        row.set_tooltip_text(f"{title}\n{subtitle}\n{provenance}")
+        self._set_accessible_label(row, f"{title}. {subtitle}. {provenance}")
 
         delete_button = Gtk.Button()
         delete_button.add_css_class("flat")

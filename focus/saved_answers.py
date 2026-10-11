@@ -32,7 +32,11 @@ from .agent_answer import (
     ANSWER_STOP_REASONS,
 )
 
+from .research_profiles import research_context_bytes, research_context_payload
+from .profile_contract import ProfileError
+
 SAVED_ANSWERS_SCHEMA_VERSION = 1
+PROFILE_SAVED_ANSWERS_SCHEMA_VERSION = 2
 SAVED_ANSWERS_DIR_NAME = ".focus"
 SAVED_ANSWERS_SUBDIR = "saved-answers"
 ANSWER_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -52,9 +56,10 @@ class SavedAnswer:
     answer_kind: str
     stop_reason: str
     question: str | None
+    research_context: bytes | None = None
 
     def to_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "answer_id": self.answer_id,
             "saved_at": self.saved_at,
@@ -67,6 +72,9 @@ class SavedAnswer:
             "stop_reason": self.stop_reason,
             "question": self.question,
         }
+        if self.research_context is not None:
+            payload["research_context"] = research_context_payload(self.research_context)
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +92,7 @@ class AgentAnswerSnapshot:
     question: str | None
     saved_at: str | None = None
     origin: str = "live"
+    research_context: bytes | None = None
 
     @property
     def partial(self) -> bool:
@@ -103,11 +112,12 @@ class AgentAnswerSnapshot:
             question=saved.question,
             saved_at=saved.saved_at,
             origin="saved",
+            research_context=saved.research_context,
         )
 
     def to_saved(self, *, saved_at: str | None = None) -> SavedAnswer:
         return SavedAnswer(
-            schema_version=SAVED_ANSWERS_SCHEMA_VERSION,
+            schema_version=PROFILE_SAVED_ANSWERS_SCHEMA_VERSION if self.research_context is not None else SAVED_ANSWERS_SCHEMA_VERSION,
             answer_id=self.answer_id,
             saved_at=saved_at or self.saved_at or utc_now(),
             title=self.title,
@@ -118,6 +128,7 @@ class AgentAnswerSnapshot:
             answer_kind=self.answer_kind,
             stop_reason=self.stop_reason,
             question=self.question,
+            research_context=self.research_context,
         )
 
 
@@ -173,8 +184,15 @@ def _ensure_store_dir(root: Path) -> Path:
 
 
 def _validate_answer(answer: SavedAnswer) -> None:
-    if answer.schema_version != SAVED_ANSWERS_SCHEMA_VERSION:
+    if type(answer.schema_version) is not int or answer.schema_version not in (1, 2):
         raise _AnswerFileError("unsupported_schema")
+    if (answer.schema_version == 2) != (answer.research_context is not None):
+        raise _AnswerFileError("invalid_research_context")
+    if answer.research_context is not None:
+        try:
+            research_context_payload(answer.research_context)
+        except ProfileError:
+            raise _AnswerFileError("invalid_research_context") from None
     if not ANSWER_ID_RE.fullmatch(answer.answer_id):
         raise _AnswerFileError("invalid_answer_id")
     if not isinstance(answer.saved_at, str) or not answer.saved_at.strip():
@@ -201,14 +219,22 @@ def _answer_from_payload(payload: Any) -> SavedAnswer:
     if not isinstance(payload, dict):
         raise _AnswerFileError("malformed")
     schema_version = payload.get("schema_version")
-    if schema_version != SAVED_ANSWERS_SCHEMA_VERSION:
+    if type(schema_version) is not int or schema_version not in (1, 2):
         raise _AnswerFileError("unsupported_schema")
+    context = None
+    if schema_version == 1 and "research_context" in payload:
+        raise _AnswerFileError("unsupported_schema")
+    if schema_version == 2:
+        try:
+            context = research_context_bytes(payload.get("research_context"))
+        except ProfileError:
+            raise _AnswerFileError("invalid_research_context") from None
     answer_id = payload.get("answer_id")
     markdown = payload.get("markdown")
     if not isinstance(answer_id, str) or not isinstance(markdown, str):
         raise _AnswerFileError("malformed")
     answer = SavedAnswer(
-        schema_version=SAVED_ANSWERS_SCHEMA_VERSION,
+        schema_version=schema_version,
         answer_id=answer_id,
         saved_at=payload.get("saved_at") if isinstance(payload.get("saved_at"), str) else "",
         title=payload.get("title") if isinstance(payload.get("title"), str) else "",
@@ -219,6 +245,7 @@ def _answer_from_payload(payload: Any) -> SavedAnswer:
         answer_kind=payload.get("answer_kind") if isinstance(payload.get("answer_kind"), str) else "",
         stop_reason=payload.get("stop_reason") if isinstance(payload.get("stop_reason"), str) else "",
         question=payload.get("question") if isinstance(payload.get("question"), str) else None,
+        research_context=context,
     )
     _validate_answer(answer)
     return answer

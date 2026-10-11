@@ -1,6 +1,6 @@
 // Execute the checked-in extension, not a source-string approximation. Offline only.
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdirSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -157,6 +157,29 @@ process.env.FOCUS_AGENT_CASE_ROOT = normalTextRoot;
 const fixtureExec = async () => ({code:0, stdout:'{"overview":{"available":false},"source_map":{"available":true}}'});
 assert.deepEqual(await harness(fixtureExec).tools.focus_record.execute('id',{action:'context'}),
   await harness(fixtureExec,true).tools.focus_record.execute('id',{action:'context'}));
+// A pinned answer is checked again at capture, even after direct read tools.
+process.env.FOCUS_RESEARCH_INPUTS_SHA256 = 'a'.repeat(64);
+const answerPath = process.env.FOCUS_AGENT_ANSWER_ARTIFACT;
+for (const result of [{code:1,stdout:'{"error":"preparation_changed"}'}, {code:0,stdout:'invalid'},
+                      {code:0,killed:true,stdout:'{"overview":{"available":false},"source_map":{"available":true}}'}]) {
+  writeFileSync(answerPath, 'prior answer bytes');
+  const guarded = harness(async () => result);
+  const rejected = await guarded.tools.submit_focus_answer.execute('stale', {answer_kind:'answered',markdown:'# Synthetic answer\n\nSource changed.'});
+  assert.equal(rejected.details.accepted, false);
+  assert.equal(rejected.terminate, true);
+  assert.equal(rejected.isError, true);
+  assert.equal(readFileSync(answerPath,'utf8'), 'prior answer bytes');
+}
+let finalChecks = 0;
+const current = harness(async (_command, args) => {
+  assert.deepEqual(args.slice(1), ['--case-root', normalTextRoot, 'context', '--json']);
+  finalChecks++;
+  return fixtureExec();
+});
+assert.equal((await current.tools.submit_focus_answer.execute('fresh', {answer_kind:'answered',markdown:'# Synthetic current answer'})).details.accepted, true);
+assert.equal(finalChecks, 1);
+assert.equal(JSON.parse(readFileSync(answerPath,'utf8')).markdown, '# Synthetic current answer');
+delete process.env.FOCUS_RESEARCH_INPUTS_SHA256;
 // All actions fail if transport cannot initialize; no success conversion.
 process.env.FOCUS_AGENT_RUN_ID = 'bad';
 const broken = harness(async () => { throw new Error('must not execute'); });

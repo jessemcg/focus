@@ -46,6 +46,26 @@ module.APPLICATION_ID = f"com.mcglaw.Focus.Acceptance.p{os.getpid()}"
 
 TRANSITIONS = int(os.environ.get("FOCUS_ACCEPT_TRANSITIONS", "320"))
 ANSWER_COUNT = 12
+PROFILE_METADATA = os.environ.get("FOCUS_ACCEPT_PROFILE_METADATA") == "1"
+HOLD_MS = int(os.environ.get("FOCUS_ACCEPT_HOLD_MS", "0"))
+PROFILE_MODAL = os.environ.get("FOCUS_ACCEPT_PROFILE_MODAL") == "1"
+
+
+def synthetic_profile_context(index):
+    if not PROFILE_METADATA or index % 3 == 0:
+        return None
+    from dataclasses import asdict
+    from focus.practice_profiles import validate_profile_directory, bundled_profile_directory
+    from focus.research_profiles import research_context_bytes, compile_research
+    profile = validate_profile_directory(bundled_profile_directory("general")).draft
+    prepared = asdict(profile.ref) | {"application": "recordprep", "content_sha256": "b" * 64}
+    if index % 3 == 2:
+        prepared["specialty_id"] = "synthetic-third-specialty"
+    return research_context_bytes({"schema_version": 1, "research_profile_ref": asdict(profile.ref),
+                                  "preparation_provenance": {"schema_version": 1, "profile_ref": prepared,
+                                                             "components": {"overview": "a" * 64}},
+                                  "inputs_sha256": "0" * 64,
+                                  "research_component_sha256": compile_research(profile).component_sha256})
 
 bundle = root / "synthetic"
 (bundle / "text_pages").mkdir(parents=True)
@@ -115,6 +135,7 @@ for index in range(ANSWER_COUNT):
         answer_kind="answered",
         stop_reason="length" if index % 4 == 0 else "toolUse",
         question=f"Question {index}?",
+        research_context=synthetic_profile_context(index),
     )
     saved = snapshot.to_saved()
     save_saved_answer(bundle, saved)
@@ -261,18 +282,37 @@ def prepare():  # type: ignore[no-untyped-def]
     def wait_for_listing() -> bool:
         if len(application._saved_answers_listing.answers) < ANSWER_COUNT:
             return True
-        core.GLib.timeout_add(100, position_start)
+        application._on_saved_answer_selected(provenance_example().answer_id)
+        if PROFILE_MODAL:
+            from focus.profile_integration import open_manager
+            manager = open_manager(application)
+            manager._create()
+            application._acceptance_profile_manager = manager
+        core.GLib.timeout_add(max(100, HOLD_MS), position_start)
         return False
 
     core.GLib.timeout_add(50, wait_for_listing)
     return False
 
 
+def provenance_example():
+    answers = application._saved_answers_listing.answers
+    if PROFILE_METADATA:
+        from focus.answer_presentation import profile_context_label
+        return next(answer for answer in answers if "Different specialties" in profile_context_label(answer.research_context))
+    return answers[0]
+
+
 def _finish(state: dict) -> None:  # type: ignore[no-untyped-def]
-    application._on_saved_answer_selected(application._saved_answers_listing.answers[0].answer_id)
+    manager = getattr(application, "_acceptance_profile_manager", None)
+    if manager is not None:
+        for child in manager.children_windows:
+            child.close()
+        manager.close()
+    application._on_saved_answer_selected(provenance_example().answer_id)
     visible = application._ai_view_stack.get_visible_child_name()
     displayed = application._agent_displayed_snapshot
-    expected = application._saved_answers_listing.answers[0]
+    expected = provenance_example()
     position = state.get("position")
     position_ok = bool(position and position.get("ok"))
     ok = (
@@ -281,7 +321,12 @@ def _finish(state: dict) -> None:  # type: ignore[no-untyped-def]
         and displayed.answer_id == expected.answer_id
         and critical_count["n"] == 0
         and position_ok
+        and displayed.research_context == expected.research_context
+        and (not PROFILE_METADATA or "Research:" in application._agent_context_label.get_text())
     )
+    # Regression: the old fixed navigation row imposed a 659px minimum and
+    # flooded GTK allocation warnings when a modal/tiled parent was narrower.
+    assert application._ai_panel_root.measure(core.Gtk.Orientation.HORIZONTAL, -1).minimum <= 600
     transitions = state["index"]
     renders = render_counts["answer"] + render_counts["summary"] + render_counts["structured"]
     print(

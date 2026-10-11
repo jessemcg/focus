@@ -157,6 +157,7 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
   let startedAt = Date.now();
   let counters: Counters = emptyCounters();
   let submitted = false;
+  let pinRejected = false;
   let revision = 0;
   let lastAssistant: CapturedAssistant | undefined;
   let canonicalTextRoot = textRoot;
@@ -213,6 +214,22 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
   }): Promise<void> {
     await ready;
     if (transportError) throw new Error(transportError);
+    if (pinRejected) throw new Error("Start a new session after a rejected research pin.");
+    // Direct read tools can finish after preparation changes. Recheck the same
+    // application pin at the final capture boundary, including fallback capture;
+    // never label newly read bytes with the earlier session's provenance.
+    if (process.env.FOCUS_RESEARCH_INPUTS_SHA256) {
+      try {
+        const checked = await pi.exec(python, [helper, "--case-root", caseRoot, "context", "--json"], { timeout: 120000 });
+        const payload = JSON.parse(checked.stdout);
+        if (checked.killed || checked.code !== 0 || payload?.error || !validPayload({ action: "context" }, payload)) {
+          throw new Error("pin check failed");
+        }
+      } catch {
+        pinRejected = true;
+        throw new Error("Preparation or research instructions changed/unavailable. Start a new session; no new answer was captured.");
+      }
+    }
     revision += 1;
     const status = options.capture === "submit_tool" && options.stopReason === "toolUse"
       ? "complete"
@@ -465,6 +482,10 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
       try {
         await writeArtifact({ capture: "submit_tool", answerKind: params.answer_kind, markdown, stopReason: "toolUse" });
       } catch (error) {
+        if (pinRejected) {
+          submitted = true; // Block fallback/retry capture for this stale session.
+          return { content: [{ type: "text", text: "Preparation or research instructions changed/unavailable. Start a new session; no new answer was captured." }], details: { accepted: false }, isError: true, terminate: true };
+        }
         submitted = false;
         throw error;
       }

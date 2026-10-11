@@ -21,6 +21,9 @@ if not __package__:
 from focus.profile_artifacts import source_map_profile_metadata
 from focus.profile_contract import ProfileError
 from focus.preparation_context import preparation_context
+from focus.research_profiles import (
+    literal_match, selected_snapshot_from_environment, assert_environment_inputs,
+)
 
 
 def _read_json(path: Path) -> Any:
@@ -833,17 +836,23 @@ def _document_context_for_page(
 def _document_rank(
     query: str,
     document_context: list[dict[str, Any]],
+    preferences: dict | None = None,
 ) -> tuple[int, int, int]:
     target_date = _query_date(query)
-    causal = bool(_CAUSAL_QUERY_RE.search(query))
+    causal = (bool(_CAUSAL_QUERY_RE.search(query)) if preferences is None
+              else literal_match(query, preferences["query_terms"]))
     labels = " ".join(
         f"{item['type']} {item['label']} {item['name']}"
         for item in document_context
     )
     source_priority = 1
-    if causal and _PRIMARY_EVENT_RE.search(labels):
+    primary = (bool(_PRIMARY_EVENT_RE.search(labels)) if preferences is None
+               else literal_match(labels, preferences["document_terms"]))
+    later = (bool(_LATER_HISTORY_RE.search(labels)) if preferences is None
+             else literal_match(labels, preferences["later_history_terms"]))
+    if causal and primary:
         source_priority = 0
-    elif causal and _LATER_HISTORY_RE.search(labels):
+    elif causal and later:
         source_priority = 3
 
     if target_date is None:
@@ -876,6 +885,7 @@ def _query_page_rank(
     document_context: list[dict[str, Any]],
     normalized_text: str,
     page_number: int,
+    preferences: dict | None = None,
 ) -> tuple[Any, ...]:
     reason_priority = {
         "exact-phrase": 0,
@@ -886,12 +896,13 @@ def _query_page_rank(
     date_bucket, date_distance, source_priority = _document_rank(
         query,
         document_context,
+        preferences,
     )
-    causal_evidence_priority = 0
-    if _CAUSAL_QUERY_RE.search(query) and not _CAUSAL_EVIDENCE_RE.search(
-        normalized_text
-    ):
-        causal_evidence_priority = 1
+    causal = (bool(_CAUSAL_QUERY_RE.search(query)) if preferences is None
+              else literal_match(query, preferences["query_terms"]))
+    evidence = (bool(_CAUSAL_EVIDENCE_RE.search(normalized_text)) if preferences is None
+                else literal_match(normalized_text, preferences["passage_terms"]))
+    causal_evidence_priority = int(causal and not evidence)
     return (
         date_bucket,
         source_priority,
@@ -906,6 +917,8 @@ def _query_page_rank(
 
 
 def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
+    snapshot = selected_snapshot_from_environment()
+    preferences = snapshot.resource("search") if snapshot is not None else None
     root = args.case_root.resolve(strict=False)
     source_map = _load_source_map(root)
     query_group = _query_group_from_args(args)
@@ -998,6 +1011,7 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
                 item["documents"],
                 item["normalized_text"],
                 item["page_number"],
+                preferences,
             )
         )
         ranked_by_query[index] = selected
@@ -1224,10 +1238,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        selected_snapshot_from_environment()
+        assert_environment_inputs(args.case_root)
         args.func(args)
     except Exception as exc:  # noqa: BLE001
         _emit_json({"error": str(exc), "type": exc.__class__.__name__,
-                    "error_code": getattr(exc, "code", "helper_failed")})
+                    "error_code": exc.issue.code if isinstance(exc, ProfileError) else getattr(exc, "code", "helper_failed")})
         return 1
     return 0
 
