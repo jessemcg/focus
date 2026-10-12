@@ -76,20 +76,25 @@ sensitive records. Verify answers against the source.
 ## Practice profiles
 
 Focus includes **General Court Record** and **California Juvenile Dependency**
-research profiles. Open **Research** in the header or **Practice Profiles** in
-Settings to create, duplicate, edit, preview, export, register and select guidance
-without editing JSON. Bundled profiles are read-only; your accepted revisions and
-new-case default belong to Focus, independently of RecordPrep.
+research profiles, shipped in `focus/resources/practice_profiles/`. Open the
+**Research** button to choose a profile, or **Profile settings** to edit all its
+settings in one place and **Save**. **New profile…** asks only for a name and a
+starting profile. Personal edits save privately, not into installed application
+files or `config.json`; the complete public specialties remain in this repository.
 
-Before a case's first Q&A, explicitly confirm a profile or **Legacy**. Opening a
+Before a case's first Q&A, explicitly confirm a profile or **Existing settings**. Opening a
 case does not change it. Live sessions pin their instructions and source inputs;
 end the session before changing guidance. Saved answers show their own research
 profile separately from the preparation actually consumed. Missing instructions
 block new profile-dependent research, not browsing or reading old answers.
 
-Use identity export/import to author a corresponding specialty in RecordPrep;
-identity sharing never imports instructions or changes either app's default.
-Private legacy-guidance copying is explicit and requires privacy review. See the
+Saving never silently changes an open case. When applicable, a separate **Use
+settings / Not now** confirmation offers to apply it without regenerating answers.
+Earlier case pins remain stable. Previous Dependency customization is prepared
+read-only and stored only on explicit Save or Use profile; it never becomes public
+guidance. Maintainers add public specialties with bundled data and a catalog entry,
+not a separate profile repository. Focus and RecordPrep keep independent stores.
+See the
 [GUI guide and contract](docs/practice-profiles.md) and
 [validation evidence and limitations](docs/practice-profiles-validation.md).
 Focus installation remains complete without Pi, login, models or paid verification.

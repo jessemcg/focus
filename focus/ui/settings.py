@@ -119,8 +119,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         box.set_margin_start(18)
         box.set_margin_end(18)
 
-        profiles = Adw.PreferencesGroup(title="Practice Profiles", description="Research guidance, literal search preferences, independent specialty authoring and case choices.")
-        profile_row = Adw.ActionRow(title="Manage Practice Profiles", subtitle="Opening this destination does not migrate settings or select a profile.")
+        profiles = Adw.PreferencesGroup(title="Practice profiles", description="Choose a shipped specialty or edit personal research guidance.")
+        profile_row = Adw.ActionRow(title="Profile settings", subtitle="Saving does not change an existing case's settings.")
         profile_button = Gtk.Button(label="Open…", valign=Gtk.Align.CENTER)
         profile_button.add_css_class("flat")
         profile_button.connect("clicked", lambda _button: self.app._open_practice_profiles(self))

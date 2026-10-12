@@ -22,13 +22,14 @@ Never create a Dropbox .venv or use production environments for disposable tests
 ## Practice profiles
 
 See `docs/practice-profiles.md` and `docs/practice-profiles-validation.md` for the
-implemented v1 contract, GUI workflow, runtime boundaries and validation limits.
+shipped-specialty/personal-settings workflow, v1 API and supported content schemas,
+runtime boundaries and validation limits.
 The six `profile_{contract,store,artifacts,workflows,editor_ui,manager_ui}.py`
 modules, shared conformance/workflow tests and docs are intentionally vendored
 identically in Focus and RecordPrep. Coordinate changes; never import a sibling
 app or its instructions at runtime. Bundled resources are app-owned and read-only.
 
-Focus requires explicit first-Q&A choice, including explicit Legacy. Opening cases
+Focus requires explicit first-Q&A choice, including explicit Existing settings. Opening cases
 and displaying old answers remain read-only. Defaults propose; they never silently
 rebind. Accepted research snapshots, source/map provenance and compiler bytes are
 pinned for launch, follow-up and final capture. Missing/stale instructions block new
@@ -36,9 +37,12 @@ work without replacing prior output. Literal search preferences rank, never filt
 Saved-answer schema 2 records research separately from consumed preparation;
 artifact descriptors and identity exchange never authorize instruction loading.
 
-Keep private configuration/cases untouched. Private customization copying is an
-explicit app-owned review flow, tested only with synthetic prose. Runtime settings
-and credentials never belong in profiles. Preserve legacy schema-1 answers and
+Keep private configuration/cases untouched. Dependency initialization is a read-only,
+allowlisted candidate shared by chooser/editor; only Save or Use profile persists
+privately. Public specialties remain complete tracked resources. Save uses the
+managed transaction and never needs export/registration/Git. Existing personal
+ownership and historical pins survive releases; validate initialization with
+synthetic prose only. Runtime settings and credentials never belong in profiles. Preserve legacy schema-1 answers and
 source-map 1/2 interpretation. Run isolated GUI workflows and synthetic answer
 switching as well as pytest after profile/UI changes; use simulated models only
 unless paid quality evaluation is separately authorized.

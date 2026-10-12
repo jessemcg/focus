@@ -575,10 +575,12 @@ class Focus(Adw.Application):
         header.set_title_widget(self._title_widget)
 
         header.pack_start(self._build_open_case_button())
-        self._practice_profile_button = Gtk.Button(label="Research: Legacy")
+        self._practice_profile_button = Gtk.Button()
         self._practice_profile_button.add_css_class("flat")
         self._practice_profile_button.connect("clicked", lambda _button: self._open_practice_profiles())
-        header.pack_start(self._practice_profile_button)
+        from .profile_editor_ui import wrapped
+        self._practice_profile_label = wrapped("Research: Existing settings", hexpand=True)
+        self._practice_profile_button.set_child(self._practice_profile_label)
 
         # Hamburger menu on the right
         menu_model = Gio.Menu()
@@ -602,6 +604,7 @@ class Focus(Adw.Application):
 
         # Place headerbar in main window
         toolbar.add_top_bar(header)
+        toolbar.add_top_bar(self._practice_profile_button)
 
         self.textview = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.WORD)
         self.textview.set_hexpand(True)

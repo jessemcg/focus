@@ -34,7 +34,7 @@ for scenario, profile in profiles.items():
     root = cases / scenario
     before = fingerprint(root)
     if scenario == "third":
-        assert "No accepted local research counterpart" in context_description(root)
+        assert not store.read_registry()["heads"].get(profile.ref.specialty_id)
         result = subprocess.run([sys.executable, agent_helper.__file__, "--case-root", str(root), "context", "--json"],
                                 capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -47,7 +47,6 @@ for scenario, profile in profiles.items():
     assert prep["profile_ref"]["specialty_id"] == profile.ref.specialty_id
     assert prep["profile_ref"]["content_sha256"] != profile.ref.content_sha256
     if scenario == "third":
-        assert prep["profile_ref"]["version"] != profile.ref.version
         assert literal_match("The motion was denied", profile.resource("search")["query_terms"])
         source_map = json.loads((root / "artifacts/source_map.json").read_text())
         assert any(person["role_label"] == "Independent expert" and person["role_id"].startswith("item-")
