@@ -35,7 +35,7 @@ def preview(snapshot):
 
 
 def update_indicator(app):
-    widget = getattr(app, "_practice_profile_button", None)
+    widget = getattr(app, "_title_widget", None)
     if widget is None:
         return
     try:
@@ -49,24 +49,17 @@ def update_indicator(app):
             ref = selection.profile_ref if selection else None
             snapshot = profile_store().load_profile_snapshot(ref) if ref else None
         name = snapshot.manifest["display_name"] if snapshot else "Existing settings" if (active or (root and selection)) else "Choose profile" if root else "No case"
-        text = "Research: " + name
+        text = name
+        notice = ""
         if snapshot:
             from .practice_profiles import profile_catalog
             current = next((item.snapshot for item in profile_catalog() if item.snapshot.ref.specialty_id == snapshot.ref.specialty_id), None)
             if current and current.ref != snapshot.ref:
-                text += "\nThis case uses earlier settings."
-        label = getattr(app, "_practice_profile_label", None)
-        if label:
-            label.set_text(text)
-        else:
-            widget.set_label(text)
-        widget.set_tooltip_text(None)
+                notice = "This case uses earlier settings."
+        widget.set_subtitle(text)
+        widget.set_tooltip_text(name + ("\n" + notice if notice else ""))
     except (ValueError, OSError):
-        label = getattr(app, "_practice_profile_label", None)
-        if label:
-            label.set_text("Research: unavailable")
-        else:
-            widget.set_label("Research: unavailable")
+        widget.set_subtitle("Unavailable profile")
 
 
 def open_manager(app, parent=None):
@@ -112,6 +105,4 @@ def open_manager(app, parent=None):
             update_indicator(app)
         window.body.prepend(button("End live session", end_session))
     app._practice_profiles_window = window
-    if parent is None:
-        window.present()
     return window

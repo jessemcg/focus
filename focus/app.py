@@ -575,12 +575,6 @@ class Focus(Adw.Application):
         header.set_title_widget(self._title_widget)
 
         header.pack_start(self._build_open_case_button())
-        self._practice_profile_button = Gtk.Button()
-        self._practice_profile_button.add_css_class("flat")
-        self._practice_profile_button.connect("clicked", lambda _button: self._open_practice_profiles())
-        from .profile_editor_ui import wrapped
-        self._practice_profile_label = wrapped("Research: Existing settings", hexpand=True)
-        self._practice_profile_button.set_child(self._practice_profile_label)
 
         # Hamburger menu on the right
         menu_model = Gio.Menu()
@@ -588,14 +582,17 @@ class Focus(Adw.Application):
 
         application_menu = Gio.Menu()
         application_menu.append("D-Bus Commands", "app.show_dbus_commands")
-        application_menu.append("Settings", "app.open_ai_settings")
+        application_menu.append("Model settings", "app.open_ai_settings")
         application_menu.append("Keyboard Shortcuts", "app.show_shortcuts")
         menu_model.append_section(None, application_menu)
 
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu_button.add_css_class("flat")
         menu_button.set_valign(Gtk.Align.CENTER)
-        menu_button.set_popover(Gtk.PopoverMenu.new_from_model(menu_model))
+        self._profile_menu_button = menu_button
+        from .profile_manager_ui import install_profile_menu
+        from .profile_integration import open_manager
+        install_profile_menu(menu_model, menu_button, lambda: open_manager(self))
 
         trailing_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trailing_header_box.set_valign(Gtk.Align.CENTER)
@@ -604,7 +601,6 @@ class Focus(Adw.Application):
 
         # Place headerbar in main window
         toolbar.add_top_bar(header)
-        toolbar.add_top_bar(self._practice_profile_button)
 
         self.textview = Gtk.TextView(editable=False, monospace=False, wrap_mode=Gtk.WrapMode.WORD)
         self.textview.set_hexpand(True)
@@ -1888,7 +1884,6 @@ class Focus(Adw.Application):
             self.win.set_title(win_title)
         if self._title_widget:
             self._title_widget.set_title(title_text)
-            self._title_widget.set_subtitle("")
         from .profile_integration import update_indicator
         update_indicator(self)
 
@@ -5995,7 +5990,10 @@ class Focus(Adw.Application):
     def _open_practice_profiles(self, parent=None) -> None:
         from .profile_integration import open_manager
         try:
-            open_manager(self, parent)
+            if parent is None:
+                self._profile_menu_button.popup()
+            else:
+                open_manager(self, parent)
         except (ValueError, OSError) as exc:
             self._ai_transient_toast(f"Practice Profiles unavailable: {exc}")
 
@@ -6003,7 +6001,7 @@ class Focus(Adw.Application):
         try:
             window = self._ensure_ai_settings_window()
         except Exception as exc:  # noqa: BLE001
-            self._transient_toast(f"Settings unavailable: {exc}")
+            self._transient_toast(f"Model settings unavailable: {exc}")
             return
         if window:
             window.present()
@@ -7632,13 +7630,13 @@ class Focus(Adw.Application):
             executable_path = Path(executable).expanduser()
             if not executable_path.is_file() or not os.access(executable_path, os.X_OK):
                 self._ai_transient_toast(
-                    "PI executable not found. Install PI or set the PI command in Settings."
+                    "PI executable not found. Install PI or set the PI command in Model settings."
                 )
                 return
             command_argv[0] = str(executable_path)
         elif shutil.which(executable) is None:
             self._ai_transient_toast(
-                "PI executable not found. Install PI or set the PI command in Settings."
+                "PI executable not found. Install PI or set the PI command in Model settings."
             )
             return
         wrapper = PROJECT_DIR / "scripts" / "focus-agent-vte.sh"
@@ -7903,7 +7901,7 @@ class Focus(Adw.Application):
         settings = load_ai_settings()
         raw_path = settings.speech_agent_source_file.strip()
         if not raw_path:
-            self._ai_transient_toast("Set the speech-to-text question file in Settings.")
+            self._ai_transient_toast("Set the speech-to-text question file in Model settings.")
             self._ensure_ai_panel_visible()
             return
         source_path = Path(raw_path).expanduser().resolve(strict=False)
@@ -7933,7 +7931,7 @@ class Focus(Adw.Application):
         raw_path = settings.speech_agent_source_file.strip()
         if not raw_path:
             self._ai_transient_toast(
-                "Set the speech-to-text question file in Settings."
+                "Set the speech-to-text question file in Model settings."
             )
             self._focus_agent_followup_entry()
             return

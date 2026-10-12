@@ -31,7 +31,7 @@ dependencies. Focus installs fully without Pi or an AI account.
 After confirming Focus is installed, setup offers to install Pi if it is missing.
 Press Enter to continue with Pi or type `skip` to finish. For AI features, open Pi
 and use `/login` to enter an API key or sign in. Then select an available model in
-**Focus Settings**. AI usage may incur provider charges.
+**Model settings** in Focus. AI usage may incur provider charges.
 
 [Installation options, troubleshooting, and removal →](docs/source-install.md)
 
@@ -76,9 +76,14 @@ sensitive records. Verify answers against the source.
 ## Practice profiles
 
 Focus includes **General Court Record** and **California Juvenile Dependency**
-research profiles, shipped in `focus/resources/practice_profiles/`. Open the
-**Research** button to choose a profile, or **Profile settings** to edit all its
-settings in one place and **Save**. **New profile…** asks only for a name and a
+research profiles, shipped in `focus/resources/practice_profiles/`. The selected
+profile appears beneath the app title. Choose it directly from the hamburger menu's
+profile dropdown (the checkmark shows the current choice), or **Profile settings** to edit and **Save** in
+an independent, movable and maximizable window. A boxed category list on the left
+opens only the selected page on the right: General, Research, Answers and Search
+priorities. Prompt editors expand to use the available height; a categories button
+reveals the sidebar at narrow widths. General application settings are
+labeled **Model settings** to distinguish them from profile guidance. **New profile…** asks only for a name and a
 starting profile. Personal edits save privately, not into installed application
 files or `config.json`; the complete public specialties remain in this repository.
 
@@ -91,7 +96,7 @@ block new profile-dependent research, not browsing or reading old answers.
 Saving never silently changes an open case. When applicable, a separate **Use
 settings / Not now** confirmation offers to apply it without regenerating answers.
 Earlier case pins remain stable. Previous Dependency customization is prepared
-read-only and stored only on explicit Save or Use profile; it never becomes public
+read-only and stored only on explicit Save or dropdown selection; it never becomes public
 guidance. Maintainers add public specialties with bundled data and a catalog entry,
 not a separate profile repository. Focus and RecordPrep keep independent stores.
 See the
