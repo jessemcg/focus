@@ -36,6 +36,15 @@ pinned for launch, follow-up and final capture. Missing/stale instructions block
 work without replacing prior output. Literal search preferences rank, never filter.
 Saved-answer schema 2 records research separately from consumed preparation;
 artifact descriptors and identity exchange never authorize instruction loading.
+Read RecordPrep participant schema 4 alongside legacy 2/3: role_label and counsel
+represents are source descriptions, not a specialty role catalog. Preserve free-form
+examiner labels in map context. RecordPrep profile content schema 4 removes roles
+and participant instructions; the shared editor has no Participants / Witnesses area.
+RecordPrep content schema 5 also removes overview instructions and the shared
+RecordPrep editor's Case Overview category. Its fixed overview remains the same
+five-section schema-1 nonauthoritative orientation consumed by Focus; historical
+profile overview resources stay readable but inert. Focus research settings remain
+independent and unchanged.
 
 Keep private configuration/cases untouched. Dependency initialization is a read-only,
 allowlisted candidate shared by chooser/editor; only Save or Use profile persists

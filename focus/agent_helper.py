@@ -633,7 +633,7 @@ def _participant_aliases_for_page(source_map: dict[str, Any], page_number: int) 
                 continue
             aliases.extend(
                 str(value) for value in (
-                    person.get("name"), person.get("role_id"), person.get("role_label"),
+                    person.get("name"), person.get("role_id"), person.get("role_label"), person.get("represents"),
                     *person.get("aliases", []),
                 ) if value
             )

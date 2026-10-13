@@ -49,7 +49,7 @@ for scenario, profile in profiles.items():
     if scenario == "third":
         assert literal_match("The motion was denied", profile.resource("search")["query_terms"])
         source_map = json.loads((root / "artifacts/source_map.json").read_text())
-        assert any(person["role_label"] == "Independent expert" and person["role_id"].startswith("item-")
+        assert any(person["role_label"] == "Independent expert" and "role_id" not in person
                    for hearing in source_map["participant_index"]["hearings"] for person in hearing["participants"])
     context = research_context_payload(research_context_bytes(pin.metadata()))
     label = profile_context_label(research_context_bytes(context))
