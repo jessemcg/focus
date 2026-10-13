@@ -4,6 +4,7 @@ Temporary storage only. No picker, repository operation or model request. Set
 PROFILE_ACCEPT_HOLD=1 to inspect the synthetic settings window on this desktop.
 """
 import importlib
+from dataclasses import asdict
 import json
 import uuid
 import os
@@ -40,6 +41,14 @@ def click(window, label):
                   (w.get_label() == label or (isinstance(w.get_child(), Gtk.Label) and w.get_child().get_text() == label)))
     assert widget.get_sensitive(), label
     widget.emit("clicked")
+
+
+def new_profile(manager, editor):
+    if package == "recordprep":
+        manager._guard()
+        click(manager, "Create profiles")
+    else:
+        click(editor, "Create profiles")
 
 
 def drain(seconds=.12):
@@ -110,8 +119,13 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         layout(editor)
         assert editor.navigation.has_css_class("boxed-list")
         assert editor.body.has_css_class("profile-settings-layout")
-        assert editor.stack.get_visible_child_name() == "profile"
-        expected_categories = ({"General", "Classification", "Summaries", "Participants / Witnesses", "Case Overview"}
+        first_page = "classification" if package == "recordprep" else "profile"
+        assert editor.stack.get_visible_child_name() == first_page
+        if package == "recordprep":
+            assert not hasattr(editor, "selector")
+            assert editor.default_row is None
+            assert "case-name" not in editor.pages
+        expected_categories = ({"Classification", "Summaries", "Participants / Witnesses", "Case Overview"}
                                if package == "recordprep" else {"General", "Research", "Answers", "Search priorities"})
         assert set(editor.nav_groups) == expected_categories
         # Every child row selects just its own page; navigation does not edit data.
@@ -142,7 +156,7 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         position = (adjustment.get_upper() - adjustment.get_page_size()) / 2
         assert position > 0
         adjustment.set_value(position)
-        editor.nav_rows["profile"].emit("activated")
+        editor.nav_rows[first_page].emit("activated")
         editor.nav_rows[prompt_key].emit("activated")
         drain(.1)
         assert "Synthetic navigation draft" in buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), True)
@@ -165,7 +179,7 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         editor.nav_rows[prompt_key].emit("activated")
         assert not editor.body.get_show_sidebar()
         layout(editor)
-        editor._select_page("profile")
+        editor._select_page(first_page)
         assert editor.editor.resources
         assert "report_scope" not in importlib.import_module(package + ".profile_editor_ui").POLICIES
         assert not any(isinstance(item, Gtk.Label) and item.get_text() == "Formal proposals"
@@ -187,7 +201,7 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         assert not list(root.iterdir())
         click(manager, "Profile settings")
         editor = manager.children_windows[-1]
-        resource = "research" if package == "focus" else "case_name"
+        resource = "research" if package == "focus" else "classification"
         editor.editor.resources[resource] += "\nSynthetic personal instructions.\n"
         click(editor, "Save")
         assert store.read_registry()["personal"]
@@ -203,6 +217,15 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         editor.editor.resources[resource] += "\nSynthetic revised settings.\n"
         click(editor, "Save")
         assert selected == [ref]  # Saving alone never binds the case.
+        assert editor.case_notice.get_visible()
+        assert "This case uses earlier settings" in editor.case_notice.get_text()
+        # A pending choice is not a case pin, even when revisions differ.
+        manager.has_case = False
+        editor.refresh_case_notice()
+        assert not editor.case_notice.get_visible() and not editor.case_notice.get_text()
+        manager.has_case = True
+        editor.refresh_case_notice()
+        assert editor.case_notice.get_visible()
         assert manager._selected().snapshot.ref != ref
         assert not manager.message.get_visible()
         assert not any(isinstance(widget, Gtk.Label) and "This case uses earlier settings" in widget.get_text()
@@ -218,7 +241,7 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         allowed[0] = True
         editor._refresh_guard()
         before_cancel = store.registry_path.read_bytes()
-        click(editor, "New profile…")
+        new_profile(manager, editor)
         cancelled = editor.new_dialog
         next(item for item in descendants(cancelled) if isinstance(item, Gtk.Entry)).set_text("Synthetic cancelled draft")
         click(cancelled, "Create")
@@ -230,18 +253,27 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         assert store.registry_path.read_bytes() == before_cancel
         editor = manager._edit()
         drain()
-        editor.editor.resources[resource] += "\nSynthetic unsaved switch instruction.\n"
-        editor.selector._choose(1)
-        editor.unsaved_dialog.response("cancel")
-        assert "Synthetic unsaved switch instruction" in editor.editor.resources[resource]
-        editor.selector._choose(1)
-        editor.unsaved_dialog.response("save")
-        # Resolve the explicit case question before changing the viewed draft.
-        assert editor.editor.manifest["specialty_id"] == "general-court-record"
-        manager.apply_dialog.response("later")
-        assert editor.editor.manifest["specialty_id"] == "california-juvenile-dependency"
-        assert selected == [ref]
-        editor.selector._choose(0)
+        if package == "focus":
+            editor.editor.resources[resource] += "\nSynthetic unsaved switch instruction.\n"
+            editor.selector._choose(1)
+            editor.unsaved_dialog.response("cancel")
+            assert "Synthetic unsaved switch instruction" in editor.editor.resources[resource]
+            editor.selector._choose(1)
+            editor.unsaved_dialog.response("save")
+            # Resolve the explicit case question before changing the viewed draft.
+            assert editor.editor.manifest["specialty_id"] == "general-court-record"
+            manager.apply_dialog.response("later")
+            assert editor.editor.manifest["specialty_id"] == "california-juvenile-dependency"
+            assert selected == [ref]
+            editor.selector._choose(0)
+        else:
+            # Saving an existing default advances it, without adding a default control.
+            store.set_default(editor.editor.base.ref)
+            editor.expected_default = store.read_registry()["default"]
+            editor.editor.resources[resource] += "\nSynthetic default revision.\n"
+            assert editor._save()
+            assert store.read_registry()["default"] == asdict(editor.editor.base.ref)
+            manager.apply_dialog.response("later")
         editor.editor.resources[resource] += "\nSynthetic draft preserved after a concurrent save.\n"
         competing = workflows.ProfileEditor(editor.editor.base)
         competing.resources[resource] += "\nSynthetic competing save.\n"
@@ -256,8 +288,8 @@ with tempfile.TemporaryDirectory(prefix="simple-profile-gui-") as temporary:
         manager._refresh()
         editor = manager._edit()
         drain()
-        editor._select_page("profile")
-        click(editor, "New profile…")
+        editor._select_page(first_page)
+        new_profile(manager, editor)
         dialog = editor.new_dialog
         name = next(w for w in descendants(dialog) if isinstance(w, Gtk.Entry))
         click(dialog, "Create")

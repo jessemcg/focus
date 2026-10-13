@@ -83,8 +83,11 @@ an independent, movable and maximizable window. A boxed category list on the lef
 opens only the selected page on the right: General, Research, Answers and Search
 priorities. Prompt editors expand to use the available height; a categories button
 reveals the sidebar at narrow widths. General application settings are
-labeled **Model settings** to distinguish them from profile guidance. **New profile…** asks only for a name and a
-starting profile. Personal edits save privately, not into installed application
+labeled **Model settings** to distinguish them from profile guidance. **Create profiles**
+creates a profile from a name and starting profile, or deletes a personal profile
+with confirmation. Built-ins are protected. Deletion removes the chooser entry,
+not revisions used by existing cases; a deleted default returns to General.
+Personal edits save privately, not into installed application
 files or `config.json`; the complete public specialties remain in this repository.
 
 Before a case's first Q&A, explicitly confirm a profile or **Existing settings**. Opening a

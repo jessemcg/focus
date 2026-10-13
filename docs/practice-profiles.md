@@ -25,20 +25,52 @@ The window uses a boxed category/subcategory list on the left and shows only the
 selected settings page on the right, like Model settings. The list sits directly on
 the window background, without a contrasting full-height left panel. The header
 also uses Model settings' flat toolbar styling and shares the window background.
-**General → Profile and
-defaults** contains the profile selector, **New profile…** and **Use for new cases**.
+In Focus, **General → Profile and defaults** contains the profile selector,
+**Create profiles** and **Use for new cases**. RecordPrep has no General section or
+second profile picker/default checkbox; it edits the already-selected profile.
+**Create profiles** is a hamburger-menu link immediately below **Profile settings**,
+not a button at the bottom of the sidebar. Its Cancel/Create actions use flat
+buttons without an extra selectable hover background. Existing new-case default
+preferences are preserved by Save (saving that profile advances its revision).
 The profile name remains beneath the window title; **Save** and **Cancel** stay in
 the header. Switching pages preserves unsaved edits and each page's scroll position.
 At narrow widths, the **Show categories** button opens the sidebar as an overlay;
 selecting a subcategory closes the overlay without squeezing the editor. A built-in opens with
 complete populated settings; personal settings appear in place of its baseline.
-New profile asks only for a name and a starting profile (General by default).
-Identifiers are generated internally. Cancelling a draft saves nothing.
+Create profiles has a **Create a profile** section asking for a name and starting
+profile (General by default). Identifiers are generated internally. Create opens
+an unsaved draft; only Save keeps it. Cancelling a draft saves nothing.
 
-RecordPrep's main categories are **General**, **Classification**, **Summaries**,
-**Participants / Witnesses**, and **Case Overview**. Each classification task has
-its own subcategory and tall editor (at least 360 pixels, expanding with the window).
-Report/form naming is under Classification. Summaries separates hearing/report
+Its **Delete a personal profile** section lists only user-created specialties,
+not built-ins (including personal edits of built-ins). Choose one and press
+**Delete profile…**, then confirm. Delete removes the chooser entry, never its
+accepted revision files or existing case pins. Existing cases can continue using
+their saved instructions. A deleted new-case default returns to General, and a
+matching pending next-case choice is cleared. No case is silently rebound and
+nothing is regenerated. Reusing the name creates a new identity; old open drafts
+cannot resurrect a deleted identity. Stale profile/default/case state or active
+work blocks deletion without repairing private files.
+
+RecordPrep opens at Classification. Its main categories are **Classification**, **Summaries**,
+**Participants / Witnesses**, and **Case Overview**. Every Classification page
+shows a short, display-only **How classification builds the record** explanation
+above its scrolling editor, as plain text on the window background without a box,
+border, shadow or contrasting panel. Common guidance is first; reporter’s-transcript (RT)
+page types → hearing starts → hearing dates come next, followed by clerk’s-transcript
+(CT) page types → minute-order/form starts → minute-order dates → report names/dates
+and form names. Subtitles identify RT/CT and Basic/Advanced/Dates/Names without a
+new navigation level. Each task keeps its tall editor (at least 360 pixels,
+expanding with the window). Report/form naming remains under Classification.
+
+Common guidance is combined with only the active page-type, first-page or date task,
+not every task prompt. Naming has separate instructions and approved-name entries.
+Advanced uses Basic’s page types to select hearing, minute-order and form start
+checks; Dates uses marked hearing/minute-order first pages. Names reads a report’s
+name and date at the start of each continuous group of report pages, and reads form
+names from marked form first pages. Hearing TOC labels come from hearing dates—not
+a separate hearing-name prompt. Correction stages retain their existing positions;
+TOC and document boundaries use these classification results. This is an explanation
+and navigation reorder only: no instructions, resource IDs or pipeline behavior change. Summaries separates hearing/report
 topics, document-review instructions and summary-writing instructions; minute orders
 have their own page. Identification instructions, counsel roles and participant roles
 are separate pages under Participants / Witnesses. Report naming and form naming
@@ -70,9 +102,33 @@ contains no passive profile-status notices. If case application
 fails after a successful save, the app reports **Profile saved; case settings
 were not changed.** The saved profile is not rolled back unsafely.
 
-RecordPrep holds a new-case choice in memory until Create files creates a new
-bundle. Existing bundles stay legacy or pinned. Focus proposes defaults but
-requires an explicit first-research choice, including Existing settings. Active
+With no existing case selected, RecordPrep remembers an explicit dropdown choice
+in the private profile registry as the new-case default. The next launch restores
+that choice, and Create files uses it for a new bundle. Save advances the remembered
+revision for that specialty without a case-application confirmation or an old-case
+write. Selecting a profile for an existing case does not replace this default;
+existing bundles stay legacy or pinned.
+
+RecordPrep's header has dim **Choose case bundle**, **Choose PDF(s)** and
+**Clear current case** buttons, in that order. The trash button clears only the
+current selection and displayed progress/activity; no PDF, bundle, case name or
+generated artifact is deleted. It also drops pending layout/profile choices and
+invalidates old file dialogs and case-bound profile drafts. Stop active work and
+close the TOC editor before clearing; ordinary Model settings and Profile settings
+remain usable without a case. Clearing drops the in-memory proposal but does not
+forget the remembered new-case default or saved personal profile content.
+
+Synchronized RecordPrep case metadata accepts ordinary owner-owned `0755`/`0775`
+directories and `0644`/`0664` files, without chmod/repair. Symlinks, hardlinked or
+nonregular files, foreign ownership, executable metadata files and world-writable
+metadata remain rejected. Compare-and-swap and publication locking still protect
+selection changes. These rules are case-specific: the accepted-profile store
+continues to require owner-only directories/files. A missing pinned revision is
+not silently substituted; explicitly selecting an available profile can replace
+the pin without regenerating any output.
+
+Focus proposes defaults but requires an explicit first-research choice, including
+Existing settings. Active
 preparation/research and changing case identities reject mutation. Selection
 alone makes no model request, renames no case and regenerates nothing.
 
@@ -127,7 +183,7 @@ profile wins and is never repeatedly overlaid.
 Empty overrides inherit public guidance. Genuine prose is retained without
 unnecessary stripping. Historical built-ins are recognized so retired output
 instructions are not reattached as personal guidance. RecordPrep preserves
-classification by task, case-name guidance, report/form guidance and known
+classification by task, historical case-name text (stored but inert), report/form guidance and known
 structured naming rules, hearing/report topics and phase guidance, minutes and
 effective historical attendance. Ambiguous naming prose is retained with a
 focused review notice: prose does not invent approved-title/catalog rules.
@@ -141,7 +197,8 @@ settings menu and window are now called **Model settings** in both applications,
 distinct from **Profile settings**. Their existing model, credential, appearance
 and machine controls remain; the rename does not change storage or action names.
 Model settings no longer edits practice prompts or the retired direct-API sandbox controls. It
-retains production classification/case-name API settings and agentic Pi models.
+retains production classification API settings and agentic Pi models. RecordPrep's
+Infer case uses the shared native-Pi model; its old direct-API page is removed.
 End-user prompt testing, its action/window and request/payload paths are removed.
 Historical recognition text remains deliberately intact for compatibility.
 
@@ -174,11 +231,22 @@ schema 2 adds `classification_tasks` (strict JSON keys `rt`, `ct`, `first_hearin
 retaining every schema-1 resource. Common classification guidance is composed
 with application-owned taxonomy and only the current task's guidance. Component
 fingerprints isolate basic, first-page/correction and date guidance; caption
-inference uses its own compiler and source/model/output freshness marker.
+inference uses one application-owned, practice-neutral prompt and its own
+source/model/output freshness marker. The native `recordprep-infer-case` skill
+reads only private copies of the first three pages and writes only a candidate;
+Python validates and publishes it with unchanged-input/selection checks. No
+separate caption model or credential settings remain. Stored case-name guidance and legacy
+`case_name_prompt` overrides are ignored, not rewritten. There is no case-name
+prompt editor; caption inference preserves source names, initials/anonymization
+and caption forms without assuming a specialty.
 Credentials, first-three-page bounds, filename validation and guarded publication
 remain application-owned. Selecting a profile never renames the case.
 
-Schema-1 snapshots remain byte-preserved, including historical caption behavior.
+Schema-1 snapshots remain byte-preserved. Explicit caption inference uses the
+same built-in prompt and shared native-Pi model for every case. Caption freshness
+now requires the schema-2 marker bound to the source/model/contract/output;
+existing names remain readable but may show pending until explicitly rerun.
+Opening a case never renames it or migrates its data.
 The retired report-scope field is an explicit exception: it remains readable but
 no longer controls extraction. Explicit editing upgrades only an in-memory draft.
 Old unversioned and v2 naming catalogs remain readable with their historical
