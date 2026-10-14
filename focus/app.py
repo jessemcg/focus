@@ -91,7 +91,6 @@ class Focus(Adw.Application):
         except Exception:
             pass
         self.connect("activate", self.on_activate)
-        prune_deprecated_summary_bookmarking_config()
 
         if input_override is not None:
             self.input_dir = input_override

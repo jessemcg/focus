@@ -108,10 +108,6 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _normalize_text(value: str) -> str:
-    return " ".join(value.split())
-
-
 def _resolve_inside_root(value: Any, root_dir: Path) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise SummaryEditionError("Edition path is missing.")

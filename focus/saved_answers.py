@@ -36,7 +36,6 @@ from .research_context import research_context_bytes, research_context_payload, 
 from .profile_contract import ProfileError
 
 SAVED_ANSWERS_SCHEMA_VERSION = 1
-PROFILE_SAVED_ANSWERS_SCHEMA_VERSION = 2
 METHOD_SAVED_ANSWERS_SCHEMA_VERSION = 3
 SAVED_ANSWERS_DIR_NAME = ".focus"
 SAVED_ANSWERS_SUBDIR = "saved-answers"

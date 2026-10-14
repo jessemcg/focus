@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import gi
+import pytest
 
 gi.require_version("Adw", "1")
 gi.require_version("Gtk", "4.0")
@@ -51,3 +54,29 @@ def test_arrow_opens_the_library_popover() -> None:
     assert isinstance(dropdown, Gtk.MenuButton)
     assert dropdown.get_popover() is popover.popover
     assert dropdown.get_tooltip_text() == popover.button.get_dropdown_tooltip()
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_popover_rows_retain_captured_provenance_and_quality(tmp_path, version):
+    from focus.research_context import research_context_bytes
+    from focus.research_runtime import ResearchPin
+    from test_research_runtime import case, historical_context
+    from test_saved_answers import _answer
+
+    context = None
+    if version == 2:
+        context = research_context_bytes(historical_context())
+    elif version == 3:
+        context = research_context_bytes(ResearchPin.capture(case(tmp_path / "case")).metadata())
+    answer = replace(_answer(), schema_version=version, research_context=context,
+                     status="partial", stop_reason="length")
+    row = _build()._build_row(answer)
+    expected = {1: "Historical research: unrecorded",
+                2: "Historical research profile:",
+                3: "Focus method: focus-record-qa · v1"}[version]
+    assert expected in row.get_tooltip_text()
+    assert "RecordPrep preparation:" in row.get_tooltip_text()
+    assert "Partial" in row.get_subtitle()
+    assert "Saved " in row.get_subtitle()
+    assert row.answer_id == answer.answer_id
+    assert answer.research_context == context

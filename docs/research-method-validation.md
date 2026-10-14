@@ -90,6 +90,57 @@ also confirmed the menu opens on a pointer click in the owned synthetic window.
 The rerun full suite passed **670 tests + 11 subtests, no skips**, with the same two
 existing deprecation warnings. No real preferences/case files or model calls.
 
+## Neutral-method cleanup — Home, 2026-10-14
+
+Narrow cleanup from `578a81d`; the method remains **focus-record-qa v1**.
+Removed the unused answer-header formatter, three unreferenced helpers, unused
+schema-2 constant and read/startup-triggered obsolete-key cleanup. Active permission
+checks, historical schemas, popover provenance and vendored contracts are unchanged.
+The model-facing search example is neutral; preparation metadata stays descriptive.
+Current test names are `test_research_runtime.py`,
+`test_research_session_integration.py` and `acceptance_neutral_method_ui.py`.
+References to their old names in historical validation records remain historical.
+
+Validation used tracked-source copies (plus reviewed new/renamed tests), no private
+files or write-through links, and a separately provisioned locked environment via
+paired absolute UvEnvironments helper overrides. HOME/XDG/FOCUS_CONFIG_DIR, GSettings
+and metrics were isolated; native interaction targeted owned synthetic windows only.
+
+- Focused tests: **151 passed, 11 skipped**, one existing Gtk CSS deprecation warning.
+- Full pytest: **661 passed + 11 subtests, 11 skipped**, the existing Gtk CSS and
+  forkpty deprecation warnings. One skip is optional sibling PiRunMetrics wrapper
+  integration; ten require the installed Pi SDK plus sibling PiRunMetrics integration
+  absent from this independent copy. Actual extension and follow-up lifecycle checks
+  ran and passed, including changed-component rejection and retired-environment
+  stripping; no live models were called.
+- Synthetic-config regressions prove supported values load correctly alongside
+  obsolete/unknown keys, reads preserve exact bytes and never invoke `_write_config`,
+  and explicit Settings saves retain established cleanup/preservation behavior.
+  Actual GTK startup additionally rejects cleanup writes and checks byte preservation
+  through opening Settings. Saved-answer popover rows retain provenance/quality for
+  saved schemas 1/2/3.
+- Renamed neutral GTK acceptance, answer switching, reader controls and reliability
+  display pass under `G_DEBUG=fatal-criticals`. Switching: **320 transitions, zero GTK
+  criticals**, identity/provenance and position restoration pass. A final reader
+  rerun hit a `textview.has_focus()` assertion; an unchanged-source immediate rerun
+  passed (earlier reader run also passed). This is a desktop-focus-sensitive check,
+  not a GTK critical; the failed-run log is retained.
+- Native Computer Use confirms neutral main window, grouped hamburger menu, ordinary
+  Settings without profile controls and saved-answer popover quality/date display.
+  Owned previews exited normally; noncritical GDK/Vulkan surface-resize warnings
+  occurred during native inspection. The existing real-case instance was untouched.
+- Disposable wheel build/copy-mode installation, independent installed imports,
+  compiler, pin/staging and retired CLI diagnostic pass without sibling imports.
+  Compileall and whitespace/reference checks pass. Both vendored files are unchanged
+  and byte-identical to local RecordPrep (read-only comparison); dependency/lockfile,
+  launcher/application ID/D-Bus contracts are unchanged.
+
+Evidence logs: `/tmp/focus-neutral-cleanup-HxPVnE/`. Disposable source/environment,
+installed target and owned synthetic state are removed after acceptance; logs are
+not deployment or recovery copies. No migration, paid calls, remote access, real
+settings/case modifications, commit or push. Restart Focus and start a new session:
+changed component hashes must continue to reject old pins, not bypass validation.
+
 ## Limits and adoption
 
 Deterministic/offline acceptance is **not live-model comparative answer-quality

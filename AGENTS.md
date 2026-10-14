@@ -50,7 +50,13 @@ RecordPrep editor's Case Overview category. Its fixed overview remains the same
 five-section schema-1 nonauthoritative orientation consumed by Focus; historical
 profile overview resources stay readable but inert. Focus always uses the fixed neutral method.
 
-Keep private configuration/cases/profiles untouched. Preserve source-map schemas 1–3,
+Keep private configuration/cases/profiles untouched. Configuration reads/startup
+must not clean obsolete keys or write settings; explicit Settings saves retain their
+established retired-key cleanup. Current neutral regressions are
+`test_research_runtime.py`, `test_research_session_integration.py` and
+`acceptance_neutral_method_ui.py`; profile-contract/consumer tests are historical
+compatibility checks, not active research selection.
+Preserve source-map schemas 1–3,
 participant schemas 2–4/legacy forms and summary-edition layouts. Unknown specialty
 identities are accepted; unknown structural schemas fail closed. Run isolated GTK
 workflows and synthetic answer switching plus full pytest after runtime/UI changes;
@@ -69,7 +75,7 @@ authorized. Older releases may not read schema-3 saved answers; never down-conve
 - `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
 - `focus/agent_followup.py`: GTK-independent client and protocol types for the bounded Unix-socket follow-up bridge; creates/removes the application-owned runtime directory, validates path/token/type, and raises typed busy/unavailable/uncertain/protocol failures without queueing or replaying prompts.
 - `focus/answer_metadata.py`: GTK-independent recognition of the leading `# Title` / `*Subtitle*` answer metadata, normalized labels, and the protected metadata-prefix offset used to keep those labels out of transcript-search link targets.
-- `focus/answer_presentation.py`: GTK-independent saved-date and quality-status formatting for the saved-answer popover rows, plus metadata formatting helpers; malformed dates degrade to readable text. The Answer/Session header has no metadata line; snapshots and saved artifacts retain their metadata internally.
+- `focus/answer_presentation.py`: GTK-independent saved-date, quality-status and research-provenance formatting for the saved-answer popover rows; malformed dates degrade to readable text. The Answer/Session header has no metadata line; snapshots and saved artifacts retain their metadata internally.
 - `focus/reading_position.py`: bounded least-recently-used in-memory cache of per-answer viewport anchors plus scroll fractions; eviction only loses a reading position.
 - `focus/research_runtime.py`: fixed-method resource compiler, private staging and canonical case/input session pins; never reads retired profile stores.
 - `focus/research_context.py`: strict instruction-free context schema-1/2 metadata; historical profiles are descriptive only, new metadata records focus-record-qa.

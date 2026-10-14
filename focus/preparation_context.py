@@ -30,7 +30,7 @@ def preparation_context(root: Path, map_provenance: dict | None) -> dict:
 
     Reading/opening a case never creates its binding, accepts a profile, resolves
     a profile folder, or changes defaults. A missing RecordPrep instruction store
-    has no effect on browsing. Focus's research selection is a separate concern.
+    has no effect on browsing. Focus research always uses its fixed neutral method.
     """
     selection, selection_status = _read(root, ".recordprep/practice-profile.json")
     publication, publication_status = _read(root, "artifacts/practice_profile_provenance.json")

@@ -100,6 +100,8 @@ profile snapshots. Older Focus releases may not read new schema-3 answers.
 bundles and saved answers are not rewritten or deleted. Restart Focus, then explicitly
 ask a new question to use the fixed method. No RecordPrep regeneration is required.
 Retired `focus profiles …` commands report retirement rather than opening a case.
+Obsolete configuration keys are inert on read/startup; only an explicit Settings
+save applies the established retired-key cleanup.
 
 See the [fixed method and compatibility contract](docs/research-method.md),
 [current validation](docs/research-method-validation.md), and

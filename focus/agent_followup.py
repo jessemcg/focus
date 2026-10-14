@@ -133,10 +133,6 @@ def _is_owned_by_current_user(file_stat: os.stat_result) -> bool:
     return file_stat.st_uid == os.getuid()
 
 
-def _has_private_mode(file_stat: os.stat_result) -> bool:
-    return stat.S_IMODE(file_stat.st_mode) & 0o077 == 0
-
-
 def remove_followup_runtime(directory: Path | None) -> None:
     """Remove only an application-owned private runtime directory.
 
@@ -360,20 +356,3 @@ class FollowUpClient:
         if error in {"invalid_request", "bad_version", "too_large"}:
             raise FollowUpProtocolError(f"follow-up request was rejected ({error})")
         raise FollowUpRejected(f"follow-up delivery was rejected ({error})")
-
-
-def socket_error_category(exc: BaseException) -> str:
-    """Map a transport failure to a short user-facing category."""
-    if isinstance(exc, FollowUpBusy):
-        return "busy"
-    if isinstance(exc, FollowUpUnavailable):
-        return "unavailable"
-    if isinstance(exc, FollowUpUnauthorized):
-        return "unauthorized"
-    if isinstance(exc, FollowUpUncertain):
-        return "uncertain"
-    if isinstance(exc, FollowUpProtocolError):
-        return "protocol"
-    if isinstance(exc, FollowUpRejected):
-        return "rejected"
-    return "error"

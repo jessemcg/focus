@@ -106,6 +106,11 @@ def test_focus_extension_is_shell_free_uncapped_and_terminating() -> None:
     assert 'name: "submit_focus_answer"' in source
     assert '"context", "search", "lookup"' in source
     assert "query_groups" not in source
+    # Only the tool-schema example is constrained, not source evidence/fixtures.
+    queries_schema = next(line for line in source.splitlines() if "queries: Type.Optional" in line)
+    assert '["motion denied", "January 2, 2025 denial reason"]' in queries_schema
+    assert "placement order" not in queries_schema
+    assert "removal reason" not in queries_schema
     assert 'args.push("research")' not in source
     assert "pi.exec(python, args" in source
     assert "child_process" not in source

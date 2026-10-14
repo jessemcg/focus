@@ -370,7 +370,7 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
     promptSnippet: "Research the active Focus record with structured, source-resolving actions",
     parameters: Type.Object({
       action: StringEnum(["context", "search", "lookup", "document", "map"] as const),
-      queries: Type.Optional(Type.Array(Type.String(), { maxItems: 8, description: 'search requires nonempty usable variants, e.g. ["placement order", "January 2, 2025 removal reason"].' })),
+      queries: Type.Optional(Type.Array(Type.String(), { maxItems: 8, description: 'search requires nonempty usable variants, e.g. ["motion denied", "January 2, 2025 denial reason"].' })),
       citation: Type.Optional(Type.String({ description: 'lookup: exactly one citation or file, e.g. "CT 12".' })),
       file: Type.Optional(Type.String({ description: 'lookup: exactly one file or citation; use a returned source path.' })),
       id: Type.Optional(Type.String({ description: 'document action requires matches[].documents[].id or an id from the document map, e.g. "hearing:0001".' })),

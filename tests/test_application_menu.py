@@ -12,7 +12,7 @@ import pytest
 def test_hamburger_opens_and_settings_item_activates():
     project = Path(__file__).resolve().parents[1]
     result = subprocess.run(
-        [sys.executable, str(project / "tests/acceptance_main_profile_ui.py")],
+        [sys.executable, str(project / "tests/acceptance_neutral_method_ui.py")],
         cwd=project,
         env=dict(os.environ, G_DEBUG="fatal-criticals", FOCUS_NEUTRAL_HOLD_MS="0"),
         capture_output=True,

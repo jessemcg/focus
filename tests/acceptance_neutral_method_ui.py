@@ -39,7 +39,13 @@ retired.parent.mkdir(parents=True)
 retired.write_text("CORRUPT RETIRED STORE SENTINEL")
 original = {p: p.read_bytes() for p in bundle.rglob("*") if p.is_file()}
 module.APPLICATION_ID = "com.mcglaw.Focus.NeutralAcceptance"
-application = module.Focus(input_override=bundle)
+# Actual startup and Settings opening must leave obsolete/unknown values inert.
+core.CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+config_bytes = b'{\n "rag_prompt": "retired sentinel", "summary_file": "old.txt",\n "summary_read_positions": {}, "page_kimi_reasoning": true,\n "unknown_future_key": {"preserve": true}, "pi_agent_command": "/usr/bin/true"\n}\n'
+core.CONFIG_FILE.write_bytes(config_bytes)
+with patch.object(core, "_write_config", side_effect=AssertionError("Startup must not clean config")):
+    application = module.Focus(input_override=bundle)
+assert core.CONFIG_FILE.read_bytes() == config_bytes
 errors = []
 
 
@@ -64,6 +70,7 @@ def finish():
     try:
         assert not errors
         assert retired.read_text() == "CORRUPT RETIRED STORE SENTINEL"
+        assert core.CONFIG_FILE.read_bytes() == config_bytes
         for path, data in original.items():
             assert path.read_bytes() == data
         assert not hasattr(application, "_practice_profiles_window")

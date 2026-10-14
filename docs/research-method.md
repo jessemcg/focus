@@ -67,6 +67,10 @@ metadata/schema identity; unknown or invalid metadata gives bounded errors, not 
 fabricated neutral-method replacement. Context surfaces describe Focus research and
 RecordPrep preparation separately, without Different specialties warnings or controls.
 
+Configuration reads/startup do not rewrite files to discard obsolete keys. Those
+values remain inert; explicit Settings saves retain their established retired-key
+cleanup behavior. No automatic configuration migration is performed.
+
 **There is no migration:** never rewrite/delete private profile registries, snapshots,
 case selections, config, legacy prompts, saved answers or prepared bundles. Missing or
 corrupt retired stores are irrelevant because runtime paths do not open them. Restart

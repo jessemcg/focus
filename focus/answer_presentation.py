@@ -1,9 +1,8 @@
 """GTK-independent presentation helpers for displayed Agent answers.
 
-The displayed answer context line and the saved-answer popover rows must agree
-on how a saved timestamp and quality status are worded.  Keeping the formatting
-here (no GTK imports) makes the rules directly testable and prevents the two
-surfaces from drifting apart.
+Saved-answer popover rows use these timestamp, quality and provenance formatters.
+Keeping them here (no GTK imports) makes the presentation rules directly testable.
+The Answer/Session header has no metadata line.
 """
 
 from __future__ import annotations
@@ -77,33 +76,3 @@ def research_context_label(context: bytes | None) -> str:
     else:
         research = f"Historical research profile: {label(value['research_profile_ref'])}"
     return f"{research} — RecordPrep preparation: {label(prepared_ref)}"
-
-
-def answer_context_label(
-    *,
-    is_saved: bool,
-    saved_at: str | None = None,
-    status: str | None = None,
-    stop_reason: str | None = None,
-    capture: str | None = None,
-) -> str:
-    """Compose the one-line context label for the displayed snapshot.
-
-    Historical snapshots read ``Saved answer · <local date>`` and live
-    snapshots read ``Latest answer``.  A partial or best-effort answer appends
-    an explicit plain-text marker so quality is never conveyed by color alone.
-    """
-    parts: list[str] = []
-    if is_saved:
-        stamp = format_saved_at(saved_at)
-        parts.append(f"Saved answer · {stamp}" if stamp else "Saved answer")
-    else:
-        parts.append("Latest answer")
-    quality = answer_quality_label(
-        status=status,
-        stop_reason=stop_reason,
-        capture=capture,
-    )
-    if quality:
-        parts.append(quality)
-    return " · ".join(parts)

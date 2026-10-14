@@ -1217,30 +1217,6 @@ def _apply_focus_terminal_theme(terminal: Any) -> None:
     terminal.set_color_highlight_foreground(foreground)
 
 
-def prune_deprecated_summary_bookmarking_config() -> None:
-    config = _read_config()
-    changed = False
-    if "summary_read_positions" in config:
-        config.pop("summary_read_positions", None)
-        changed = True
-    if "summary_file" in config:
-        config.pop("summary_file", None)
-        changed = True
-    deprecated_reasoning_keys = (
-        "page_kimi_reasoning",
-        "page_deepseek_reasoning",
-        "range_kimi_reasoning",
-        "range_deepseek_reasoning",
-    )
-    for key in deprecated_reasoning_keys:
-        if key in config:
-            config.pop(key, None)
-            changed = True
-    if not changed:
-        return
-    _write_config(config)
-
-
 def _coerce_font_size(value: Any, default: int) -> int:
     try:
         size = int(value)
@@ -1477,12 +1453,6 @@ RETIRED_SUMMARIZATION_CONFIG_KEYS = {
 
 def load_ai_settings() -> AiSettings:
     config = _read_config()
-    cleaned = dict(config)
-    for key in OBSOLETE_SEARCH_CONFIG_KEYS:
-        cleaned.pop(key, None)
-    if cleaned != config:
-        _write_config(cleaned)
-    config = cleaned
     return AiSettings(
         speech_agent_source_file=str(config.get(CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE, DEFAULT_SPEECH_AGENT_SOURCE_FILE) or DEFAULT_SPEECH_AGENT_SOURCE_FILE).strip(),
         highlight_phrases=_normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES, [])),

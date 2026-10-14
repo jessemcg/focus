@@ -281,7 +281,7 @@ def test_poll_without_workspace_skips_session_discovery(tmp_path) -> None:
 def test_changed_pin_rejects_display_capture_without_replacing_or_relabeling(tmp_path):
     from types import SimpleNamespace
     from focus.research_runtime import ResearchPin
-    from test_research_profiles import case
+    from test_research_runtime import case
     root = case(tmp_path / "case")
     run_id = create_focus_run_id()
     path = focus_answer_artifact_path(run_id, tmp_path)
