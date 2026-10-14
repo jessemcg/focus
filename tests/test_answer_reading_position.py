@@ -282,7 +282,7 @@ def test_context_line_hidden_outside_answer_and_reports_identity() -> None:
     assert harness._agent_context_label.visible is True
     assert harness._agent_context_label.text.startswith("Saved answer · ")
     assert harness._agent_context_label.text.splitlines()[0].endswith("Partial")
-    assert "Legacy / unassigned profile provenance" in harness._agent_context_label.text
+    assert "Historical research: unrecorded" in harness._agent_context_label.text
     assert harness._agent_context_label.tooltip == "Original question?"
 
     harness._agent_subview_name = AGENT_SUBVIEW_SESSION
@@ -297,5 +297,5 @@ def test_live_context_line_identifies_latest_answer() -> None:
 
     harness._update_agent_context_line()
 
-    assert harness._agent_context_label.text == "Latest answer\nLegacy / unassigned profile provenance"
+    assert harness._agent_context_label.text == "Latest answer\nHistorical research: unrecorded — RecordPrep preparation: unrecorded"
     assert harness._agent_context_label.visible is True

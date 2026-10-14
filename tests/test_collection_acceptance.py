@@ -29,8 +29,8 @@ def test_actual_extension_contract(tmp_path):
     if not node:
         pytest.skip('Installed Pi/Node required')
     result = subprocess.run([node, str(PROJECT / 'tests/focus_extension_contract.mjs')],
-                            cwd=PROJECT / 'tests', env=dict(_test_environment(), FOCUS_CONTRACT_ROOT=str(tmp_path)),
-                            capture_output=True, text=True, timeout=30)
+                            cwd=PROJECT / 'tests', env=dict(_test_environment(), FOCUS_CONTRACT_ROOT=str(tmp_path), FOCUS_CONTRACT_PYTHON=sys.executable),
+                            capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
 
 

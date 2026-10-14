@@ -48,7 +48,7 @@ from .agent_followup import (
     text_transport_error,
 )
 from .answer_metadata import parse_answer_metadata
-from .answer_presentation import answer_context_label, profile_context_label
+from .answer_presentation import answer_context_label, research_context_label
 from .pi_runtime import PiSettingsError, ensure_project_pi_settings, PROJECT_PI_SETTINGS_PATH
 from .reading_position import AnswerPositionCache
 from .saved_answers import (
@@ -582,17 +582,14 @@ class Focus(Adw.Application):
 
         application_menu = Gio.Menu()
         application_menu.append("D-Bus Commands", "app.show_dbus_commands")
-        application_menu.append("Model settings", "app.open_ai_settings")
+        application_menu.append("Settings", "app.open_ai_settings")
         application_menu.append("Keyboard Shortcuts", "app.show_shortcuts")
         menu_model.append_section(None, application_menu)
 
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
+        menu_button.set_menu_model(menu_model)
         menu_button.add_css_class("flat")
         menu_button.set_valign(Gtk.Align.CENTER)
-        self._profile_menu_button = menu_button
-        from .profile_manager_ui import install_profile_menu
-        from .profile_integration import open_manager
-        install_profile_menu(menu_model, menu_button, lambda: open_manager(self))
 
         trailing_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         trailing_header_box.set_valign(Gtk.Align.CENTER)
@@ -1884,8 +1881,6 @@ class Focus(Adw.Application):
             self.win.set_title(win_title)
         if self._title_widget:
             self._title_widget.set_title(title_text)
-        from .profile_integration import update_indicator
-        update_indicator(self)
 
     def _set_text(self, text: str, highlights: list[tuple[int, int]] | None = None) -> None:
         if not self.textview:
@@ -5987,21 +5982,11 @@ class Focus(Adw.Application):
             return
         self._apply_input_dir(Path(file.get_path()))
 
-    def _open_practice_profiles(self, parent=None) -> None:
-        from .profile_integration import open_manager
-        try:
-            if parent is None:
-                self._profile_menu_button.popup()
-            else:
-                open_manager(self, parent)
-        except (ValueError, OSError) as exc:
-            self._ai_transient_toast(f"Practice Profiles unavailable: {exc}")
-
     def _on_open_ai_settings(self, _action: Gio.SimpleAction, _param: GLib.Variant | None) -> None:
         try:
             window = self._ensure_ai_settings_window()
         except Exception as exc:  # noqa: BLE001
-            self._transient_toast(f"Model settings unavailable: {exc}")
+            self._transient_toast(f"Settings unavailable: {exc}")
             return
         if window:
             window.present()
@@ -6771,9 +6756,6 @@ class Focus(Adw.Application):
         error = ""
         try:
             if research_pin is not None:
-                if research_pin.snapshot is not None:
-                    from .practice_profiles import profile_store
-                    profile_store().load_profile_snapshot(research_pin.snapshot.ref)
                 research_pin.assert_current(case_root)
             state = FollowUpClient(endpoint).submit(text)
         except (ValueError, OSError):
@@ -6925,7 +6907,8 @@ class Focus(Adw.Application):
         pin = getattr(self, "_agent_research_pin", None)
         context = None
         if pin is not None:
-            from .research_profiles import research_context_bytes
+            pin.assert_current(self._record_layout.root)
+            from .research_context import research_context_bytes
             context = research_context_bytes(pin.metadata())
         return AgentAnswerSnapshot(
             answer_id=new_answer_id(),
@@ -7181,7 +7164,7 @@ class Focus(Adw.Application):
             stop_reason=snapshot.stop_reason,
             capture=snapshot.capture,
         )
-        text += "\n" + profile_context_label(snapshot.research_context)
+        text += "\n" + research_context_label(snapshot.research_context)
         label.set_text(text)
         label.set_visible(bool(text))
         question = (snapshot.question or "").strip()
@@ -7502,12 +7485,21 @@ class Focus(Adw.Application):
             self._agent_answer_diagnostics = dict(artifact.diagnostics)
             answer = artifact.markdown
             if answer:
+                try:
+                    snapshot = self._build_live_snapshot(
+                        artifact,
+                        revision=artifact.revision,
+                        question=self._pop_agent_question_for_revision(artifact.revision),
+                    )
+                except (ValueError, OSError):
+                    self._update_ai_status(
+                        "Research inputs or method changed. Start a new session; the previous answer is preserved.",
+                        spinning=False,
+                    )
+                    if not self._agent_terminal_active:
+                        self._agent_answer_poll_id = None
+                    return self._agent_terminal_active
                 self._agent_last_answer_text = answer
-                snapshot = self._build_live_snapshot(
-                    artifact,
-                    revision=artifact.revision,
-                    question=self._pop_agent_question_for_revision(artifact.revision),
-                )
                 self._agent_live_snapshot = snapshot
                 if self._agent_displayed_is_saved:
                     # A saved answer is being read; keep it displayed and offer
@@ -7567,26 +7559,18 @@ class Focus(Adw.Application):
         if not question:
             self._ai_transient_toast("Enter a question to launch the Agent.")
             return
-        # Profile confirmation belongs to Focus's private choices, not a case's
-        # metadata. Failed preflight must preserve the currently displayed answer.
+        # Failed fixed-method/input preflight preserves the displayed answer.
         try:
-            from .research_selection import read_selection
-            from .research_profiles import ResearchPin
-            from .practice_profiles import profile_store
-            selection = read_selection(self._record_layout.root)
-            if selection is None:
-                self._ai_transient_toast("Confirm a research profile for this case before starting a new session.")
-                self._open_practice_profiles()
-                return
-            store = profile_store()
-            snapshot = store.load_profile_snapshot(selection.profile_ref) if selection.profile_ref else None
-            pending_pin = ResearchPin.capture(self._record_layout.root, snapshot, store=store)
+            from .research_runtime import ResearchPin
+            pending_pin = ResearchPin.capture(self._record_layout.root)
         except (ValueError, OSError):
-            self._ai_transient_toast("The selected research profile or preparation inputs are unavailable. Existing answers remain readable.")
+            self._ai_transient_toast(
+                "Research method or inputs unavailable. Check artifacts/source_map.json and original text_pages; "
+                "restart Focus after application updates. Existing answers remain readable."
+            )
             return
         self._stop_agent_terminal()
         self._stop_agent_answer_polling()
-        self._clear_agent_answer()
         self._agent_research_pin = pending_pin
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
         self._ai_settings = load_ai_settings()
@@ -7630,13 +7614,13 @@ class Focus(Adw.Application):
             executable_path = Path(executable).expanduser()
             if not executable_path.is_file() or not os.access(executable_path, os.X_OK):
                 self._ai_transient_toast(
-                    "PI executable not found. Install PI or set the PI command in Model settings."
+                    "PI executable not found. Install PI or set the PI command in Settings."
                 )
                 return
             command_argv[0] = str(executable_path)
         elif shutil.which(executable) is None:
             self._ai_transient_toast(
-                "PI executable not found. Install PI or set the PI command in Model settings."
+                "PI executable not found. Install PI or set the PI command in Settings."
             )
             return
         wrapper = PROJECT_DIR / "scripts" / "focus-agent-vte.sh"
@@ -7676,19 +7660,18 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Unable to create Agent workspace: {exc}")
             return
         self._agent_workspace_path = workspace
-        research_resources = None
         research_pin = getattr(self, "_agent_research_pin", None)
-        if research_pin is not None:
-            try:
-                research_pin.assert_current(self._record_layout.root)
-                if research_pin.snapshot is not None:
-                    from .research_profiles import stage_research_resources
-                    research_resources = stage_research_resources(research_pin, workspace)
-            except (ValueError, OSError):
-                shutil.rmtree(workspace, ignore_errors=True)
-                self._agent_workspace_path = None
-                self._ai_transient_toast("Research preparation changed or the pinned profile is unavailable. Start a new session.")
-                return
+        try:
+            if research_pin is None:
+                raise ValueError("A new question must capture the fixed method first.")
+            research_pin.assert_current(self._record_layout.root)
+            from .research_runtime import stage_research_resources
+            research_resources = stage_research_resources(research_pin, workspace)
+        except (ValueError, OSError):
+            shutil.rmtree(workspace, ignore_errors=True)
+            self._agent_workspace_path = None
+            self._ai_transient_toast("Research inputs or method changed. Start a new session.")
+            return
         self._cleanup_agent_answer_artifact()
         try:
             runtime_dir = focus_answer_runtime_dir()
@@ -7739,14 +7722,12 @@ class Focus(Adw.Application):
                 "FOCUS_AGENT_COMMAND_ARGC": str(len(command_argv)),
             }
         )
-        from .research_profiles import PROFILE_REF_ENV, INPUTS_ENV, CASE_ENV, COMPONENT_ENV
+        from .research_runtime import PROFILE_REF_ENV, INPUTS_ENV, CASE_ENV, COMPONENT_ENV
         for key in (PROFILE_REF_ENV, INPUTS_ENV, CASE_ENV, COMPONENT_ENV):
             env.pop(key, None)
-        if research_pin is not None:
-            env = research_pin.environment(env)
-        if research_resources is not None:
-            env["FOCUS_PI_PROJECT_DIR"] = str(research_resources)
-            env["FOCUS_AGENT_ANSWER_PROTOCOL"] = str(research_resources / "agent_answer.py")
+        env = research_pin.environment(env)
+        env["FOCUS_PI_PROJECT_DIR"] = str(research_resources)
+        env["FOCUS_AGENT_ANSWER_PROTOCOL"] = str(research_resources / "agent_answer.py")
         if self._agent_followup_endpoint is not None:
             env.update(
                 {
@@ -7786,10 +7767,10 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"Unable to start embedded Agent: {exc}")
             return
 
+        # Only clear after fixed-method staging and launch preflight succeed.
+        self._clear_agent_answer()
         self._agent_terminal_active = True
         self._agent_terminal_closing = False
-        from .profile_integration import update_indicator
-        update_indicator(self)
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
@@ -7901,7 +7882,7 @@ class Focus(Adw.Application):
         settings = load_ai_settings()
         raw_path = settings.speech_agent_source_file.strip()
         if not raw_path:
-            self._ai_transient_toast("Set the speech-to-text question file in Model settings.")
+            self._ai_transient_toast("Set the speech-to-text question file in Settings.")
             self._ensure_ai_panel_visible()
             return
         source_path = Path(raw_path).expanduser().resolve(strict=False)
@@ -7931,7 +7912,7 @@ class Focus(Adw.Application):
         raw_path = settings.speech_agent_source_file.strip()
         if not raw_path:
             self._ai_transient_toast(
-                "Set the speech-to-text question file in Model settings."
+                "Set the speech-to-text question file in Settings."
             )
             self._focus_agent_followup_entry()
             return

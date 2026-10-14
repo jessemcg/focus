@@ -42,3 +42,13 @@ def test_refresh_current_case_passes_arguments(monkeypatch, tmp_path) -> None:
     config = tmp_path / "config.json"
     assert cli.main(["refresh-current-case", "--config", str(config), "--quiet"]) == 0
     assert captured["argv"] == ["--config", str(config), "--quiet"]
+
+
+def test_retired_profile_cli_is_not_case_launch_or_ordinary_help(monkeypatch, capsys):
+    def forbidden(_args):
+        raise AssertionError("Retired command must not launch a case")
+    monkeypatch.setattr(cli, "_cmd_app", forbidden)
+    for args in (["profiles"], ["profiles", "validate", "missing", "--json"], ["profiles", "--help"]):
+        assert cli.main(args) == 2
+        assert "retired" in capsys.readouterr().err
+    assert "profiles" not in cli.build_parser().format_help()

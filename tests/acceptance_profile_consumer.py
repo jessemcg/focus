@@ -1,7 +1,7 @@
-"""Consume synthetic RecordPrep exports using only Focus's own runtime/resources.
+"""Read independent synthetic RecordPrep exports with no Focus counterpart profile.
 
-Arguments: synthetic cases directory, independently GUI-authored Focus counterpart.
-Run with isolated HOME/XDG. No Pi, model calls, sibling imports or case writes.
+Argument: synthetic cases directory with civil/dependency/third exports. No model
+calls, sibling imports, bundle writes, private stores, or regeneration.
 """
 import hashlib
 import json
@@ -12,53 +12,38 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from focus import agent_helper
-from focus.practice_profiles import profile_store, bundled_profile_directory, validate_profile_directory
-from focus.research_profiles import ResearchPin, literal_match, research_context_bytes, research_context_payload
-from focus.answer_presentation import profile_context_label
-from focus.profile_integration import context_description
+from focus.research_runtime import ResearchPin, compile_research
+from focus.research_context import research_context_bytes, research_context_payload
+from focus.answer_presentation import research_context_label
 
 cases = Path(sys.argv[1])
-store = profile_store()
-profiles = {name: validate_profile_directory(bundled_profile_directory(bundled)).draft
-            for name,bundled in (("civil","general"),("dependency","california_dependency"))}
-profiles["third"] = validate_profile_directory(Path(sys.argv[2])).draft
-assert profiles["third"] is not None
+component = compile_research().component_sha256
 
 
 def fingerprint(root):
-    return {str(path.relative_to(root)):hashlib.sha256(path.read_bytes()).hexdigest()
+    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in root.rglob("*") if path.is_file()}
 
 
-for scenario, profile in profiles.items():
+for scenario in ("civil", "dependency", "third"):
     root = cases / scenario
     before = fingerprint(root)
-    if scenario == "third":
-        assert not store.read_registry()["heads"].get(profile.ref.specialty_id)
-        result = subprocess.run([sys.executable, agent_helper.__file__, "--case-root", str(root), "context", "--json"],
-                                capture_output=True, text=True, timeout=30)
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["source_map"]["status"] == "valid"
-        assert fingerprint(root) == before
-    store.accept_profile(profile, expected_previous_digest=None)
-    pin = ResearchPin.capture(root, profile, store=store)
+    pin = ResearchPin.capture(root)
+    assert pin.research_component_sha256 == component
     prep = pin.metadata()["preparation_provenance"]
     assert prep["profile_ref"]["application"] == "recordprep"
-    assert prep["profile_ref"]["specialty_id"] == profile.ref.specialty_id
-    assert prep["profile_ref"]["content_sha256"] != profile.ref.content_sha256
     if scenario == "third":
-        assert literal_match("The motion was denied", profile.resource("search")["query_terms"])
         source_map = json.loads((root / "artifacts/source_map.json").read_text())
         assert any(person["role_label"] == "Independent expert" and "role_id" not in person
                    for hearing in source_map["participant_index"]["hearings"] for person in hearing["participants"])
     context = research_context_payload(research_context_bytes(pin.metadata()))
-    label = profile_context_label(research_context_bytes(context))
-    assert "Research:" in label and "Preparation:" in label
+    label = research_context_label(research_context_bytes(context))
+    assert "Focus method:" in label and "RecordPrep preparation:" in label
     assert "Different specialties" not in label
     env = pin.environment(os.environ)
-    for args in (("context",), ("lookup","--file","text_pages/0006.txt"), ("search","--query","motion denied")):
+    for args in (("context",), ("lookup", "--file", "text_pages/0006.txt"), ("search", "--query", "motion denied")):
         result = subprocess.run([sys.executable, agent_helper.__file__, "--case-root", str(root), *args, "--json"],
-                                env=env,capture_output=True,text=True,timeout=30)
+                                env=env, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stdout + result.stderr
         payload = json.loads(result.stdout)
         assert "error" not in payload
@@ -68,15 +53,7 @@ for scenario, profile in profiles.items():
             assert "RT 6" in result.stdout
         else:
             assert "Motion denied" in result.stdout or "motion denied" in result.stdout
-    # Changing the research default cannot mutate or reinterpret preparation.
-    store.set_default(profile.ref)
     pin.assert_current(root)
     assert fingerprint(root) == before
-    if scenario != "dependency":
-        for path in (root / "summaries").glob("*_sum_*.txt"):
-            assert "Parent appearances" not in path.read_text()
-    print("PROFILE CONSUMER PASSED", scenario, profile.ref.specialty_id)
-mixed = ResearchPin.capture(cases / "dependency", profiles["civil"], store=store)
-assert "Different specialties" in profile_context_label(research_context_bytes(mixed.metadata()))
-mixed.assert_current(cases / "dependency")
+    print("BUNDLE CONSUMER PASSED", scenario, prep["profile_ref"]["specialty_id"])
 print("INDEPENDENT PRODUCER/CONSUMER ACCEPTANCE PASSED")

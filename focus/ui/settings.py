@@ -92,7 +92,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._original_pi_thinking_level = None
             self._pi_model_settings_error = str(exc)
 
-        self.set_title("Model settings")
+        self.set_title("Settings")
         self.set_default_size(900, 720)
         self.set_resizable(True)
         self.connect("close-request", self._on_settings_close_request)
@@ -104,7 +104,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         view = Adw.ToolbarView()
         header = Adw.HeaderBar()
         header.add_css_class("flat")
-        header.set_title_widget(Adw.WindowTitle(title="Model settings"))
+        header.set_title_widget(Adw.WindowTitle(title="Settings"))
         save_btn = Gtk.Button(label="Save")
         # suggested-action uses an accent-background foreground; combining it
         # with flat can leave white text on the light header's neutral background.
@@ -119,15 +119,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         box.set_margin_start(18)
         box.set_margin_end(18)
 
-        profiles = Adw.PreferencesGroup(title="Practice profiles", description="Choose a shipped specialty or edit personal research guidance.")
-        profile_row = Adw.ActionRow(title="Profile settings", subtitle="Saving does not change an existing case's settings.")
-        profile_button = Gtk.Button(label="Open…", valign=Gtk.Align.CENTER)
-        profile_button.add_css_class("flat")
-        profile_button.connect("clicked", lambda _button: self.app._open_practice_profiles(self))
-        profile_row.add_suffix(profile_button)
-        profile_row.set_activatable_widget(profile_button)
-        profiles.add(profile_row)
-        box.append(profiles)
 
         appearance_group = Adw.PreferencesGroup()
         appearance_group.add_css_class("list-stack")

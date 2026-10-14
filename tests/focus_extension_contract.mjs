@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 const pkg = process.env.PI_METRICS_TEST_SDK || join(dirname(process.execPath), '../lib/node_modules/@earendil-works/pi-coding-agent');
 const require = createRequire(join(pkg, 'package.json'));
@@ -83,7 +84,7 @@ for (const params of valid) {
     assert.ok(r.details.error);
   }
 }
-for (const version of [1,2]) {
+for (const version of [1,2,3]) {
   const r = await harness(async () => ({code:0,stdout:JSON.stringify({schema_version:version,documents:[],extra:true})}))
     .tools.focus_record.execute('map',{action:'map',map_section:'documents'});
   assert.equal(r.details.error,'');
@@ -180,6 +181,46 @@ assert.equal((await current.tools.submit_focus_answer.execute('fresh', {answer_k
 assert.equal(finalChecks, 1);
 assert.equal(JSON.parse(readFileSync(answerPath,'utf8')).markdown, '# Synthetic current answer');
 delete process.env.FOCUS_RESEARCH_INPUTS_SHA256;
+// Real fixed-method Python pins reject changed inputs at explicit AND fallback capture.
+const python = process.env.FOCUS_CONTRACT_PYTHON;
+const source = resolve('..');
+const helperPath = join(source, 'focus/agent_helper.py');
+const realExec = async (command, args) => {
+  const result = spawnSync(command, args, { encoding: 'utf8', env: process.env });
+  return { code: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+};
+const fixedCase = join(root, 'fixed-case');
+mkdirSync(join(fixedCase, 'text_pages'), {recursive:true});
+mkdirSync(join(fixedCase, 'artifacts'), {recursive:true});
+const sourcePage = join(fixedCase, 'text_pages/0001.txt');
+const mapPath = join(fixedCase, 'artifacts/source_map.json');
+const overviewPath = join(fixedCase, 'artifacts/case_overview.md');
+const manifestPath = join(fixedCase, 'manifest.json');
+for (const change of ['source','map','overview','manifest','method','wrong-case']) {
+  writeFileSync(sourcePage, 'The court denied the motion.');
+  writeFileSync(mapPath, JSON.stringify({schema_version:2,pages:[],documents:[]}));
+  writeFileSync(overviewPath, 'Navigation only.');
+  writeFileSync(manifestPath, '{}');
+  const capture = spawnSync(python, ['-c', `import sys,json; sys.path.insert(0,${JSON.stringify(source)}); from pathlib import Path; from focus.research_runtime import ResearchPin; print(json.dumps(ResearchPin.capture(Path(sys.argv[1])).environment()))`, fixedCase], {encoding:'utf8'});
+  assert.equal(capture.status, 0, capture.stderr);
+  Object.assign(process.env, JSON.parse(capture.stdout), {
+    FOCUS_AGENT_CASE_ROOT:fixedCase, FOCUS_RECORD_AGENT_HELPER:helperPath, FOCUS_RECORD_AGENT_PYTHON:python,
+  });
+  const explicit = harness(realExec);
+  const fallback = harness(realExec);
+  assert.equal((await explicit.tools.focus_record.execute('context',{action:'context'})).details.error, '');
+  if (change === 'method') process.env.FOCUS_RESEARCH_COMPONENT_SHA256 = '0'.repeat(64);
+  else if (change === 'wrong-case') process.env.FOCUS_RESEARCH_CASE_SHA256 = '0'.repeat(64);
+  else writeFileSync({source:sourcePage,map:mapPath,overview:overviewPath,manifest:manifestPath}[change], 'changed');
+  writeFileSync(answerPath, 'previous captured answer');
+  const rejected = await explicit.tools.submit_focus_answer.execute('stale',{answer_kind:'answered',markdown:'# Synthetic stale answer'});
+  assert.equal(rejected.details.accepted, false, change);
+  assert.equal(readFileSync(answerPath,'utf8'), 'previous captured answer');
+  fallback.handlers.message_end({message:{role:'assistant',stopReason:'stop',content:[{type:'text',text:'# Synthetic stale fallback'}]}});
+  await fallback.handlers.agent_settled({});
+  assert.equal(readFileSync(answerPath,'utf8'), 'previous captured answer', change);
+}
+for (const key of ['FOCUS_RESEARCH_INPUTS_SHA256','FOCUS_RESEARCH_CASE_SHA256','FOCUS_RESEARCH_COMPONENT_SHA256']) delete process.env[key];
 // All actions fail if transport cannot initialize; no success conversion.
 process.env.FOCUS_AGENT_RUN_ID = 'bad';
 const broken = harness(async () => { throw new Error('must not execute'); });

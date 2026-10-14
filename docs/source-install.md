@@ -189,12 +189,14 @@ behavior remains separate and unchanged.
 Public launchers explicitly set `FOCUS_CONFIG_DIR` to XDG Focus storage. Without
 that override, existing checkout `config.json`/`.pi/settings.json` remain supported
 when present; otherwise XDG storage is used. No migration or deletion occurs. New
-profiles contain policy defaults without a hardcoded provider/model. Settings
+installations contain policy defaults without a hardcoded provider/model. Settings
 shows the effective Pi storage path. Credentials always remain with Pi.
 
-Embedded resources live in `focus/agent_resources`, not developer `.pi`. Only the
-known prompt, skill, record extension, explicit follow-up bridge and selected
-settings are staged into private disposable `.pi` workspaces. Coding agents opened
+Embedded resources live in `focus/agent_resources`, not developer `.pi`. Every new
+session stages the same application-owned neutral method: prompt, canonical skill,
+record extension, explicit follow-up bridge and answer protocol, with selected model
+settings in a private disposable workspace. No private/bundled practice profile,
+legacy prompt field or preparation metadata supplies instructions. Coding agents opened
 in the source checkout retain their normal coding prompt and tools. Embedded
 sessions retain exactly `read,focus_record,submit_focus_answer`, guarded text-only
 reads, answer artifacts, explicit follow-ups, cleanup and `--no-session`.

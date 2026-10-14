@@ -46,26 +46,28 @@ module.APPLICATION_ID = f"com.mcglaw.Focus.Acceptance.p{os.getpid()}"
 
 TRANSITIONS = int(os.environ.get("FOCUS_ACCEPT_TRANSITIONS", "320"))
 ANSWER_COUNT = 12
-PROFILE_METADATA = os.environ.get("FOCUS_ACCEPT_PROFILE_METADATA") == "1"
+PROFILE_METADATA = os.environ.get("FOCUS_ACCEPT_PROFILE_METADATA", "1") == "1"
 HOLD_MS = int(os.environ.get("FOCUS_ACCEPT_HOLD_MS", "0"))
-PROFILE_MODAL = os.environ.get("FOCUS_ACCEPT_PROFILE_MODAL") == "1"
+SETTINGS_WINDOW = os.environ.get("FOCUS_ACCEPT_SETTINGS") == "1"
 
 
 def synthetic_profile_context(index):
     if not PROFILE_METADATA or index % 3 == 0:
         return None
-    from dataclasses import asdict
-    from focus.practice_profiles import validate_profile_directory, bundled_profile_directory
-    from focus.research_profiles import research_context_bytes, compile_research
-    profile = validate_profile_directory(bundled_profile_directory("general")).draft
-    prepared = asdict(profile.ref) | {"application": "recordprep", "content_sha256": "b" * 64}
+    from focus.research_context import research_context_bytes
+    from focus.research_runtime import compile_research
+    prepared = {"application": "recordprep", "specialty_id": "synthetic-third-specialty",
+                "version": "1", "profile_api": 1, "content_sha256": "b" * 64}
+    value = {"schema_version": 1, "research_profile_ref": prepared | {"application": "focus"},
+             "preparation_provenance": {"schema_version": 1, "profile_ref": prepared,
+                                        "components": {"overview": "a" * 64}},
+             "inputs_sha256": "0" * 64, "research_component_sha256": "c" * 64}
     if index % 3 == 2:
-        prepared["specialty_id"] = "synthetic-third-specialty"
-    return research_context_bytes({"schema_version": 1, "research_profile_ref": asdict(profile.ref),
-                                  "preparation_provenance": {"schema_version": 1, "profile_ref": prepared,
-                                                             "components": {"overview": "a" * 64}},
-                                  "inputs_sha256": "0" * 64,
-                                  "research_component_sha256": compile_research(profile).component_sha256})
+        value.pop("research_profile_ref")
+        value.pop("research_component_sha256")
+        value.update(schema_version=2, research_method={"id": "focus-record-qa", "version": 1,
+                                                       "component_sha256": compile_research().component_sha256})
+    return research_context_bytes(value)
 
 bundle = root / "synthetic"
 (bundle / "text_pages").mkdir(parents=True)
@@ -283,11 +285,8 @@ def prepare():  # type: ignore[no-untyped-def]
         if len(application._saved_answers_listing.answers) < ANSWER_COUNT:
             return True
         application._on_saved_answer_selected(provenance_example().answer_id)
-        if PROFILE_MODAL:
-            from focus.profile_integration import open_manager
-            manager = open_manager(application)
-            manager._create()
-            application._acceptance_profile_manager = manager
+        if SETTINGS_WINDOW:
+            application._on_open_ai_settings(None, None)
         core.GLib.timeout_add(max(100, HOLD_MS), position_start)
         return False
 
@@ -298,17 +297,12 @@ def prepare():  # type: ignore[no-untyped-def]
 def provenance_example():
     answers = application._saved_answers_listing.answers
     if PROFILE_METADATA:
-        from focus.answer_presentation import profile_context_label
-        return next(answer for answer in answers if "Different specialties" in profile_context_label(answer.research_context))
+        from focus.answer_presentation import research_context_label
+        return next(answer for answer in answers if "Focus method:" in research_context_label(answer.research_context))
     return answers[0]
 
 
 def _finish(state: dict) -> None:  # type: ignore[no-untyped-def]
-    manager = getattr(application, "_acceptance_profile_manager", None)
-    if manager is not None:
-        for child in manager.children_windows:
-            child.close()
-        manager.close()
     application._on_saved_answer_selected(provenance_example().answer_id)
     visible = application._ai_view_stack.get_visible_child_name()
     displayed = application._agent_displayed_snapshot
@@ -322,7 +316,7 @@ def _finish(state: dict) -> None:  # type: ignore[no-untyped-def]
         and critical_count["n"] == 0
         and position_ok
         and displayed.research_context == expected.research_context
-        and (not PROFILE_METADATA or "Research:" in application._agent_context_label.get_text())
+        and (not PROFILE_METADATA or "Focus method:" in application._agent_context_label.get_text())
     )
     # Regression: the old fixed navigation row imposed a 659px minimum and
     # flooded GTK allocation warnings when a modal/tiled parent was narrower.

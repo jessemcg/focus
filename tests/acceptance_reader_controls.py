@@ -18,14 +18,7 @@ root = Path(tempfile.mkdtemp(prefix="focus-reader-acceptance-"))
 source = Path(__file__).resolve().parents[1]
 sandbox = root / "source"
 shutil.copytree(source / "focus", sandbox / "focus", ignore=shutil.ignore_patterns("__pycache__"))
-for name in ("SYSTEM.md", "extensions", "skills"):
-    origin = source / "focus/agent_resources" / name
-    target = sandbox / "focus/agent_resources" / name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if origin.is_dir():
-        shutil.copytree(origin, target)
-    else:
-        shutil.copy2(origin, target)
+# agent_resources are already included in the package copy above.
 for name in ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"):
     path = root / name
     path.mkdir(mode=0o700)

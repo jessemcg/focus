@@ -2,7 +2,7 @@
 
 <img src="focus.svg" alt="Focus icon" width="96" align="left">
 
-A Linux desktop app for reading and researching appellate records.
+A Linux desktop app for reading and researching court records.
 Reads record bundles prepared by [RecordPrep](https://github.com/jessemcg/record-prep)
 and uses the [Pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent)
 for AI questions.
@@ -16,7 +16,6 @@ for AI questions.
 
 Focus is intentionally distributed as source rather than a Flatpak or Debian package,
 so you can easily adapt the code to your needs with the coding agent of your choice.
-
 The installer has been tested with Ubuntu and Fedora.
 
 With `curl` installed, run as your normal user—not with sudo:
@@ -31,7 +30,7 @@ dependencies. Focus installs fully without Pi or an AI account.
 After confirming Focus is installed, setup offers to install Pi if it is missing.
 Press Enter to continue with Pi or type `skip` to finish. For AI features, open Pi
 and use `/login` to enter an API key or sign in. Then select an available model in
-**Model settings** in Focus. AI usage may incur provider charges.
+**Settings** in Focus. AI usage may incur provider charges.
 
 [Installation options, troubleshooting, and removal →](docs/source-install.md)
 
@@ -73,38 +72,35 @@ Use **Agent Q&A** to ask questions and follow up. AI questions send selected rec
 text to your chosen model provider; check its confidentiality terms before using
 sensitive records. Verify answers against the source.
 
-## Practice profiles
+## One neutral research method
 
-Focus includes **General Court Record** and **California Juvenile Dependency**
-research profiles, shipped in `focus/resources/practice_profiles/`. The selected
-profile appears beneath the app title. Choose it directly from the hamburger menu's
-profile dropdown (the checkmark shows the current choice), or **Profile settings** to edit and **Save** in
-an independent, movable and maximizable window. A boxed category list on the left
-opens only the selected page on the right: General, Research, Answers and Search
-priorities. Prompt editors expand to use the available height; a categories button
-reveals the sidebar at narrow widths. General application settings are
-labeled **Model settings** to distinguish them from profile guidance. **Create profiles**
-creates a profile from a name and starting profile, or deletes a personal profile
-with confirmation. Built-ins are protected. Deletion removes the chooser entry,
-not revisions used by existing cases; a deleted default returns to General.
-Personal edits save privately, not into installed application
-files or `config.json`; the complete public specialties remain in this repository.
+Every new question and follow-up uses Focus's application-owned **focus-record-qa**
+method, including cases formerly bound to a practice profile. There is no profile
+choice or advanced profile option. **Settings** retains model/provider/reasoning,
+appearance, speech input and launch controls.
 
-Before a case's first Q&A, explicitly confirm a profile or **Existing settings**. Opening a
-case does not change it. Live sessions pin their instructions and source inputs;
-end the session before changing guidance. Saved answers show their own research
-profile separately from the preparation actually consumed. Missing instructions
-block new profile-dependent research, not browsing or reading old answers.
+Focus researches the question actually asked, using record-derived vocabulary and
+verified original source pages. Prepared summaries, the overview and participant
+metadata help navigation; they are not evidence for an answer. The method preserves
+attribution, allegations versus findings, uncertainty, contemporaneous causal
+verification, coverage limits and short clickable verbatim quotations. It does not
+perform outside legal research or assume an appeal, specialty or legal doctrine.
 
-Saving never silently changes an open case. When applicable, a separate **Use
-settings / Not now** confirmation offers to apply it without regenerating answers.
-Earlier case pins remain stable. Previous Dependency customization is prepared
-read-only and stored only on explicit Save or dropdown selection; it never becomes public
-guidance. Maintainers add public specialties with bundled data and a catalog entry,
-not a separate profile repository. Focus and RecordPrep keep independent stores.
-See the
-[GUI guide and contract](docs/practice-profiles.md) and
-[validation evidence and limitations](docs/practice-profiles-validation.md).
+Sessions pin the method and consumed bundle inputs. Changed inputs or method resources
+require a new session; failed preflight preserves the displayed answer. Only **Save
+Answer** writes to the per-case answer library. New saved answers use schema 3 and
+record the Focus method separately from RecordPrep preparation provenance. Historical
+schema-1/2 answers remain readable with their original metadata, without installed
+profile snapshots. Older Focus releases may not read new schema-3 answers.
+
+**No data migration:** private profiles, research selections, config, legacy prompts,
+bundles and saved answers are not rewritten or deleted. Restart Focus, then explicitly
+ask a new question to use the fixed method. No RecordPrep regeneration is required.
+Retired `focus profiles …` commands report retirement rather than opening a case.
+
+See the [fixed method and compatibility contract](docs/research-method.md),
+[current validation](docs/research-method-validation.md), and
+[historical profile-era evidence](docs/practice-profiles-validation.md).
 Focus installation remains complete without Pi, login, models or paid verification.
 
 ## License

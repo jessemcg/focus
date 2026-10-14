@@ -21,9 +21,7 @@ if not __package__:
 from focus.profile_artifacts import source_map_profile_metadata
 from focus.profile_contract import ProfileError
 from focus.preparation_context import preparation_context
-from focus.research_profiles import (
-    literal_match, selected_snapshot_from_environment, assert_environment_inputs,
-)
+from focus.research_runtime import assert_environment_inputs
 
 
 def _read_json(path: Path) -> Any:
@@ -721,12 +719,7 @@ def _query_match_metrics(
 def _centered_search_snippet(raw_text: str, query: str, length: int = 240) -> str:
     compact = " ".join(raw_text.split())
     normalized_query = _normalize_search_text(query)
-    causal_anchor = (
-        _CAUSAL_EVIDENCE_RE.search(compact)
-        if _CAUSAL_QUERY_RE.search(query)
-        else None
-    )
-    position = causal_anchor.start() if causal_anchor else compact.casefold().find(query.casefold())
+    position = compact.casefold().find(query.casefold())
     if position < 0:
         for term in normalized_query.split():
             position = compact.casefold().find(term.casefold())
@@ -760,26 +753,6 @@ def _query_group_from_args(args: argparse.Namespace) -> dict[str, Any]:
 _MONTH_PATTERN = (
     r"january|february|march|april|may|june|july|august|"
     r"september|october|november|december"
-)
-_CAUSAL_QUERY_RE = re.compile(
-    r"\b(?:why|reason|basis|remove|removed|removal|detain|detained|detention|"
-    r"petition|allegation|order|finding|sustain|sustained)\b",
-    re.IGNORECASE,
-)
-_PRIMARY_EVENT_RE = re.compile(
-    r"\b(?:detention|addendum|jurisdiction|disposition|petition|minute order|"
-    r"hearing|removal order)\b",
-    re.IGNORECASE,
-)
-_LATER_HISTORY_RE = re.compile(
-    r"\b(?:status review|366\.26|adoption|permanency|legal history)\b",
-    re.IGNORECASE,
-)
-_CAUSAL_EVIDENCE_RE = re.compile(
-    r"\b(?:reason for (?:detention|removal)|removal reason|"
-    r"need for continued detention|unable and unwilling|unable to care|"
-    r"cannot take care|failed to follow through|caretaker absence|incapacity)\b",
-    re.IGNORECASE,
 )
 
 
@@ -836,27 +809,10 @@ def _document_context_for_page(
 def _document_rank(
     query: str,
     document_context: list[dict[str, Any]],
-    preferences: dict | None = None,
-) -> tuple[int, int, int]:
+) -> tuple[int, int]:
     target_date = _query_date(query)
-    causal = (bool(_CAUSAL_QUERY_RE.search(query)) if preferences is None
-              else literal_match(query, preferences["query_terms"]))
-    labels = " ".join(
-        f"{item['type']} {item['label']} {item['name']}"
-        for item in document_context
-    )
-    source_priority = 1
-    primary = (bool(_PRIMARY_EVENT_RE.search(labels)) if preferences is None
-               else literal_match(labels, preferences["document_terms"]))
-    later = (bool(_LATER_HISTORY_RE.search(labels)) if preferences is None
-             else literal_match(labels, preferences["later_history_terms"]))
-    if causal and primary:
-        source_priority = 0
-    elif causal and later:
-        source_priority = 3
-
     if target_date is None:
-        return (0, 0, source_priority)
+        return (0, 0)
     distances: list[int] = []
     for item in document_context:
         raw_date = item["date"]
@@ -866,7 +822,7 @@ def _document_rank(
             continue
         distances.append(abs((parsed - target_date).days))
     if not distances:
-        return (4, 1_000_000, source_priority)
+        return (4, 1_000_000)
     distance = min(distances)
     if distance <= 14:
         bucket = 0
@@ -876,7 +832,7 @@ def _document_rank(
         bucket = 2
     else:
         bucket = 3
-    return (bucket, distance, source_priority)
+    return (bucket, distance)
 
 
 def _query_page_rank(
@@ -885,7 +841,6 @@ def _query_page_rank(
     document_context: list[dict[str, Any]],
     normalized_text: str,
     page_number: int,
-    preferences: dict | None = None,
 ) -> tuple[Any, ...]:
     reason_priority = {
         "exact-phrase": 0,
@@ -893,21 +848,10 @@ def _query_page_rank(
         "participant-metadata": 2,
         "partial-terms": 3,
     }.get(str(metrics["reason"]), 4)
-    date_bucket, date_distance, source_priority = _document_rank(
-        query,
-        document_context,
-        preferences,
-    )
-    causal = (bool(_CAUSAL_QUERY_RE.search(query)) if preferences is None
-              else literal_match(query, preferences["query_terms"]))
-    evidence = (bool(_CAUSAL_EVIDENCE_RE.search(normalized_text)) if preferences is None
-                else literal_match(normalized_text, preferences["passage_terms"]))
-    causal_evidence_priority = int(causal and not evidence)
+    date_bucket, date_distance = _document_rank(query, document_context)
     return (
         date_bucket,
-        source_priority,
         reason_priority,
-        causal_evidence_priority,
         -int(metrics["exact_count"]),
         -float(metrics["coverage"]),
         int(metrics["proximity"] or 1_000_000),
@@ -917,8 +861,6 @@ def _query_page_rank(
 
 
 def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
-    snapshot = selected_snapshot_from_environment()
-    preferences = snapshot.resource("search") if snapshot is not None else None
     root = args.case_root.resolve(strict=False)
     source_map = _load_source_map(root)
     query_group = _query_group_from_args(args)
@@ -1011,7 +953,6 @@ def _search_payload(args: argparse.Namespace) -> dict[str, Any]:
                 item["documents"],
                 item["normalized_text"],
                 item["page_number"],
-                preferences,
             )
         )
         ranked_by_query[index] = selected
@@ -1238,7 +1179,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        selected_snapshot_from_environment()
         assert_environment_inputs(args.case_root)
         args.func(args)
     except Exception as exc:  # noqa: BLE001

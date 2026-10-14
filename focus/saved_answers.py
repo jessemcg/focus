@@ -32,11 +32,12 @@ from .agent_answer import (
     ANSWER_STOP_REASONS,
 )
 
-from .research_profiles import research_context_bytes, research_context_payload
+from .research_context import research_context_bytes, research_context_payload, saved_schema_for_context
 from .profile_contract import ProfileError
 
 SAVED_ANSWERS_SCHEMA_VERSION = 1
 PROFILE_SAVED_ANSWERS_SCHEMA_VERSION = 2
+METHOD_SAVED_ANSWERS_SCHEMA_VERSION = 3
 SAVED_ANSWERS_DIR_NAME = ".focus"
 SAVED_ANSWERS_SUBDIR = "saved-answers"
 ANSWER_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -117,7 +118,7 @@ class AgentAnswerSnapshot:
 
     def to_saved(self, *, saved_at: str | None = None) -> SavedAnswer:
         return SavedAnswer(
-            schema_version=PROFILE_SAVED_ANSWERS_SCHEMA_VERSION if self.research_context is not None else SAVED_ANSWERS_SCHEMA_VERSION,
+            schema_version=saved_schema_for_context(self.research_context),
             answer_id=self.answer_id,
             saved_at=saved_at or self.saved_at or utc_now(),
             title=self.title,
@@ -184,13 +185,14 @@ def _ensure_store_dir(root: Path) -> Path:
 
 
 def _validate_answer(answer: SavedAnswer) -> None:
-    if type(answer.schema_version) is not int or answer.schema_version not in (1, 2):
+    if type(answer.schema_version) is not int or answer.schema_version not in (1, 2, 3):
         raise _AnswerFileError("unsupported_schema")
-    if (answer.schema_version == 2) != (answer.research_context is not None):
+    if (answer.schema_version in (2, 3)) != (answer.research_context is not None):
         raise _AnswerFileError("invalid_research_context")
     if answer.research_context is not None:
         try:
-            research_context_payload(answer.research_context)
+            if saved_schema_for_context(answer.research_context) != answer.schema_version:
+                raise _AnswerFileError("invalid_research_context")
         except ProfileError:
             raise _AnswerFileError("invalid_research_context") from None
     if not ANSWER_ID_RE.fullmatch(answer.answer_id):
@@ -219,12 +221,12 @@ def _answer_from_payload(payload: Any) -> SavedAnswer:
     if not isinstance(payload, dict):
         raise _AnswerFileError("malformed")
     schema_version = payload.get("schema_version")
-    if type(schema_version) is not int or schema_version not in (1, 2):
+    if type(schema_version) is not int or schema_version not in (1, 2, 3):
         raise _AnswerFileError("unsupported_schema")
     context = None
     if schema_version == 1 and "research_context" in payload:
         raise _AnswerFileError("unsupported_schema")
-    if schema_version == 2:
+    if schema_version in (2, 3):
         try:
             context = research_context_bytes(payload.get("research_context"))
         except ProfileError:

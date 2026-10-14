@@ -19,23 +19,28 @@ it verifies local runtime and disables automatic sync/downloads. Cross-project c
 select the callee explicitly; same-project Python children use sys.executable.
 Never create a Dropbox .venv or use production environments for disposable tests.
 
-## Practice profiles
+## Fixed research method (profile-free)
 
-See `docs/practice-profiles.md` and `docs/practice-profiles-validation.md` for the
-shipped-specialty/personal-settings workflow, v1 API and supported content schemas,
-runtime boundaries and validation limits.
-The six `profile_{contract,store,artifacts,workflows,editor_ui,manager_ui}.py`
-modules, shared conformance/workflow tests and docs are intentionally vendored
-identically in Focus and RecordPrep. Coordinate changes; never import a sibling
-app or its instructions at runtime. Bundled resources are app-owned and read-only.
+See `docs/research-method.md` and `docs/research-method-validation.md`. Every new
+Q&A uses application-owned focus-record-qa v1, with no profile/store/selection
+argument, confirmation or advanced option. Only `profile_contract.py` and
+`profile_artifacts.py` remain vendored byte-identically with RecordPrep for historical
+compatibility/validation. No UI/store/workflow parity requirement remains. Never
+import sibling code or instructions at runtime; preparation provenance is descriptive.
 
-Focus requires explicit first-Q&A choice, including explicit Existing settings. Opening cases
-and displaying old answers remain read-only. Defaults propose; they never silently
-rebind. Accepted research snapshots, source/map provenance and compiler bytes are
-pinned for launch, follow-up and final capture. Missing/stale instructions block new
-work without replacing prior output. Literal search preferences rank, never filter.
-Saved-answer schema 2 records research separately from consumed preparation;
-artifact descriptors and identity exchange never authorize instruction loading.
+`research_runtime.py` compiles and privately stages canonical application resources,
+pins canonical case identity and consumed map/source inventory/content/manifest/overview,
+and revalidates at launch, follow-up, helper operations and final/fallback capture.
+Strip inherited FOCUS_RESEARCH_PROFILE_REF; it cannot authorize guidance or ranking.
+Changed resources/inputs require a new session. Failed preflight preserves prior output.
+`research_context.py` validates instruction-free metadata: schema 2 identifies the
+fixed method and schema 1 remains historical without snapshot lookup. New saved answers
+use schema 3; saved schemas 1/2 remain readable and must never be silently relabeled.
+Retired private stores/config/prompts/answers remain untouched. No migration or bundle
+regeneration. Search ranks literal match quality, frequency, coverage, proximity and
+explicit dates, not specialty document/causal lists. Navigation aids never replace
+verified original source text. Exactly read, focus_record, submit_focus_answer remain
+model-facing; no shell/web/image/write tools or new dependencies.
 Read RecordPrep participant schema 4 alongside legacy 2/3: role_label and counsel
 represents are source descriptions, not a specialty role catalog. Preserve free-form
 examiner labels in map context. RecordPrep profile content schema 4 removes roles
@@ -43,18 +48,14 @@ and participant instructions; the shared editor has no Participants / Witnesses 
 RecordPrep content schema 5 also removes overview instructions and the shared
 RecordPrep editor's Case Overview category. Its fixed overview remains the same
 five-section schema-1 nonauthoritative orientation consumed by Focus; historical
-profile overview resources stay readable but inert. Focus research settings remain
-independent and unchanged.
+profile overview resources stay readable but inert. Focus always uses the fixed neutral method.
 
-Keep private configuration/cases untouched. Dependency initialization is a read-only,
-allowlisted candidate shared by chooser/editor; only Save or Use profile persists
-privately. Public specialties remain complete tracked resources. Save uses the
-managed transaction and never needs export/registration/Git. Existing personal
-ownership and historical pins survive releases; validate initialization with
-synthetic prose only. Runtime settings and credentials never belong in profiles. Preserve legacy schema-1 answers and
-source-map 1/2 interpretation. Run isolated GUI workflows and synthetic answer
-switching as well as pytest after profile/UI changes; use simulated models only
-unless paid quality evaluation is separately authorized.
+Keep private configuration/cases/profiles untouched. Preserve source-map schemas 1–3,
+participant schemas 2–4/legacy forms and summary-edition layouts. Unknown specialty
+identities are accepted; unknown structural schemas fail closed. Run isolated GTK
+workflows and synthetic answer switching plus full pytest after runtime/UI changes;
+use simulated/offline agents only unless live-model quality evaluation is separately
+authorized. Older releases may not read schema-3 saved answers; never down-convert.
 
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
@@ -63,14 +64,16 @@ unless paid quality evaluation is separately authorized.
 - `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
-- `focus/agent_helper.py`: read-only compact research context, source-map lookup, targeted map inspection, and database-free per-query diversified lexical search with source-date/document ranking used by embedded PI Agent sessions.
+- `focus/agent_helper.py`: read-only compact research context, source-map lookup, targeted map inspection, and database-free per-query diversified lexical search with explicit-query-date proximity and specialty-neutral lexical ranking used by embedded PI Agent sessions.
 - `focus/summary_editions.py`: strict page-map loader and page renderer for RecordPrep's page-matched summary editions; accepts every supported RecordPrep schema/layout pairing (schema v1 with current v2 or legacy v1 Letter editions, schema v2 with the v3 Letter edition that records bold quoted-phrase spans) and validates sidecars as a unit (hashes, paths, link and quote spans) without repaginating or parsing the PDF layout, exposing the loaded `layout_id` and `schema_version` for migration and state decisions. Paginated display text applies a paragraph-spacing transformation (newline runs collapse to exactly one empty line, never at page edges or across paper-page boundaries) for display and paginated search only; stored sidecar text, link offsets, and legacy continuous summaries are unchanged. Schema v2 editions additionally expose a structured paginated display representation (literal text plus validated bold/phrase and page-link spans remapped through the paragraph-spacing transformation, with page-link syntax reinserted only for the legacy entry-emphasis patterns); legacy editions keep the established link-synthesis pipeline.
 - `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
 - `focus/agent_followup.py`: GTK-independent client and protocol types for the bounded Unix-socket follow-up bridge; creates/removes the application-owned runtime directory, validates path/token/type, and raises typed busy/unavailable/uncertain/protocol failures without queueing or replaying prompts.
 - `focus/answer_metadata.py`: GTK-independent recognition of the leading `# Title` / `*Subtitle*` answer metadata, normalized labels, and the protected metadata-prefix offset used to keep those labels out of transcript-search link targets.
 - `focus/answer_presentation.py`: GTK-independent saved-date and quality-status formatting shared by the displayed answer context line and the saved-answer popover rows; malformed dates degrade to readable text.
 - `focus/reading_position.py`: bounded least-recently-used in-memory cache of per-answer viewport anchors plus scroll fractions; eviction only loses a reading position.
-- `focus/saved_answers.py`: durable per-case saved-answer store at `<record-layout-root>/.focus/saved-answers/<answer-uuid>.json`, with typed GTK-independent list/load/save/delete results, atomic private publication, and safe handling of malformed, unknown-schema, symlinked, hard-linked, special, or broad-permission entries.
+- `focus/research_runtime.py`: fixed-method resource compiler, private staging and canonical case/input session pins; never reads retired profile stores.
+- `focus/research_context.py`: strict instruction-free context schema-1/2 metadata; historical profiles are descriptive only, new metadata records focus-record-qa.
+- `focus/saved_answers.py`: strict schema-1/2/3 durable per-case saved-answer store at `<record-layout-root>/.focus/saved-answers/<answer-uuid>.json`, with typed GTK-independent list/load/save/delete results, atomic private publication, and safe handling of malformed, unknown-schema, symlinked, hard-linked, special, or broad-permission entries.
 - `focus/ui/`: secondary Libadwaita widgets and windows such as the saved-answer split-button popover, settings, and the D-Bus command reference.
 - Existing `.pi/settings.json` (or standalone XDG `pi/settings.json`): private PI provider/model selection for embedded Agent sessions. The application seeds it from `DEFAULT_PROJECT_PI_SETTINGS` in `focus/pi_runtime.py` when missing; never commit it.
 - `focus/agent_resources/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.

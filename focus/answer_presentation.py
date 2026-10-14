@@ -54,26 +54,29 @@ def answer_quality_label(
     return ""
 
 
-def profile_context_label(context: bytes | None) -> str:
-    """Render recorded identities only; never load current defaults/instructions."""
+def research_context_label(context: bytes | None) -> str:
+    """Describe captured identities only; viewing never authorizes guidance."""
     if context is None:
-        return "Legacy / unassigned profile provenance"
-    from .research_profiles import research_context_payload
+        return "Historical research: unrecorded — RecordPrep preparation: unrecorded"
+    from .research_context import research_context_payload
     try:
         value = research_context_payload(context)
     except ValueError:
-        return "Profile provenance unavailable (unsupported metadata)"
-    research = value["research_profile_ref"]
+        return "Research provenance unavailable (invalid or unsupported metadata)"
     preparation = value["preparation_provenance"]
     prepared_ref = preparation["profile_ref"] if preparation else None
+
     def label(ref):
         if ref is None:
             return "legacy / unassigned"
         return f"{ref['specialty_id']} · {ref['version']} · {ref['content_sha256'][:8]}"
-    text = f"Research: {label(research)} — Preparation: {label(prepared_ref)}"
-    if research and prepared_ref and research["specialty_id"] != prepared_ref["specialty_id"]:
-        text += " — Different specialties"
-    return text
+
+    if value["schema_version"] == 2:
+        method = value["research_method"]
+        research = f"Focus method: {method['id']} · v{method['version']} · {method['component_sha256'][:8]}"
+    else:
+        research = f"Historical research profile: {label(value['research_profile_ref'])}"
+    return f"{research} — RecordPrep preparation: {label(prepared_ref)}"
 
 
 def answer_context_label(

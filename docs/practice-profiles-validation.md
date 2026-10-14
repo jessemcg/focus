@@ -1,4 +1,9 @@
-# Practice profiles: validation and limits
+# Historical practice-profile validation and limits
+
+**Historical evidence only.** Focus profile authoring/selection and six-module/UI
+parity described below are retired. Current behavior and acceptance are documented
+in [the fixed research method](research-method.md) and
+[current validation](research-method-validation.md). No private data was migrated.
 
 ## Fixed structural taxonomy and General starting guidance — 2026-10-13
 

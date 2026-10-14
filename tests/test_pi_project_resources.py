@@ -31,7 +31,7 @@ def test_pi_project_settings_defaults_preserve_policy_without_forcing_model() ->
 def test_pi_system_prompt_is_short_and_delegates_to_canonical_skill() -> None:
     prompt = FOCUS_PI_SYSTEM_PROMPT_FILE.read_text(encoding="utf-8")
 
-    assert "read-only appellate-record investigator" in prompt
+    assert "read-only court-record investigator" in prompt
     assert "not a coding assistant" in prompt
     assert "FOCUS_AGENT_CASE_ROOT" in prompt
     assert "explicitly loaded `focus-answer-record-questions` skill" in prompt
@@ -51,7 +51,10 @@ def test_pi_record_skill_has_repeatable_stop_first_workflow_and_soft_style() -> 
     assert "Cover every distinct part" in skill
     assert "full date in at least one event-cause query" in skill
     assert "diversified by query" in skill
-    assert "prefer contemporaneous orders" in skill
+    assert "prefer contemporaneous primary evidence" in skill
+    assert "Do not presume a specialty" in skill
+    assert "private profiles" in skill
+    assert "contradictions" in skill
     assert "historical allegation or later summary alone" in skill
     assert "Run as many additional targeted `search` calls as needed" in skill
     assert "no corpus-wide grep tool" in skill

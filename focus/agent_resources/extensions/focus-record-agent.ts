@@ -125,7 +125,7 @@ function validPayload(params: any, payload: any): boolean {
   if (params.action === "lookup") return Array.isArray(payload.matches) && nonempty(payload.citation ?? payload.file);
   if (params.action === "document") return nonempty(payload.id) && payload.id === params.id;
   const key = params.map_section === "participants" ? "participant_index" : params.map_section;
-  return (payload.schema_version === 1 || payload.schema_version === 2)
+  return (payload.schema_version === 1 || payload.schema_version === 2 || payload.schema_version === 3)
     && (key === "participant_index" ? object(payload[key]) : Array.isArray(payload[key]));
 }
 
@@ -218,7 +218,7 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
     // Direct read tools can finish after preparation changes. Recheck the same
     // application pin at the final capture boundary, including fallback capture;
     // never label newly read bytes with the earlier session's provenance.
-    if (process.env.FOCUS_RESEARCH_INPUTS_SHA256) {
+    if (["FOCUS_RESEARCH_INPUTS_SHA256", "FOCUS_RESEARCH_CASE_SHA256", "FOCUS_RESEARCH_COMPONENT_SHA256"].some((key) => process.env[key] !== undefined)) {
       try {
         const checked = await pi.exec(python, [helper, "--case-root", caseRoot, "context", "--json"], { timeout: 120000 });
         const payload = JSON.parse(checked.stdout);

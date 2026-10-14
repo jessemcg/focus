@@ -278,3 +278,33 @@ def test_poll_without_workspace_skips_session_discovery(tmp_path) -> None:
     assert harness._poll_agent_answer() is True
     assert harness._agent_session_log_path is None
     assert harness.header_syncs == 1
+
+
+def test_changed_pin_rejects_display_capture_without_replacing_or_relabeling(tmp_path):
+    from types import SimpleNamespace
+    from focus.research_runtime import ResearchPin
+    from test_research_profiles import case
+    root = case(tmp_path / "case")
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    harness = AgentAnswerPollHarness(run_id, path)
+    harness._record_layout = SimpleNamespace(root=root)
+    harness._agent_research_pin = ResearchPin.capture(root)
+    _write(path, _artifact_payload(run_id, 1, "Original useful answer."))
+    assert harness._poll_agent_answer()
+    original = harness._agent_displayed_snapshot
+    assert original.to_saved().schema_version == 3
+    (root / "text_pages/0001.txt").write_text("Changed after capture")
+    for revision, capture in ((2, "submit_tool"), (3, "assistant_fallback")):
+        _write(path, _artifact_payload(run_id, revision, "Must not replace", capture=capture))
+        assert harness._poll_agent_answer()
+        assert harness._agent_displayed_snapshot is original
+        assert harness._agent_live_snapshot is original
+        assert harness._agent_last_answer_text == "Original useful answer."
+        assert "previous answer is preserved" in harness.status_calls[-1][0]
+    assert original.research_context == harness._agent_displayed_snapshot.research_context
+    harness._agent_terminal_active = False
+    _write(path, _artifact_payload(run_id, 4, "Rejected final fallback", capture="assistant_fallback"))
+    assert harness._poll_agent_answer() is False
+    assert harness._agent_answer_poll_id is None
+    assert harness._agent_displayed_snapshot is original
