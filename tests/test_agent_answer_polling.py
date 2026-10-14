@@ -71,12 +71,10 @@ class AgentAnswerPollHarness:
     _agent_answer_position_value = Focus._agent_answer_position_value
     _capture_agent_answer_position = Focus._capture_agent_answer_position
     _sync_agent_answer_buffer = Focus._sync_agent_answer_buffer
-    _update_agent_context_line = Focus._update_agent_context_line
     _pop_agent_question_for_revision = Focus._pop_agent_question_for_revision
 
     def __init__(self, run_id: str, artifact_path: Path) -> None:
         self._agent_subview_name = AGENT_SUBVIEW_ANSWER
-        self._agent_context_label = None
         self._agent_answer_button = None
         self._case_generation = 0
         self._answer_navigation_generation = 0

@@ -69,7 +69,7 @@ authorized. Older releases may not read schema-3 saved answers; never down-conve
 - `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
 - `focus/agent_followup.py`: GTK-independent client and protocol types for the bounded Unix-socket follow-up bridge; creates/removes the application-owned runtime directory, validates path/token/type, and raises typed busy/unavailable/uncertain/protocol failures without queueing or replaying prompts.
 - `focus/answer_metadata.py`: GTK-independent recognition of the leading `# Title` / `*Subtitle*` answer metadata, normalized labels, and the protected metadata-prefix offset used to keep those labels out of transcript-search link targets.
-- `focus/answer_presentation.py`: GTK-independent saved-date and quality-status formatting shared by the displayed answer context line and the saved-answer popover rows; malformed dates degrade to readable text.
+- `focus/answer_presentation.py`: GTK-independent saved-date and quality-status formatting for the saved-answer popover rows, plus metadata formatting helpers; malformed dates degrade to readable text. The Answer/Session header has no metadata line; snapshots and saved artifacts retain their metadata internally.
 - `focus/reading_position.py`: bounded least-recently-used in-memory cache of per-answer viewport anchors plus scroll fractions; eviction only loses a reading position.
 - `focus/research_runtime.py`: fixed-method resource compiler, private staging and canonical case/input session pins; never reads retired profile stores.
 - `focus/research_context.py`: strict instruction-free context schema-1/2 metadata; historical profiles are descriptive only, new metadata records focus-record-qa.

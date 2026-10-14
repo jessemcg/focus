@@ -1912,11 +1912,6 @@ box.focus-agent-output-header {
   margin-top: 2px;
 }
 
-label.focus-agent-answer-context {
-  color: alpha(@window_fg_color, 0.62);
-  font-size: 0.9rem;
-}
-
 .focus-agent-terminal-frame {
   border-radius: 8px;
   background-color: @window_bg_color;

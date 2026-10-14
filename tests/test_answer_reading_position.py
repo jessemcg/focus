@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from focus.app import Focus
-from focus.core import AGENT_SUBVIEW_ANSWER, AGENT_SUBVIEW_SESSION, AI_VIEW_AGENT_QA
+from focus.core import AGENT_SUBVIEW_ANSWER, AI_VIEW_AGENT_QA
 from focus.reading_position import AnswerPositionCache
 from focus.saved_answers import AgentAnswerSnapshot, new_answer_id
 
@@ -81,26 +81,6 @@ class FakeScroller:
         return self._visible
 
 
-class FakeContextLabel:
-    def __init__(self) -> None:
-        self.text = ""
-        self.visible = False
-        self.tooltip: str | None = None
-        self.accessible: list[str] = []
-
-    def set_text(self, text: str) -> None:
-        self.text = text
-
-    def set_visible(self, visible: bool) -> None:
-        self.visible = visible
-
-    def set_tooltip_text(self, tooltip: str | None) -> None:
-        self.tooltip = tooltip
-
-    def update_property(self, _props: object, values: object) -> None:
-        self.accessible.extend(values)  # type: ignore[arg-type]
-
-
 class ReadingHarness:
     _capture_text_position = Focus._capture_text_position
     _agent_answer_position_value = Focus._agent_answer_position_value
@@ -113,12 +93,9 @@ class ReadingHarness:
     )
     _cancel_agent_answer_position_restore = Focus._cancel_agent_answer_position_restore
     _clear_answer_reading_positions = Focus._clear_answer_reading_positions
-    _update_agent_context_line = Focus._update_agent_context_line
-    _set_accessible_label = staticmethod(Focus._set_accessible_label)
 
     def __init__(self) -> None:
         self._agent_subview_name = AGENT_SUBVIEW_ANSWER
-        self._agent_context_label = FakeContextLabel()
         self._ai_outputs: dict[str, object] = {}
         self._case_generation = 0
         self._answer_position_generation = 0
@@ -258,44 +235,3 @@ def test_sync_answer_buffer_only_renders_on_content_change() -> None:
     harness._sync_agent_answer_buffer()
     assert applied == ["Body B.\n"]
     assert state.raw == "Body B.\n"
-
-
-def test_context_line_hidden_outside_answer_and_reports_identity() -> None:
-    harness = ReadingHarness()
-    saved = AgentAnswerSnapshot(
-        answer_id=new_answer_id(),
-        markdown="Saved.\n",
-        title="T",
-        subtitle="S",
-        status="partial",
-        capture="submit_tool",
-        answer_kind="answered",
-        stop_reason="length",
-        question="Original question?",
-        saved_at="2026-09-24T16:05:00+00:00",
-        origin="saved",
-    )
-    harness._agent_displayed_snapshot = saved
-    harness._agent_displayed_is_saved = True
-
-    harness._update_agent_context_line()
-    assert harness._agent_context_label.visible is True
-    assert harness._agent_context_label.text.startswith("Saved answer · ")
-    assert harness._agent_context_label.text.splitlines()[0].endswith("Partial")
-    assert "Historical research: unrecorded" in harness._agent_context_label.text
-    assert harness._agent_context_label.tooltip == "Original question?"
-
-    harness._agent_subview_name = AGENT_SUBVIEW_SESSION
-    harness._update_agent_context_line()
-    assert harness._agent_context_label.visible is False
-
-
-def test_live_context_line_identifies_latest_answer() -> None:
-    harness = ReadingHarness()
-    harness._agent_displayed_snapshot = _snapshot()
-    harness._agent_displayed_is_saved = False
-
-    harness._update_agent_context_line()
-
-    assert harness._agent_context_label.text == "Latest answer\nHistorical research: unrecorded — RecordPrep preparation: unrecorded"
-    assert harness._agent_context_label.visible is True

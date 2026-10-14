@@ -48,7 +48,6 @@ from .agent_followup import (
     text_transport_error,
 )
 from .answer_metadata import parse_answer_metadata
-from .answer_presentation import answer_context_label, research_context_label
 from .pi_runtime import PiSettingsError, ensure_project_pi_settings, PROJECT_PI_SETTINGS_PATH
 from .reading_position import AnswerPositionCache
 from .saved_answers import (
@@ -326,7 +325,6 @@ class Focus(Adw.Application):
         self._answer_position_restore_attempts = 0
         self._answer_position_restore_geometry: tuple[float, float, float] | None = None
         self._answer_position_restore_stable_passes = 0
-        self._agent_context_label: Gtk.Label | None = None
         self._scroller_height_bounds: dict[int, tuple[int, int]] = {}
         self._view_state = FocusViewState()
 
@@ -545,7 +543,6 @@ class Focus(Adw.Application):
         menu = Gio.Menu()
         menu.append("Transcript Page Breakdown", "app.show_transcript_breakdown")
         menu.append("Print Images", "app.print_images")
-        menu.append("Open Case…", "app.choose_input")
         return menu
 
     def _ensure_window(self) -> None:
@@ -578,13 +575,16 @@ class Focus(Adw.Application):
 
         # Hamburger menu on the right
         menu_model = Gio.Menu()
+        settings_menu = Gio.Menu()
+        settings_menu.append("Settings", "app.open_ai_settings")
+        menu_model.append_section(None, settings_menu)
+
         menu_model.append_section(None, self._build_document_menu())
 
-        application_menu = Gio.Menu()
-        application_menu.append("D-Bus Commands", "app.show_dbus_commands")
-        application_menu.append("Settings", "app.open_ai_settings")
-        application_menu.append("Keyboard Shortcuts", "app.show_shortcuts")
-        menu_model.append_section(None, application_menu)
+        reference_menu = Gio.Menu()
+        reference_menu.append("Keyboard Shortcuts", "app.show_shortcuts")
+        reference_menu.append("D-Bus Commands", "app.show_dbus_commands")
+        menu_model.append_section(None, reference_menu)
 
         menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu_button.set_menu_model(menu_model)
@@ -972,17 +972,6 @@ class Focus(Adw.Application):
         self._latest_answer_button.connect("clicked", self._on_latest_answer_clicked)
         agent_subview_strip.append(self._latest_answer_button)
         agent_output_header.append(agent_subview_strip)
-
-        # Compact context for the *displayed* snapshot. It lives with the
-        # answer header rather than the shared transient status label so
-        # switching to summaries and back cannot erase it.
-        self._agent_context_label = Gtk.Label(label="", xalign=0)
-        self._agent_context_label.add_css_class("focus-agent-answer-context")
-        self._agent_context_label.set_hexpand(True)
-        self._agent_context_label.set_wrap(True)
-        self._agent_context_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        self._agent_context_label.set_visible(False)
-        agent_output_header.append(self._agent_context_label)
 
         self._agent_output_header = agent_output_header
         agent_view.append(agent_output_header)
@@ -7149,32 +7138,6 @@ class Focus(Adw.Application):
         self._answer_positions.clear()
         self._case_generation += 1
 
-    def _update_agent_context_line(self) -> None:
-        label = self._agent_context_label
-        if label is None:
-            return
-        snapshot = self._agent_displayed_snapshot
-        if snapshot is None or self._agent_subview_name != AGENT_SUBVIEW_ANSWER:
-            label.set_visible(False)
-            return
-        text = answer_context_label(
-            is_saved=self._agent_displayed_is_saved,
-            saved_at=snapshot.saved_at,
-            status=snapshot.status,
-            stop_reason=snapshot.stop_reason,
-            capture=snapshot.capture,
-        )
-        text += "\n" + research_context_label(snapshot.research_context)
-        label.set_text(text)
-        label.set_visible(bool(text))
-        question = (snapshot.question or "").strip()
-        if question:
-            label.set_tooltip_text(question)
-            self._set_accessible_label(label, f"{text}. Original question: {question}")
-        else:
-            label.set_tooltip_text(None)
-            self._set_accessible_label(label, text)
-
     def _refresh_answer_action_state(self) -> None:
         snapshot = self._agent_displayed_snapshot
         has_answer = bool(snapshot is not None and snapshot.markdown.strip())
@@ -7211,7 +7174,6 @@ class Focus(Adw.Application):
             else:
                 latest.set_tooltip_text("Return to the latest live Agent answer")
             latest.set_label(label)
-        self._update_agent_context_line()
 
     def _leave_saved_answer_view(self) -> None:
         if not self._agent_displayed_is_saved:

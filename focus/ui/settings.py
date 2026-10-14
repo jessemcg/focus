@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 
 from focus.core import *  # noqa: F401,F403
-from focus.paths import pi_settings_file
 from focus.pi_runtime import (
     PiModel,
     PiRuntimeError,
@@ -377,27 +376,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._on_pi_thinking_selected,
         )
         agent_row.add_row(self.pi_thinking_row)
-
-        pi_configuration_row = Adw.ActionRow(
-            title="PI configuration",
-            subtitle=(
-                f"Provider, model, and reasoning: {pi_settings_file()}; "
-                "credentials remain in your global PI configuration."
-            ),
-        )
-        agent_row.add_row(pi_configuration_row)
-
-        pi_access_row = Adw.ActionRow(
-            title="PI access",
-            subtitle=(
-                "Focus permits guarded transcript-page reads and its structured "
-                "record search and answer tools; shell access is disabled."
-            ),
-        )
-        warning_icon = Gtk.Image.new_from_icon_name("dialog-warning-symbolic")
-        warning_icon.add_css_class("warning")
-        pi_access_row.add_prefix(warning_icon)
-        agent_row.add_row(pi_access_row)
 
         self._agent_widgets = AgentSettingsWidgets(
             pi_agent_command_row=pi_agent_command_row,

@@ -103,7 +103,11 @@ def run():
         assert snapshot.to_saved().schema_version == 3
         application._agent_live_snapshot = snapshot
         application._display_agent_snapshot(snapshot, is_saved=False)
-        assert "Focus method:" in application._agent_context_label.get_text()
+        assert not hasattr(application, "_agent_context_label")
+        header_children = list(widgets(application._agent_output_header))
+        assert not any(isinstance(w, core.Gtk.Label) and "Focus method:" in w.get_text()
+                       for w in header_children)
+        assert snapshot.research_context, "Internal research metadata must remain intact"
         application._activate_link(("grep", "access was refused"))
         assert application._grep_phrase_raw == "access was refused"
         application._clear_grep_state()
@@ -131,12 +135,37 @@ def run():
         menu_button = next(w for w in widgets(application.win)
                            if isinstance(w, core.Gtk.MenuButton)
                            and w.get_icon_name() == "open-menu-symbolic")
-        assert menu_button.get_menu_model() is not None, "Hamburger menu model is unattached"
+        menu_model = menu_button.get_menu_model()
+        assert menu_model is not None, "Hamburger menu model is unattached"
+        # Separate sections produce the two separators: settings, record tools, references.
+        assert menu_model.get_n_items() == 3
+        section_items = []
+        for index in range(menu_model.get_n_items()):
+            section = menu_model.get_item_link(index, core.Gio.MENU_LINK_SECTION)
+            assert section is not None
+            section_items.append([
+                (section.get_item_attribute_value(item, core.Gio.MENU_ATTRIBUTE_LABEL).get_string(),
+                 section.get_item_attribute_value(item, core.Gio.MENU_ATTRIBUTE_ACTION).get_string())
+                for item in range(section.get_n_items())
+            ])
+        assert section_items == [
+            [("Settings", "app.open_ai_settings")],
+            [("Transcript Page Breakdown", "app.show_transcript_breakdown"),
+             ("Print Images", "app.print_images")],
+            [("Keyboard Shortcuts", "app.show_shortcuts"),
+             ("D-Bus Commands", "app.show_dbus_commands")],
+        ], section_items
         popover = menu_button.get_popover()
         assert popover is not None, "Hamburger button has no popover"
         menu_button.popup()
         assert popover.get_visible(), "Hamburger menu did not open"
         menu_labels = [w.get_label() for w in widgets(popover) if isinstance(w, core.Gtk.Label)]
+        assert "Open Case…" not in menu_labels
+        open_button = next(w for w in widgets(application.win)
+                           if isinstance(w, core.Gtk.Button)
+                           and w.get_action_name() == "app.choose_input")
+        assert open_button.get_visible() and open_button.get_sensitive()
+        assert application.lookup_action("choose_input").get_enabled()
         assert "Settings" in menu_labels
         assert "D-Bus Commands" in menu_labels
         assert "Keyboard Shortcuts" in menu_labels
@@ -150,6 +179,14 @@ def run():
         window = application._ai_settings_window
         assert window.get_visible(), "Settings window did not open from the menu"
         assert window.get_title() == "Settings"
+        agent_row = next(w for w in widgets(window)
+                         if isinstance(w, core.Adw.ExpanderRow) and w.get_title() == "Agent")
+        agent_row.set_expanded(True)
+        agent_titles = [w.get_title() for w in widgets(agent_row)
+                        if isinstance(w, core.Adw.PreferencesRow) and w.get_title() != "Agent"]
+        assert agent_titles == [
+            "PI command", "Speech-to-text question file", "PI Model", "Reasoning Effort",
+        ], agent_titles
         labels = [w.get_label() for w in widgets(window) if isinstance(w, core.Gtk.Label)]
         assert not any("Profile" in text or "Practice profiles" in text for text in labels)
         assert not application._title_widget.get_subtitle()

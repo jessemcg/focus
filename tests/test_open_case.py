@@ -36,7 +36,7 @@ def test_home_defaults_and_open_before_closed(monkeypatch, tmp_path):
     importlib.reload(current_case)
 
 
-def test_header_and_menu_share_existing_action():
+def test_open_case_is_in_header_not_document_menu():
     button = Focus._build_open_case_button()
     menu = Focus._build_document_menu()
     assert button.get_action_name() == "app.choose_input"
@@ -46,10 +46,13 @@ def test_header_and_menu_share_existing_action():
     assert isinstance(icon, Gtk.Image)
     assert icon.get_icon_name() == "folder-open-symbolic"
     assert icon.has_css_class("dim-label")
-    assert any(
-        menu.get_item_attribute_value(i, Gio.MENU_ATTRIBUTE_LABEL).get_string() == "Open Case…"
-        and menu.get_item_attribute_value(i, Gio.MENU_ATTRIBUTE_ACTION).get_string()
-        == button.get_action_name()
+    assert [
+        menu.get_item_attribute_value(i, Gio.MENU_ATTRIBUTE_LABEL).get_string()
+        for i in range(menu.get_n_items())
+    ] == ["Transcript Page Breakdown", "Print Images"]
+    assert all(
+        menu.get_item_attribute_value(i, Gio.MENU_ATTRIBUTE_ACTION).get_string()
+        != button.get_action_name()
         for i in range(menu.get_n_items())
     )
 

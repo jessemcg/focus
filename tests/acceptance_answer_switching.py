@@ -316,7 +316,7 @@ def _finish(state: dict) -> None:  # type: ignore[no-untyped-def]
         and critical_count["n"] == 0
         and position_ok
         and displayed.research_context == expected.research_context
-        and (not PROFILE_METADATA or "Focus method:" in application._agent_context_label.get_text())
+        and not hasattr(application, "_agent_context_label")
     )
     # Regression: the old fixed navigation row imposed a 659px minimum and
     # flooded GTK allocation warnings when a modal/tiled parent was narrower.

@@ -62,11 +62,14 @@ Focus's AI questions. Pi credentials and saved sessions are retained.
 
 ## Get started
 
-Launch **Focus** from your applications menu or run `focus`. Choose **Open Case…**
-from the menu and select a RecordPrep case bundle.
+Launch **Focus** from your applications menu or run `focus`. Click the **Open Case…**
+folder icon at the top left and select a RecordPrep case bundle.
 
 Basic browsing needs a `text_pages` folder; source-linked AI answers also need
 `artifacts/source_map.json`. Summaries and page images appear when included.
+
+The **Answer / Session** controls lead directly into the answer or session view,
+without a metadata line. Research and save metadata remain stored with answers.
 
 Use **Agent Q&A** to ask questions and follow up. AI questions send selected record
 text to your chosen model provider; check its confidentiality terms before using
