@@ -14,8 +14,8 @@ for AI questions.
 
 ## Install
 
-Focus is intentionally distributed as source rather than a Flatpak or Debian package,
-so you can easily adapt the code to your needs with the coding agent of your choice.
+Focus is intentionally distributed as source rather than a Flatpak or Debian package
+so that it can be easily modified by a coding agent.
 The installer has been tested with Ubuntu and Fedora.
 
 With `curl` installed, run as your normal user—not with sudo:
@@ -74,39 +74,6 @@ without a metadata line. Research and save metadata remain stored with answers.
 Use **Agent Q&A** to ask questions and follow up. AI questions send selected record
 text to your chosen model provider; check its confidentiality terms before using
 sensitive records. Verify answers against the source.
-
-## One neutral research method
-
-Every new question and follow-up uses Focus's application-owned **focus-record-qa**
-method, including cases formerly bound to a practice profile. There is no profile
-choice or advanced profile option. **Settings** retains model/provider/reasoning,
-appearance, speech input and launch controls.
-
-Focus researches the question actually asked, using record-derived vocabulary and
-verified original source pages. Prepared summaries, the overview and participant
-metadata help navigation; they are not evidence for an answer. The method preserves
-attribution, allegations versus findings, uncertainty, contemporaneous causal
-verification, coverage limits and short clickable verbatim quotations. It does not
-perform outside legal research or assume an appeal, specialty or legal doctrine.
-
-Sessions pin the method and consumed bundle inputs. Changed inputs or method resources
-require a new session; failed preflight preserves the displayed answer. Only **Save
-Answer** writes to the per-case answer library. New saved answers use schema 3 and
-record the Focus method separately from RecordPrep preparation provenance. Historical
-schema-1/2 answers remain readable with their original metadata, without installed
-profile snapshots. Older Focus releases may not read new schema-3 answers.
-
-**No data migration:** private profiles, research selections, config, legacy prompts,
-bundles and saved answers are not rewritten or deleted. Restart Focus, then explicitly
-ask a new question to use the fixed method. No RecordPrep regeneration is required.
-Retired `focus profiles …` commands report retirement rather than opening a case.
-Obsolete configuration keys are inert on read/startup; only an explicit Settings
-save applies the established retired-key cleanup.
-
-See the [fixed method and compatibility contract](docs/research-method.md),
-[current validation](docs/research-method-validation.md), and
-[historical profile-era evidence](docs/practice-profiles-validation.md).
-Focus installation remains complete without Pi, login, models or paid verification.
 
 ## License
 

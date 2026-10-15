@@ -9,6 +9,13 @@ The maintained runtime below is Jesse's separate workflow, not a public installe
 Installer tests use disposable HOME/XDG/source/runtime paths and synthetic providers;
 never run installers, onboarding or paid verification against real settings/credentials.
 
+## README style
+
+Keep `README.md` minimalistic and streamlined. Add only important user-facing
+information, with explanations that are short and to the point. Put detailed
+technical explanations, implementation notes and validation reports in `docs/`,
+not the README.
+
 ## Machine-local runtime
 
 Read ../UvEnvironments/README.md. Use `../UvEnvironments/project-env sync Focus`
