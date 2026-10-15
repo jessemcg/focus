@@ -32,17 +32,19 @@ Press Enter to continue with Pi or type `skip` to finish. For AI features, open 
 and use `/login` to enter an API key or sign in. Then select an available model in
 **Settings** in Focus. AI usage may incur provider charges.
 
-[Installation options, troubleshooting, and removal →](docs/source-install.md)
+[Installation options, troubleshooting, and removal](docs/source-install.md)
 
 ## Resume or uninstall
 
-**Resume an interrupted Focus installation:**
+### Resume installation
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install-bootstrap.sh | bash -s -- --resume
 ```
 
-**Uninstall Focus:** close Focus, then run:
+### Uninstall Focus
+
+Close Focus, then run:
 
 ```bash
 "$HOME/.local/bin/focus-uninstall"
@@ -51,7 +53,9 @@ curl -fsSL https://raw.githubusercontent.com/jessemcg/focus/main/scripts/install
 This keeps your source checkout, settings, case documents and Pi installation.
 See [removal options](docs/source-install.md#removal) for optional cleanup.
 
-**Uninstall Pi:** run its official installer and choose **Uninstall Pi**:
+### Uninstall Pi
+
+Run its official installer and choose **Uninstall Pi**:
 
 ```bash
 curl -fsSL https://pi.dev/install.sh | sh
@@ -65,7 +69,7 @@ Focus's AI questions. Pi credentials and saved sessions are retained.
 Launch **Focus** from your applications menu or run `focus`. Click the **Open Case…**
 folder icon at the top left and select a RecordPrep case bundle.
 
-Basic browsing needs a `text_pages` folder; source-linked AI answers also need
+Basic browsing needs a `text_pages/` folder; source-linked AI answers also need
 `artifacts/source_map.json`. Summaries and page images appear when included.
 
 The **Answer / Session** controls lead directly into the answer or session view,
