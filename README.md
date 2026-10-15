@@ -1,6 +1,6 @@
 # Focus
 
-<img src="focus.svg" alt="Focus icon" width="96" align="left">
+<img src="focus.svg" alt="Focus icon" width="96" align="right">
 
 A Linux desktop app for reading and researching court records.
 Reads record bundles prepared by [RecordPrep](https://github.com/jessemcg/record-prep)
