@@ -2977,56 +2977,25 @@ class Focus(Adw.Application):
         quote.alpha = DEFAULT_QUOTED_PHRASE_ALPHA
         return quote
 
-    @staticmethod
-    def _adjust_summary_emphasis_for_theme(
-        accent: Gdk.RGBA,
-        *,
-        dark: bool,
-    ) -> Gdk.RGBA:
-        luminance = Focus._rgba_luminance(accent)
-        if not dark and luminance > 0.58:
-            scale = 0.58 / luminance
-            accent.red *= scale
-            accent.green *= scale
-            accent.blue *= scale
-        elif dark and luminance < 0.52:
-            blend = min(1.0, (0.52 - luminance) / max(0.001, 1.0 - luminance))
-            accent.red += (1.0 - accent.red) * blend
-            accent.green += (1.0 - accent.green) * blend
-            accent.blue += (1.0 - accent.blue) * blend
-        return accent
-
-    def _resolve_summary_emphasis_color(self) -> Gdk.RGBA:
-        accent = Gdk.RGBA()
-        configured = (
-            self._ai_settings.summary_emphasis_color
-            if self._ai_settings
-            else DEFAULT_SUMMARY_EMPHASIS_COLOR
-        )
-        if not accent.parse(configured):
-            accent.parse(DEFAULT_SUMMARY_EMPHASIS_COLOR)
-        return self._adjust_summary_emphasis_for_theme(
-            accent,
-            dark=Adw.StyleManager.get_default().get_dark(),
-        )
-
     def _ensure_summary_emphasis_tag(self, buffer: Gtk.TextBuffer) -> Gtk.TextTag | None:
         table = buffer.get_tag_table()
         if table is None:
             return None
         tag = table.lookup("summary-entry-emphasis")
-        accent_color = self._resolve_summary_emphasis_color()
+        # Same theme-aware color and heavier weight as direct quotations,
+        # but no phrase-search target. Reset old accent/size styling in place.
+        quote_color = self._resolve_ai_quote_color(self._summary_view)
         if tag is None:
             tag = buffer.create_tag(
                 "summary-entry-emphasis",
-                foreground_rgba=accent_color,
-                weight=Pango.Weight.BOLD,
-                scale=1.08,
+                foreground_rgba=quote_color,
+                weight=Pango.Weight.MEDIUM,
+                scale=1.0,
             )
         else:
-            tag.set_property("foreground-rgba", accent_color)
-            tag.set_property("weight", Pango.Weight.BOLD)
-            tag.set_property("scale", 1.08)
+            tag.set_property("foreground-rgba", quote_color)
+            tag.set_property("weight", Pango.Weight.MEDIUM)
+            tag.set_property("scale", 1.0)
         return tag
 
     def _apply_summary_emphasis(
@@ -3775,7 +3744,8 @@ class Focus(Adw.Application):
                 render = lambda _edition, page_number: (
                     self._summary_page_search_text(
                         with_paragraph_spacing(
-                            render_page_text(self._summary_edition, page_number)
+                            render_page_text(self._summary_edition, page_number),
+                            minute_entries=self._summary_edition.kind == "minutes",
                         )
                     )
                 )
@@ -8201,7 +8171,7 @@ class Focus(Adw.Application):
             if self._summary_buffer:
                 self._apply_structured_summary_page(display)
         else:
-            page_text = with_paragraph_spacing(render_page_text(edition, page))
+            page_text = with_paragraph_spacing(render_page_text(edition, page), minute_entries=edition.kind == "minutes")
             self._summary_raw = page_text
             if self._summary_buffer:
                 self._apply_summary_links(page_text)

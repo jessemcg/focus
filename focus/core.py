@@ -90,7 +90,6 @@ CONFIG_KEY_RECORD_FONT_FAMILY = "record_font_family"
 CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
 CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR = "phrase_highlight_color"
-CONFIG_KEY_SUMMARY_EMPHASIS_COLOR = "summary_emphasis_color"
 CONFIG_KEY_SEARCH_CHIP_COLOR = "search_chip_color"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
 CASE_NAME_FILENAME = "case_name.txt"
@@ -260,7 +259,6 @@ DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
 DEFAULT_HIGHLIGHT_COLOR = "#e5e4e2"     # platinum
-DEFAULT_SUMMARY_EMPHASIS_COLOR = "#f6c65b"
 DEFAULT_SEARCH_CHIP_COLOR = "#99c1f1"
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
 DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
@@ -1283,7 +1281,6 @@ class AiSettings:
     highlight_phrases: list[str]
     grep_highlight_color: str
     phrase_highlight_color: str
-    summary_emphasis_color: str
     search_chip_color: str
     pi_agent_command: str = DEFAULT_PI_AGENT_COMMAND
 
@@ -1458,7 +1455,6 @@ def load_ai_settings() -> AiSettings:
         highlight_phrases=_normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES, [])),
         grep_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR, "") or ""), DEFAULT_MATCH_COLOR),
         phrase_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR, "") or ""), DEFAULT_HIGHLIGHT_COLOR),
-        summary_emphasis_color=_coerce_color_value(str(config.get(CONFIG_KEY_SUMMARY_EMPHASIS_COLOR, "") or ""), DEFAULT_SUMMARY_EMPHASIS_COLOR),
         search_chip_color=_coerce_color_value(str(config.get(CONFIG_KEY_SEARCH_CHIP_COLOR, "") or ""), DEFAULT_SEARCH_CHIP_COLOR),
         pi_agent_command=str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, DEFAULT_PI_AGENT_COMMAND) or DEFAULT_PI_AGENT_COMMAND).strip(),
     )
@@ -1475,7 +1471,6 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(settings.grep_highlight_color, DEFAULT_MATCH_COLOR)
     config[CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR] = _coerce_color_value(settings.phrase_highlight_color, DEFAULT_HIGHLIGHT_COLOR)
-    config[CONFIG_KEY_SUMMARY_EMPHASIS_COLOR] = _coerce_color_value(settings.summary_emphasis_color, DEFAULT_SUMMARY_EMPHASIS_COLOR)
     config[CONFIG_KEY_SEARCH_CHIP_COLOR] = _coerce_color_value(settings.search_chip_color, DEFAULT_SEARCH_CHIP_COLOR)
     _write_config(config)
 
@@ -2224,6 +2219,11 @@ SUMMARY_REPORT_ENTRY_RE = re.compile(
     r"^(?P<entry>[^\[\n][^\n]*?)(?=\s+\[[^\]\n]+\]\(\s*page\s*:\s*\d{1,8}\s*\)\s*$)",
     re.IGNORECASE | re.MULTILINE,
 )
+# Minute labels are presentation, not quotation/search links. Match only the
+# exact runner-owned prefixes; body text and other summary kinds stay unchanged.
+SUMMARY_MINUTE_LABEL_RE = re.compile(
+    r"^(?P<entry>Appearances:|Orders:|Next:)(?=[ \t]|$)", re.MULTILINE
+)
 ROUNDED_GRID_TOP_BORDER_RE = re.compile(r"^\s*╭[─┬]+╮\s*$")
 ROUNDED_GRID_MIDDLE_BORDER_RE = re.compile(r"^\s*├[─┼]+┤\s*$")
 ROUNDED_GRID_BOTTOM_BORDER_RE = re.compile(r"^\s*╰[─┴]+╯\s*$")
@@ -2709,6 +2709,8 @@ def _extract_summary_emphasis_spans(
         pattern = SUMMARY_HEARING_ENTRY_RE
     elif source == SUMMARY_SOURCE_REPORTS:
         pattern = SUMMARY_REPORT_ENTRY_RE
+    elif source == SUMMARY_SOURCE_MINUTES:
+        pattern = SUMMARY_MINUTE_LABEL_RE
     else:
         return []
     return [match.span("entry") for match in pattern.finditer(text)]

@@ -359,9 +359,10 @@ def render_page_text(edition: SummaryEdition, page_number: int) -> str:
 
 
 _NEWLINE_RUN_RE = re.compile(r"\n+")
+_MINUTE_FIELD_PREFIX_RE = re.compile(r"(?:Appearances|Orders|Next):(?=[ \t\n]|$)")
 
 
-def with_paragraph_spacing_mapped(text: str) -> tuple[str, list[int]]:
+def with_paragraph_spacing_mapped(text: str, *, minute_entries: bool = False) -> tuple[str, list[int]]:
     """Paragraph-spaced display text plus an original-offset map.
 
     Applies exactly the :func:`with_paragraph_spacing` transformation while
@@ -369,6 +370,9 @@ def with_paragraph_spacing_mapped(text: str) -> tuple[str, list[int]]:
     offset of original offset ``i`` (clamped into the display text, so
     offsets inside collapsed newline runs map to the spacing boundary and
     offsets of stripped leading/trailing newlines clamp to the edges).
+    With minute_entries, new Appearances/Orders/Next fields use a single newline;
+    the date/hearing header and all fields form one entry with no internal gaps.
+    Other block boundaries (including the next entry) retain one blank line.
     """
     if not text:
         return text, [0]
@@ -383,8 +387,15 @@ def with_paragraph_spacing_mapped(text: str) -> tuple[str, list[int]]:
         pieces.append(before)
         out_length += len(before)
         offset_map[match.start()] = out_length
-        pieces.append("\n\n")
-        out_length += 2
+        # Minute entry fields stay adjacent; all other block boundaries keep
+        # one blank line. Extracted visual wraps are already spaces, so the
+        # next entry's date/type line remains separated without parsing dates.
+        separator = "\n" if minute_entries and _MINUTE_FIELD_PREFIX_RE.match(text, match.end()) else "\n\n"
+        pieces.append(separator)
+        if minute_entries:
+            for index in range(match.start() + 1, match.end()):
+                offset_map[index] = out_length
+        out_length += len(separator)
         offset_map[match.end()] = out_length
         cursor = match.end()
     for index in range(cursor, len(text)):
@@ -404,7 +415,7 @@ def with_paragraph_spacing_mapped(text: str) -> tuple[str, list[int]]:
     return display, offset_map
 
 
-def with_paragraph_spacing(text: str) -> str:
+def with_paragraph_spacing(text: str, *, minute_entries: bool = False) -> str:
     """Display form of paginated page text: one empty line per paragraph.
 
     RecordPrep's sidecar page text uses newlines only at extracted
@@ -416,7 +427,12 @@ def with_paragraph_spacing(text: str) -> str:
     joined or spaced across paper-page boundaries. The sidecar text, link
     offsets, and source-line mapping remain unchanged; apply this only to
     paginated display and search text, never to legacy continuous summaries.
+    For minute_entries, keep one newline before each runner-owned field label,
+    and one blank line between entries. Historical non-label paragraphs and all
+    other kinds retain their established spacing. Each paper page stays separate.
     """
+    if minute_entries:
+        return with_paragraph_spacing_mapped(text, minute_entries=True)[0]
     if not text:
         return text
     return _NEWLINE_RUN_RE.sub("\n\n", text).strip("\n")
@@ -505,7 +521,7 @@ def render_page_display(edition: SummaryEdition, page_number: int) -> SummaryPag
     if page_number < 1 or page_number > edition.page_count:
         raise SummaryEditionError("Summary page number is out of range.")
     page = edition.pages[page_number - 1]
-    text, offset_map = with_paragraph_spacing_mapped(page.text)
+    text, offset_map = with_paragraph_spacing_mapped(page.text, minute_entries=edition.kind == "minutes")
 
     def mapped(start: int, end: int) -> tuple[int, int]:
         mapped_start = offset_map[min(max(start, 0), len(offset_map) - 1)]

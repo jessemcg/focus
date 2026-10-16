@@ -643,14 +643,9 @@ def test_dynamic_case_tool_content_expands_the_body() -> None:
     assert agent_harness._active_ai_body_has_content()
 
 
-def test_summary_emphasis_color_keeps_contrast_in_both_themes() -> None:
-    bright = SimpleNamespace(red=0.8, green=0.95, blue=0.7)
-    Focus._adjust_summary_emphasis_for_theme(bright, dark=False)
-    assert Focus._rgba_luminance(bright) <= 0.580001
-
-    dim = SimpleNamespace(red=0.1, green=0.2, blue=0.1)
-    Focus._adjust_summary_emphasis_for_theme(dim, dark=True)
-    assert Focus._rgba_luminance(dim) >= 0.519999
+def test_summary_emphasis_no_longer_has_a_configurable_accent_resolver() -> None:
+    assert not hasattr(Focus, '_resolve_summary_emphasis_color')
+    assert not hasattr(Focus, '_adjust_summary_emphasis_for_theme')
 
 
 def test_embedded_output_minimum_is_readable_and_uses_available_height() -> None:

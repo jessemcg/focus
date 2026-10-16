@@ -23,7 +23,7 @@ def synthetic_config():
         core.CONFIG_KEY_HIGHLIGHT_PHRASES: ["motion denied"],
         core.CONFIG_KEY_GREP_HIGHLIGHT_COLOR: "#112233",
         core.CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR: "#223344",
-        core.CONFIG_KEY_SUMMARY_EMPHASIS_COLOR: "#334455",
+        "summary_emphasis_color": "#334455",  # Retired; preserve stored bytes, never use.
         core.CONFIG_KEY_SEARCH_CHIP_COLOR: "#445566",
     }
 
@@ -41,7 +41,7 @@ def test_load_supported_settings_never_writes_or_changes_bytes(monkeypatch):
         assert settings.highlight_phrases == ["motion denied"]
         assert settings.grep_highlight_color == "#112233"
         assert settings.phrase_highlight_color == "#223344"
-        assert settings.summary_emphasis_color == "#334455"
+        assert not hasattr(settings, "summary_emphasis_color")
         assert settings.search_chip_color == "#445566"
         assert core.CONFIG_FILE.read_bytes() == original
     writer.assert_not_called()

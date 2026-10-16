@@ -69,7 +69,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._record_font_family_values: list[str] = []
         self._grep_highlight_color_control: Gtk.Widget | None = None
         self._phrase_highlight_color_control: Gtk.Widget | None = None
-        self._summary_emphasis_color_control: Gtk.Widget | None = None
         self._search_chip_color_control: Gtk.Widget | None = None
         self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._agent_widgets: AgentSettingsWidgets | None = None
@@ -198,12 +197,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_HIGHLIGHT_COLOR,
         )
         highlight_row.add_row(phrase_color_row)
-
-        summary_emphasis_row, self._summary_emphasis_color_control = self._build_color_row(
-            "Summary Emphasis Color",
-            DEFAULT_SUMMARY_EMPHASIS_COLOR,
-        )
-        highlight_row.add_row(summary_emphasis_row)
 
         search_chip_row, self._search_chip_color_control = self._build_color_row(
             "Search and Cite Chip Color",
@@ -734,11 +727,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_HIGHLIGHT_COLOR,
         )
         self._set_color_control_value(
-            self._summary_emphasis_color_control,
-            settings.summary_emphasis_color,
-            DEFAULT_SUMMARY_EMPHASIS_COLOR,
-        )
-        self._set_color_control_value(
             self._search_chip_color_control,
             settings.search_chip_color,
             DEFAULT_SEARCH_CHIP_COLOR,
@@ -770,10 +758,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         phrase_highlight_color = self._read_color_control_value(
             self._phrase_highlight_color_control,
             DEFAULT_HIGHLIGHT_COLOR,
-        )
-        summary_emphasis_color = self._read_color_control_value(
-            self._summary_emphasis_color_control,
-            DEFAULT_SUMMARY_EMPHASIS_COLOR,
         )
         search_chip_color = self._read_color_control_value(
             self._search_chip_color_control,
@@ -812,7 +796,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
             phrase_highlight_color=phrase_highlight_color,
-            summary_emphasis_color=summary_emphasis_color,
             search_chip_color=search_chip_color,
         )
         selected_pi_model = self._selected_pi_model()
