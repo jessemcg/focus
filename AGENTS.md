@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Settings interaction contract
-Preserve the existing Display/Highlights/Agent boxed expandable home. Highlight phrases has a retained full-width rounded editor; compact controls stay inline. Save all drafts without closing or navigating; only successful writes advance the literal baseline. Close offers Keep Editing / Discard Unsaved Changes. Preserve pending model/effort choices through refresh failure, and report partial independent writes truthfully. See `docs/unified-settings-validation.md`.
+Preserve the existing Display/Highlights/Agent boxed expandable home. Highlight phrases is a compact, full-width rounded multiline editor directly inside Highlights (roughly three font-aware lines, soft wrapping and vertical scrolling; Tab leaves the editor). Reuse its undo-enabled buffer and literal draft tracking; no separate phrase destination, automatic save, or phrase-management workflow. Compact controls stay inline. Save all drafts without closing or navigating; only successful writes advance the literal baseline. Close offers Keep Editing / Discard Unsaved Changes. Preserve pending model/effort choices through refresh failure, and report partial independent writes truthfully. See `docs/unified-settings-validation.md`.
 
 Public source installation is standalone: see docs/source-install.md. Focus must
 complete installation without Pi, login, model selection or paid verification.

@@ -203,22 +203,33 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_box.set_margin_bottom(6)
         highlight_box.set_margin_start(12)
         highlight_box.set_margin_end(12)
-        highlight_label = Gtk.Label(
-            label="Highlight phrases (case-sensitive, one per line)",
-            xalign=0,
-        )
-        highlight_label.add_css_class("dim-label")
+        highlight_label = Gtk.Label(label="Highlight phrases", xalign=0, wrap=True)
+        highlight_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        highlight_label.set_width_chars(1)
         highlight_box.append(highlight_label)
+        highlight_help = Gtk.Label(
+            label="One word or phrase per line. Case-sensitive.",
+            xalign=0, wrap=True,
+        )
+        highlight_help.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        highlight_help.set_width_chars(1)
+        highlight_help.add_css_class("dim-label")
+        highlight_box.append(highlight_help)
 
         highlight_scroller = Gtk.ScrolledWindow()
         highlight_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         highlight_scroller.set_hexpand(True)
-        highlight_scroller.set_vexpand(True)
+        highlight_scroller.set_vexpand(False)
+        highlight_scroller.set_valign(Gtk.Align.START)
         round_editor(highlight_scroller)
         highlight_buffer = Gtk.TextBuffer()
         highlight_buffer.set_enable_undo(True)
         highlight_view = Gtk.TextView.new_with_buffer(highlight_buffer)
-        highlight_view.update_property([Gtk.AccessibleProperty.LABEL], ["Highlight phrases, one per line"])
+        highlight_view.update_property(
+            [Gtk.AccessibleProperty.LABEL, Gtk.AccessibleProperty.DESCRIPTION],
+            ["Highlight phrases", "One word or phrase per line. Case-sensitive."],
+        )
+        highlight_view.set_accepts_tab(False)
         highlight_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         highlight_view.set_top_margin(8)
         highlight_view.set_bottom_margin(8)
@@ -226,13 +237,29 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_view.set_right_margin(8)
         highlight_scroller.set_child(highlight_view)
         highlight_box.append(highlight_scroller)
-        for edge in ("top", "bottom", "start", "end"):
-            getattr(highlight_box, "set_margin_" + edge)(12)
-        highlight_box.set_vexpand(True)
-        self._navigation.add_page("highlight-phrases", "Highlight phrases", highlight_box)
-        phrases_row = Adw.ActionRow(title="Highlight phrases", activatable=True)
-        phrases_row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
-        phrases_row.connect("activated", lambda *_: self._navigation.open("highlight-phrases", phrases_row))
+        # Measure three normal text lines, not the draft (which may be arbitrarily
+        # long). Recompute for font/DPI changes without making the editor expand.
+        def size_editor(scroller: Gtk.ScrolledWindow) -> None:
+            view = scroller.get_child()
+            height = view.create_pango_layout("Ag\nAg\nAg").get_pixel_size()[1] + 16
+            scroller.set_max_content_height(-1)
+            scroller.set_min_content_height(height)
+            scroller.set_max_content_height(height)
+
+        size_editor(highlight_scroller)
+        highlight_view.connect("map", lambda view: size_editor(view.get_parent()))
+        highlight_view.connect("notify::scale-factor", lambda view, _pspec: size_editor(view.get_parent()))
+
+        def font_changed(scroller: Gtk.ScrolledWindow, _pspec: object) -> None:
+            # Settings notify precedes the TextView's updated font context.
+            GLib.idle_add(size_editor, scroller)
+
+        for setting in ("gtk-font-name", "gtk-xft-dpi"):
+            highlight_view.get_settings().connect_object(
+                "notify::" + setting, font_changed, highlight_scroller,
+            )
+        phrases_row = Adw.PreferencesRow(activatable=False, selectable=False)
+        phrases_row.set_child(highlight_box)
         highlight_row.add_row(phrases_row)
         self._highlight_phrases_buffer = highlight_buffer
 
