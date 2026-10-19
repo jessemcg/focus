@@ -64,6 +64,7 @@ from .saved_answers import (
 from .ui.commands import FocusCommandsWindow
 from .ui.saved_answers import SavedAnswersPopover
 from .ui.settings import AiSettingsWindow
+from .ui.settings_navigation import close_settings_before_parent
 
 
 CASE_TOOL_DESCRIPTIONS = {
@@ -5953,7 +5954,7 @@ class Focus(Adw.Application):
         if self._ai_settings_window:
             return self._ai_settings_window
         window = AiSettingsWindow(self)
-        window.connect("close-request", self._on_ai_settings_window_close_request)
+        window.connect_after("close-request", self._on_ai_settings_window_close_request)
         self._ai_settings_window = window
         return window
 
@@ -5963,6 +5964,8 @@ class Focus(Adw.Application):
         return False
 
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
+        if close_settings_before_parent(self):
+            return True
         self._stop_grep_search_if_running()
         self._stop_agent_terminal()
         self._stop_agent_answer_polling()

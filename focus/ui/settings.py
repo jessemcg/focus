@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 
+from .settings_navigation import SettingsNavigation, SettingsSession, install_editor_style, round_editor
+
 from focus.core import *  # noqa: F401,F403
 from focus.pi_runtime import (
     PiModel,
@@ -96,20 +98,12 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self.connect("close-request", self._on_settings_close_request)
         self._build_ui()
         self._load_settings()
+        self._session = SettingsSession(self, self._draft_snapshot)
         self._load_pi_models()
 
     def _build_ui(self) -> None:
-        view = Adw.ToolbarView()
-        header = Adw.HeaderBar()
-        header.add_css_class("flat")
-        header.set_title_widget(Adw.WindowTitle(title="Settings"))
-        save_btn = Gtk.Button(label="Save")
-        # suggested-action uses an accent-background foreground; combining it
-        # with flat can leave white text on the light header's neutral background.
-        save_btn.add_css_class("flat")
-        save_btn.connect("clicked", self._on_save_clicked)
-        header.pack_end(save_btn)
-        view.add_top_bar(header)
+        self._navigation = SettingsNavigation(lambda: self._on_save_clicked(None), lambda: self._pi_model_closed)
+        install_editor_style(self)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_margin_top(18)
@@ -217,12 +211,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_box.append(highlight_label)
 
         highlight_scroller = Gtk.ScrolledWindow()
-        highlight_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        highlight_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         highlight_scroller.set_hexpand(True)
-        highlight_scroller.set_vexpand(False)
-        highlight_scroller.set_min_content_height(110)
+        highlight_scroller.set_vexpand(True)
+        round_editor(highlight_scroller)
         highlight_buffer = Gtk.TextBuffer()
+        highlight_buffer.set_enable_undo(True)
         highlight_view = Gtk.TextView.new_with_buffer(highlight_buffer)
+        highlight_view.update_property([Gtk.AccessibleProperty.LABEL], ["Highlight phrases, one per line"])
         highlight_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         highlight_view.set_top_margin(8)
         highlight_view.set_bottom_margin(8)
@@ -230,7 +226,14 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         highlight_view.set_right_margin(8)
         highlight_scroller.set_child(highlight_view)
         highlight_box.append(highlight_scroller)
-        highlight_row.add_row(highlight_box)
+        for edge in ("top", "bottom", "start", "end"):
+            getattr(highlight_box, "set_margin_" + edge)(12)
+        highlight_box.set_vexpand(True)
+        self._navigation.add_page("highlight-phrases", "Highlight phrases", highlight_box)
+        phrases_row = Adw.ActionRow(title="Highlight phrases", activatable=True)
+        phrases_row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        phrases_row.connect("activated", lambda *_: self._navigation.open("highlight-phrases", phrases_row))
+        highlight_row.add_row(phrases_row)
         self._highlight_phrases_buffer = highlight_buffer
 
         agent_row = self._build_agent_settings_page()
@@ -243,9 +246,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         scrolled.set_child(box)
 
         self._toast_overlay = Adw.ToastOverlay()
-        self._toast_overlay.set_child(scrolled)
-        view.set_content(self._toast_overlay)
-        self.set_content(view)
+        self._navigation.pages["home"].get_child().set_content(scrolled)
+        self._toast_overlay.set_child(self._navigation.view)
+        self.set_content(self._toast_overlay)
 
     def _build_color_row(self, title: str, default: str) -> tuple[Gtk.Widget, Gtk.Widget]:
         color_dialog_cls = getattr(Gtk, "ColorDialog", None)
@@ -377,9 +380,23 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         return agent_row
 
     def _on_settings_close_request(self, *_args: object) -> bool:
+        if hasattr(self, "_session") and self._session.close_request():
+            return True
         self._pi_model_closed = True
         self._pi_model_generation += 1
         return False
+
+    def _draft_snapshot(self):
+        model = self._selected_pi_model()
+        key = model.settings_key if self._pi_model_selection_changed and model else self._original_pi_model_key
+        effort = self._selected_pi_thinking_level() if self._pi_thinking_selection_changed else self._original_pi_thinking_level
+        return (self._agent_widgets.pi_agent_command_row.get_text(), self._agent_widgets.speech_agent_source_row.get_text(),
+                self._record_font_size_row.get_value(), self._ai_font_size_row.get_value(), self._table_font_size_row.get_value(),
+                int(self._record_font_family_row.get_selected()), self._prompt_text(self._highlight_phrases_buffer),
+                *(self._read_color_control_value(w, default) for w, default in (
+                    (self._grep_highlight_color_control, DEFAULT_MATCH_COLOR),
+                    (self._phrase_highlight_color_control, DEFAULT_HIGHLIGHT_COLOR),
+                    (self._search_chip_color_control, DEFAULT_SEARCH_CHIP_COLOR))), key, effort)
 
     def _selected_pi_model(self) -> PiModel | None:
         selected = int(self.pi_model_row.get_selected())
@@ -613,7 +630,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self.pi_model_refresh_button.set_sensitive(True)
         if error:
             self._pi_available_model_keys = set()
-            current = self._original_pi_model_key
+            current = desired_key
             if current is None:
                 self._pi_model_options = [None]
                 labels = ["PI models unavailable"]
@@ -629,7 +646,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self.pi_model_row.set_model(Gtk.StringList.new(labels))
             self.pi_model_row.set_selected(0)
             self._pi_model_applying = False
-            self._pi_model_selection_changed = False
+            self._pi_model_selection_changed = current != self._original_pi_model_key
             self.pi_model_row.set_sensitive(False)
             self.pi_model_row.set_subtitle(error)
             self._populate_pi_thinking_row(desired_thinking)
@@ -640,7 +657,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._pi_available_model_keys = available_keys
         options: list[PiModel | None] = []
         labels: list[str] = []
-        current = self._original_pi_model_key
+        current = desired_key
         if current is not None and current not in available_keys:
             unavailable = PiModel(
                 provider=current[0],
@@ -814,19 +831,24 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             except PiSettingsError as exc:
                 self._show_status_toast(f"Unable to save PI Agent settings: {exc}")
                 return
-        save_ai_settings(settings)
+        try:
+            save_ai_settings(settings)
+            self.app.update_font_sizes(
+                font_size_pt=record_font_size,
+                ai_font_size_pt=ai_font_size,
+                table_font_size_pt=table_font_size,
+                record_font_family_name=record_font_family_name,
+            )
+            self.app.on_ai_settings_saved(settings)
+        except Exception:
+            self._show_status_toast("Save failed. Some settings may already have been written; drafts are retained.")
+            return
         if pi_runtime_saved and selected_pi_model is not None:
             self._original_pi_model_key = selected_pi_model.settings_key
             self._original_pi_thinking_level = selected_pi_thinking
             self._pi_model_selection_changed = False
             self._pi_thinking_selection_changed = False
-        self.app.update_font_sizes(
-            font_size_pt=record_font_size,
-            ai_font_size_pt=ai_font_size,
-            table_font_size_pt=table_font_size,
-            record_font_family_name=record_font_family_name,
-        )
-        self.app.on_ai_settings_saved(settings)
+        self._session.accept()
         if pi_runtime_saved:
             self._show_status_toast(
                 "Saved. The PI model and reasoning effort apply to new Agent sessions."

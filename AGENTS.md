@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Settings interaction contract
+Preserve the existing Display/Highlights/Agent boxed expandable home. Highlight phrases has a retained full-width rounded editor; compact controls stay inline. Save all drafts without closing or navigating; only successful writes advance the literal baseline. Close offers Keep Editing / Discard Unsaved Changes. Preserve pending model/effort choices through refresh failure, and report partial independent writes truthfully. See `docs/unified-settings-validation.md`.
+
 Public source installation is standalone: see docs/source-install.md. Focus must
 complete installation without Pi, login, model selection or paid verification.
 Save the completed receipt and show success before offering optional Pi installation;
