@@ -211,7 +211,8 @@ def available_pi_models(
 
 def _read_pi_settings(path: Path) -> dict[str, Any]:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        from ._model_store import read_ordinary
+        raw = read_ordinary(path)
     except FileNotFoundError as exc:
         raise PiSettingsError(f"PI project settings not found: {path}") from exc
     except (OSError, json.JSONDecodeError) as exc:
@@ -287,14 +288,11 @@ def save_project_pi_runtime(
     settings["defaultModel"] = model.model_id
     settings["defaultThinkingLevel"] = normalized_thinking
     settings.pop("fireworksPriorityServiceTier", None)
-    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        _write_private_settings_temp(temp_path, settings)
-        os.replace(temp_path, path)
+        from ._model_store import save_ordinary
+        save_ordinary(path, settings)
     except OSError as exc:
         raise PiSettingsError(f"Unable to save PI project settings: {exc}") from exc
-    finally:
-        temp_path.unlink(missing_ok=True)
 
 
 def save_project_pi_model(

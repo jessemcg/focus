@@ -1,5 +1,15 @@
 # Repository Guidelines
 
+## Application-owned model maintenance
+
+Keep `model-settings --stdin` import-light, before GUI/Pi/backend imports.
+`model_settings.py` owns effective app path/inheritance; missing Pi settings use
+owner low-effort defaults, seeded only on explicit Apply. Vendored `_model_store`
+and `_model_schema` must stay independent of sibling runtime imports. Ordinary
+saves share guarded revisions/locks; rejected drafts never advance baselines.
+Reconcile/Retain are receipt-only; later edits always block rollback. Test only
+disposable source/HOME/state. See SkillsMenu's package protocol-v1 reference.
+
 ## Settings interaction contract
 Preserve the existing Display/Highlights/Agent boxed expandable home. Highlight phrases is a compact, full-width rounded multiline editor directly inside Highlights (roughly three font-aware lines, soft wrapping and vertical scrolling; Tab leaves the editor). Reuse its undo-enabled buffer and literal draft tracking; no separate phrase destination, automatic save, or phrase-management workflow. Compact controls stay inline. Save all drafts without closing or navigating; only successful writes advance the literal baseline. Close offers Keep Editing / Discard Unsaved Changes. Preserve pending model/effort choices through refresh failure, and report partial independent writes truthfully. See `docs/unified-settings-validation.md`.
 

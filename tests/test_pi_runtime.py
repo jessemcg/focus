@@ -72,7 +72,7 @@ def test_ensure_project_pi_settings_preserves_dangling_symlink(
     ensure_project_pi_settings(path)
 
     assert path.is_symlink()
-    with pytest.raises(PiSettingsError, match="not found"):
+    with pytest.raises(PiSettingsError, match="Unable to read PI project settings"):
         current_project_pi_model(path)
 
 
