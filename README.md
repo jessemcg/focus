@@ -1,6 +1,5 @@
 # Focus
 
-Settings stays open after Save; edit Highlight phrases directly inside Highlights.
 [Settings guide and validation](docs/unified-settings-validation.md).
 
 <img src="focus.svg" alt="Focus icon" width="96" align="right">
