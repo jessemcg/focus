@@ -1,9 +1,5 @@
 # Focus
 
-Model maintenance: the app-owned `focus model-settings --stdin` endpoint supports
-Skills Menu's **Maintenance → Replace Workhorse Model** without GUI/Pi startup.
-See the [protocol and safety boundary](../SkillsMenu/.pi/skills/replace-workhorse-model/references/protocol-v1.md).
-
 Settings stays open after Save; edit Highlight phrases directly inside Highlights.
 [Settings guide and validation](docs/unified-settings-validation.md).
 
