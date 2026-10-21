@@ -145,7 +145,8 @@ def with_toc_fallback(index: dict[int, Classification], toc: Iterable[TocCategor
 
 
 def load_category_index(layout: RecordLayout, file_pages: Iterable[int],
-                        toc: Iterable[TocCategory] = ()) -> dict[int, Classification]:
+                        toc: Iterable[TocCategory] = (), *,
+                        require_nonconflicting_body: bool = False) -> dict[int, Classification]:
     pages = sorted({page for value in file_pages if (page := positive_page(value)) is not None})
     known = set(pages)
     types: list[dict[int, set[Category]]] = [{}, {}]
@@ -191,5 +192,10 @@ def load_category_index(layout: RecordLayout, file_pages: Iterable[int],
             if page in source:
                 category_set, provenance = source[page], name
                 break
+        if require_nonconflicting_body:
+            # Reading requires agreement, unlike the historical sidebar's tier
+            # precedence. Explicit cover/index/unknown types veto boundary guesses.
+            evidence = [source[page] for source in (*types, ranges) if page in source]
+            category_set = set().union(*evidence) if evidence else set()
         index[page] = _resolve(category_set, provenance, identities.get(page, set()))
     return with_toc_fallback(index, toc)

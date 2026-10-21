@@ -8,8 +8,10 @@ import threading
 
 from .core import *  # noqa: F401,F403
 from .citation_extent import resolve_citation_extent
+from .transcript_reading import Presentation, render_readable, search_layout, search_projection
 from .record_categories import (
     Classification,
+    Category,
     load_category_index,
     sidebar_category_rank,
     with_toc_fallback,
@@ -183,6 +185,14 @@ class Focus(Adw.Application):
         self._grep_search_cancel_event: threading.Event | None = None
         self._grep_search_generation = 0
 
+        self._reading_pages: frozenset[int] = frozenset()
+        self._reading_mode = True
+        self._reading_presentation: Presentation | None = None
+        self._reading_page: int | None = None
+        self._reading_snapshot = None
+        self._reading_controls: Gtk.MenuButton | None = None
+        self._reading_view_action: Gio.SimpleAction | None = None
+        self._reading_status: Gtk.Label | None = None
         self._page_cache: dict[int, str] = {}
         self._page_search_cache: dict[int, str] = {}
         self._page_search_map_cache: dict[int, list[int]] = {}
@@ -385,6 +395,16 @@ class Focus(Adw.Application):
             pass
 
     def _scan_pages(self) -> None:
+        self._stop_grep_search_if_running()
+        self._grep_search_generation += 1
+        self._reading_presentation = None
+        self._reading_page = None
+        self._reading_snapshot = None
+        self._reading_pages = frozenset()
+        if self._reading_controls:
+            self._reading_controls.set_visible(False)
+        if self._reading_status:
+            self._reading_status.set_visible(False)
         self._category_base_index = {}
         self._category_index = {}
         self._toc_categories = []
@@ -420,6 +440,14 @@ class Focus(Adw.Application):
         self.pages = sorted(self.page_to_path.keys())
         self._category_base_index = load_category_index(self._record_layout, self.pages)
         self._category_index = dict(self._category_base_index)
+        strict_index = load_category_index(
+            self._record_layout, self.pages, require_nonconflicting_body=True
+        )
+        self._reading_pages = frozenset(
+            page for page, item in strict_index.items()
+            if item.category == Category.HEARING and item.status == "classified"
+            and item.provenance in {"transcript", "source_map", "boundary"}
+        )
 
     def _current_toc_path(self) -> Path:
         return self.toc_path
@@ -1230,6 +1258,27 @@ class Focus(Adw.Application):
         self._minute_order_button.set_visible(False)
         self._minute_order_button.connect("clicked", self._on_minute_order_clicked)
         page_controls.append(self._minute_order_button)
+        view = "readable" if self._reading_mode else "original"
+        self._reading_view_action = Gio.SimpleAction.new_stateful(
+            "transcript-view", GLib.VariantType.new("s"), GLib.Variant("s", view))
+        self._reading_view_action.connect("change-state", self._on_reading_mode_changed)
+        self.add_action(self._reading_view_action)
+        view_menu = Gio.Menu()
+        view_menu.append("Readable", "app.transcript-view::readable")
+        view_menu.append("Original", "app.transcript-view::original")
+        self._reading_controls = Gtk.MenuButton(label=view.title())
+        self._reading_controls.add_css_class("flat")
+        self._reading_controls.add_css_class("focus-reading-view")
+        self._reading_controls.set_menu_model(view_menu)
+        self._reading_controls.set_tooltip_text(
+            "Transcript view. Display formatting only; source capitalization is preserved. "
+            "Gutter removal is conservative. Choose Original or the page image to verify."
+        )
+        page_controls.append(self._reading_controls)
+        self._reading_status = Gtk.Label(label="Original fallback")
+        self._reading_status.add_css_class("dim-label")
+        self._reading_status.set_visible(False)
+        page_controls.append(self._reading_status)
         text_controls.set_start_widget(page_controls)
 
         grep_controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -1871,17 +1920,32 @@ class Focus(Adw.Application):
         if self._title_widget:
             self._title_widget.set_title(title_text)
 
-    def _set_text(self, text: str, highlights: list[tuple[int, int]] | None = None) -> None:
+    def _set_text(self, text: str, highlights: list[tuple[int, int]] | None = None,
+                  *, literal: bool = False) -> None:
         if not self.textview:
             return
         buf = self.textview.get_buffer()
-        rendered_text, markdown_spans, orig_to_clean = _render_markdown_text(text)
+        if literal:
+            rendered_text, markdown_spans, orig_to_clean = text, [], []
+        else:
+            rendered_text, markdown_spans, orig_to_clean = _render_markdown_text(text)
         buf.set_text(rendered_text)
         self._apply_markdown_spans(buf, markdown_spans)
+        presentation = getattr(self, "_reading_presentation", None) if literal else None
+        if presentation and presentation.diagnostic == "readable":
+            table = buf.get_tag_table()
+            spacing = table.lookup("transcript-spacing") or buf.create_tag(
+                "transcript-spacing", pixels_inside_wrap=2)
+            speaker = table.lookup("transcript-speaker") or buf.create_tag(
+                "transcript-speaker", weight=Pango.Weight.BOLD)
+            buf.apply_tag(spacing, buf.get_start_iter(), buf.get_end_iter())
+            for start, end in presentation.styles:
+                buf.apply_tag(speaker, buf.get_iter_at_offset(start), buf.get_iter_at_offset(end))
         self._apply_page_marker_style(buf, rendered_text)
         self._apply_page_links(buf, rendered_text)
         if highlights:
-            highlights = self._map_markdown_spans(highlights, orig_to_clean)
+            if not literal:
+                highlights = self._map_markdown_spans(highlights, orig_to_clean)
             tag = self._ensure_highlight_tag()
             if tag is not None:
                 char_count = buf.get_char_count()
@@ -1896,8 +1960,20 @@ class Focus(Adw.Application):
                         start_iter = buf.get_iter_at_offset(line_start)
                         end_iter = buf.get_iter_at_offset(line_end)
                         buf.apply_tag(tag, start_iter, end_iter)
-        self._apply_keyword_highlights(buf, rendered_text)
-        self._apply_rounded_grid_table_no_wrap(buf, rendered_text)
+        if presentation and presentation.diagnostic == "readable":
+            source = self._page_cache.get(self._reading_page, "")
+            tag = self._ensure_keyword_highlight_tag()
+            for phrase in self._ai_settings.highlight_phrases:
+                if not phrase:
+                    continue
+                for match in re.finditer(re.escape(phrase), source):
+                    start, end = presentation.mapping.display_span(*match.span())
+                    if tag and end > start:
+                        buf.apply_tag(tag, buf.get_iter_at_offset(start), buf.get_iter_at_offset(end))
+        else:
+            self._apply_keyword_highlights(buf, rendered_text)
+        if not literal:
+            self._apply_rounded_grid_table_no_wrap(buf, rendered_text)
         if self.scroller:
             vadj = self.scroller.get_vadjustment()
             if vadj:
@@ -1945,8 +2021,23 @@ class Focus(Adw.Application):
         elif 0 <= self._grep_current_match_index < len(highlights):
             local_index = self._grep_current_match_index
         local_index = max(0, min(local_index, len(highlights) - 1))
-        start, _end = highlights[local_index]
-        GLib.idle_add(self._scroll_textview_to_offset, start)
+        start, end = highlights[local_index]
+        presentation = getattr(self, "_reading_presentation", None)
+        if presentation and presentation.diagnostic == "readable":
+            start, _end = presentation.mapping.display_span(start, end)
+        GLib.idle_add(self._scroll_current_record_offset, self._current_page_number(),
+                      self._reading_snapshot, start, False)
+
+    def _scroll_current_record_offset(self, page, snapshot, offset: int, anchor: bool) -> bool:
+        if page != self._current_page_number() or snapshot != self._reading_snapshot:
+            return False
+        if anchor and self.textview:
+            buffer = self.textview.get_buffer()
+            iterator = buffer.get_iter_at_offset(min(offset, buffer.get_char_count()))
+            self.textview.scroll_to_iter(iterator, 0.0, True, 0.0, 0.0)
+        else:
+            self._scroll_textview_to_offset(offset)
+        return False
 
     def _apply_page_marker_style(self, buf: Gtk.TextBuffer, text: str) -> None:
         self._append_page_marker_style(buf, text, 0)
@@ -2495,6 +2586,10 @@ class Focus(Adw.Application):
             "flowbox.focus-summary-controls > flowboxchild { "
             "background: none; box-shadow: none; "
             "}"
+            # Subdue only the collapsed selector's text/arrow, not its focus
+            # outline, hover background or the choices inside its popover.
+            "menubutton.focus-reading-view > button label { font-weight: normal; opacity: 0.55; }"
+            "menubutton.focus-reading-view > button arrow { opacity: 0.55; }"
             "button.focus-citation-primary { min-width: 0; padding-left: 10px; padding-right: 10px; }"
             "button.focus-citation-step { min-width: 20px; padding-left: 3px; padding-right: 3px; }"
             "entry.focus-citation-count { min-width: 28px; padding-left: 2px; padding-right: 2px; }"
@@ -4835,12 +4930,78 @@ class Focus(Adw.Application):
         content: str,
         highlights: list[tuple[int, int]] | None,
     ) -> tuple[str, list[tuple[int, int]] | None]:
+        self._reading_presentation = None
+        self._reading_page = None
+        eligible = _page in getattr(self, "_reading_pages", ())
+        controls = getattr(self, "_reading_controls", None)
+        if controls:
+            controls.set_visible(eligible)
         adjusted = [(start, end) for start, end in highlights or [] if end > start]
+        if eligible and self._reading_mode:
+            presentation = render_readable(content)
+            self._reading_presentation = presentation
+            self._reading_page = _page
+            if presentation.diagnostic == "readable":
+                adjusted = [presentation.mapping.display_span(start, end) for start, end in adjusted]
+                content = presentation.text
+        status = getattr(self, "_reading_status", None)
+        if status:
+            presentation = self._reading_presentation
+            status.set_visible(bool(presentation and presentation.diagnostic != "readable"))
+            status.set_tooltip_text(presentation.diagnostic if presentation else "")
         return content, adjusted if adjusted else None
+
+    def _on_reading_mode_changed(self, action: Gio.SimpleAction, value: GLib.Variant) -> None:
+        view = value.get_string()
+        if view not in {"readable", "original"}:
+            return
+        mode = view == "readable"
+        if mode == self._reading_mode:
+            return
+        buffer = self.textview.get_buffer() if self.textview else None
+        selection = buffer.get_selection_bounds() if buffer else ()
+        old = self._reading_presentation
+        mapped = old and old.diagnostic == "readable"
+        source_selection = None
+        if selection:
+            a, b = (it.get_offset() for it in selection)
+            source_selection = old.mapping.source_span(a, b) if mapped else (a, b)
+        anchor = 0
+        if self.textview:
+            rect = self.textview.get_visible_rect()
+            anchor = self.textview.get_line_at_y(rect.y)[0].get_offset()
+        if mapped:
+            anchor = old.mapping.source_span(anchor, anchor)[0]
+        self._reading_mode = mode
+        action.set_state(value)
+        if self._reading_controls:
+            self._reading_controls.set_label(view.title())
+        self._load_current()
+        new = self._reading_presentation
+        if new and new.diagnostic == "readable":
+            anchor = new.mapping.display_span(anchor, anchor)[0]
+            if source_selection:
+                source_selection = new.mapping.display_span(*source_selection)
+        if buffer and source_selection:
+            a, b = source_selection
+            buffer.select_range(buffer.get_iter_at_offset(a), buffer.get_iter_at_offset(b))
+        # Run after _set_text's top reset and active-hit scroll. Mode switches
+        # preserve the reading anchor; subsequent hit navigation still scrolls.
+        GLib.idle_add(self._scroll_current_record_offset, self._current_page_number(),
+                      self._reading_snapshot, anchor, True)
 
     def _load_current(self) -> None:
         self._refresh_category_appearance()
         if not self.pages:
+            self._reading_presentation = None
+            self._reading_page = None
+            self._reading_snapshot = None
+            if self._reading_controls:
+                self._reading_controls.set_visible(False)
+            if self._reading_status:
+                self._reading_status.set_visible(False)
+            if self.textview:
+                self.textview.get_buffer().set_text("")
             self._clear_image_preview()
             self._set_show_image(False, silent=True)
             return
@@ -4848,19 +5009,38 @@ class Focus(Adw.Application):
         self._sync_minute_order_return_state()
         path = self.page_to_path.get(page)
         if not path or not path.exists():
-            display_text, highlight_spans = self._render_page_display(
-                page, f"Missing file for page {page:04d}", None
-            )
+            self._reading_presentation = None
+            self._reading_page = None
+            self._reading_snapshot = None
+            if self._reading_controls:
+                self._reading_controls.set_visible(False)
+            if self._reading_status:
+                self._reading_status.set_visible(False)
+            display_text, highlight_spans = f"Missing file for page {page:04d}", None
             self._set_text(display_text, highlight_spans)
             self._clear_image_preview()
             self._set_show_image(False, silent=True)
             self._update_header()
             self._sync_sidebar_active_page(scroll=True)
             return
+        try:
+            stat = path.stat()
+            snapshot = (page, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            snapshot = (page, None)
+        previous_content = self._page_cache.get(page)
+        if snapshot != self._reading_snapshot:
+            self._page_cache.pop(page, None)
+            self._page_search_cache.pop(page, None)
+            self._page_search_map_cache.pop(page, None)
+        self._reading_snapshot = snapshot
         content, _, _ = self._read_page_text(page)
+        if previous_content is not None and previous_content != content:
+            self._clear_grep_state()
+            self._grep_search_generation += 1
         highlights = self._grep_hits.get(page)
         display_text, highlight_spans = self._render_page_display(page, content, highlights)
-        self._set_text(display_text, highlight_spans)
+        self._set_text(display_text, highlight_spans, literal=page in self._reading_pages)
         self._load_image_preview_for_page(page)
         if self._show_image:
             if not self._load_image_for_page(page):
@@ -4930,7 +5110,8 @@ class Focus(Adw.Application):
         assert self._grep_regex is not None
         worker = threading.Thread(
             target=self._grep_search_worker,
-            args=(self._grep_regex, generation, cancel_event, pages, page_to_path),
+            args=(self._grep_regex, generation, cancel_event, pages, page_to_path,
+                  self._reading_pages),
             daemon=True,
         )
         self._grep_search_cancel_event = cancel_event
@@ -4944,6 +5125,7 @@ class Focus(Adw.Application):
         cancel_event: threading.Event,
         pages: list[int],
         page_to_path: dict[int, Path],
+        reading_pages: frozenset[int] = frozenset(),
     ) -> None:
         local_hits: dict[int, list[tuple[int, int]]] = {}
         for page in pages:
@@ -4958,13 +5140,18 @@ class Focus(Adw.Application):
             # inexpensive pass rejects nonmatching pages while preserving every
             # Unicode, punctuation, spacing, and line-break rule used by the
             # authoritative Python regex.
-            normalized = normalize_text_for_search(content)
+            layout = search_layout(content) if page in reading_pages else None
+            projection, _ = search_projection(content, layout=layout) if layout else (content, None)
+            normalized = normalize_text_for_search(projection)
             if not normalized or regex.search(normalized) is None:
                 continue
 
             # Build the more expensive normalized-to-original map only for a
             # page that actually matched, then locate and map every hit.
-            normalized, norm_to_orig = normalize_text_for_search_with_map(content)
+            projection_map = None
+            if projection != content:
+                projection, projection_map = search_projection(content, mapped=True, layout=layout)
+            normalized, norm_to_orig = normalize_text_for_search_with_map(projection)
             matches = list(regex.finditer(normalized))
             mapped_hits: list[tuple[int, int]] = []
             for match in matches:
@@ -4972,9 +5159,11 @@ class Focus(Adw.Application):
                     norm_to_orig,
                     match.start(),
                     match.end(),
-                    len(content),
+                    len(projection),
                 )
                 if mapped:
+                    if projection_map:
+                        mapped = projection_map.source_span(*mapped)
                     mapped_hits.append(mapped)
             if mapped_hits:
                 local_hits[page] = mapped_hits
