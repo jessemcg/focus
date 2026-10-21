@@ -51,6 +51,7 @@ def _run_wrapper(
     extra_env: dict[str, str] | None = None,
     *,
     with_bridge: bool = False,
+    with_settings: bool = True,
 ) -> tuple[list[str], Path, Path, subprocess.CompletedProcess[str]]:
     case_root = tmp_path / "case"
     case_root.mkdir()
@@ -74,11 +75,12 @@ def _run_wrapper(
         (extension_dir / "focus-followup-bridge.ts").write_text(
             "// Focus follow-up bridge\n", encoding="utf-8"
         )
-    (pi_project_dir / "settings.json").write_text(
-        '{"defaultProvider":"fireworks","defaultModel":"test-model",'
-        '"defaultThinkingLevel":"medium"}',
-        encoding="utf-8",
-    )
+    if with_settings:
+        (pi_project_dir / "settings.json").write_text(
+            '{"defaultProvider":"fireworks","defaultModel":"test-model",'
+            '"defaultThinkingLevel":"medium"}',
+            encoding="utf-8",
+        )
     (pi_project_dir / "SYSTEM.md").write_text(
         "Focus record knowledge work", encoding="utf-8"
     )
@@ -214,6 +216,15 @@ def test_project_metrics_are_git_ignored(tmp_path) -> None:
     assert completed.returncode == 0
 
 
+def test_pi_wrapper_without_project_preferences_uses_empty_pi_overrides(tmp_path) -> None:
+    output, workspace, _prompt, completed = _run_wrapper(tmp_path, with_settings=False)
+    assert completed.returncode == 0
+    assert "settings=staged" in output
+    assert "model=staged" not in output
+    assert "thinking=staged" not in output
+    assert not workspace.exists()
+
+
 def test_pi_wrapper_missing_observer_is_nonfatal(tmp_path) -> None:
     output, workspace, _, completed = _run_wrapper(
         tmp_path, {"PI_RUN_METRICS_COLLECTOR": "/nonexistent/collector.ts"}
@@ -274,5 +285,5 @@ def test_pi_wrapper_rejects_missing_project_resources(tmp_path) -> None:
     )
 
     assert completed.returncode == 2
-    assert "Focus PI project settings not found" in completed.stderr
+    assert "Focus PI system prompt not found or empty" in completed.stderr
     assert not prompt_path.exists()

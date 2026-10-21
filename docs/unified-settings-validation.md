@@ -1,5 +1,9 @@
 # Unified Settings
 
+Pi inheritance follow-up (2026-10-21): see [validation](pi-inheritance-validation.md)
+for current missing-preference behavior and isolated native Settings acceptance.
+Older findings below describe their original validation scope.
+
 Publication: the user subsequently authorized committing and pushing the inline-editor changes. The no-commit/no-push statements below describe validation, not publication; native-input acceptance remains unverified.
 
 ## Current interaction contract — inline Highlights, 2026-10-19

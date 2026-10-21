@@ -207,9 +207,9 @@ def test_empty_model_list_prompts_for_pi_authorization() -> None:
             "medium",
         )
 
-    assert window.pi_model_row.model == ["No authenticated PI models found"]
+    assert window.pi_model_row.model == ["Use Pi default (inherited)"]
     assert window.pi_model_row.sensitive is False
-    assert "Authorize a provider in PI" in window.pi_model_row.subtitle
+    assert "/login" in window.pi_model_row.subtitle
     assert window.pi_thinking_row.model == ["Medium"]
     assert window.pi_thinking_row.sensitive is False
 
@@ -267,7 +267,7 @@ def test_model_change_clamps_reasoning_to_supported_level() -> None:
     assert "Medium is unsupported" in window.pi_thinking_row.subtitle
 
 
-def test_missing_project_reasoning_defaults_to_medium_and_is_saveable() -> None:
+def test_missing_project_reasoning_inherits_without_becoming_saveable() -> None:
     model = PiModel("provider", "model", "Model")
     window = model_window(model.settings_key, original_thinking=None)
 
@@ -281,11 +281,11 @@ def test_missing_project_reasoning_defaults_to_medium_and_is_saveable() -> None:
             [model],
             "",
             model.settings_key,
-            "medium",
+            "",
         )
 
-    assert window._selected_pi_thinking_level() == "medium"
-    assert window._pi_thinking_selection_changed is True
+    assert window._selected_pi_thinking_level() == ""
+    assert window._pi_thinking_selection_changed is False
 
 
 def test_reasoning_selection_tracks_change_and_updates_subtitle() -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -13,14 +12,8 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 from .paths import pi_settings_file
 
 PROJECT_PI_SETTINGS_PATH = pi_settings_file()
-# `.pi/settings.json` is local runtime state (git-ignored); seed it from these
-# application defaults when it is missing so a fresh checkout can run the Agent.
-DEFAULT_PROJECT_PI_SETTINGS: dict[str, Any] = {
-    "defaultThinkingLevel": "low",
-    "enableSkillCommands": True,
-    "compaction": {"enabled": False},
-    "retry": {"enabled": True},
-}
+# Project Pi settings are user-owned overrides only. If absent, let Pi apply its
+# current global/default policy rather than freezing application-owned defaults.
 PI_MODEL_DISCOVERY_TIMEOUT_SECONDS = 10
 PI_THINKING_LEVELS: tuple[str, ...] = (
     "off",
@@ -213,8 +206,8 @@ def _read_pi_settings(path: Path) -> dict[str, Any]:
     try:
         from ._model_store import read_ordinary
         raw = read_ordinary(path)
-    except FileNotFoundError as exc:
-        raise PiSettingsError(f"PI project settings not found: {path}") from exc
+    except FileNotFoundError:
+        return {}
     except (OSError, json.JSONDecodeError) as exc:
         raise PiSettingsError(f"Unable to read PI project settings: {exc}") from exc
     if not isinstance(raw, dict):
@@ -223,34 +216,11 @@ def _read_pi_settings(path: Path) -> dict[str, Any]:
 
 
 def _write_private_settings_temp(path: Path, settings: dict[str, Any]) -> None:
-    """Write a complete private JSON file for atomic publication."""
+    """Write a private explicit-setup verification receipt candidate."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as output:
         json.dump(settings, output, ensure_ascii=True, indent=2)
         output.write("\n")
-
-
-def ensure_project_pi_settings(
-    path: Path = PROJECT_PI_SETTINGS_PATH,
-) -> None:
-    """Seed missing local settings without replacing a concurrent user file."""
-    if path.exists() or path.is_symlink():
-        return
-    temp_path: Path | None = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        _write_private_settings_temp(temp_path, DEFAULT_PROJECT_PI_SETTINGS)
-        try:
-            os.link(temp_path, path)
-        except FileExistsError:
-            # Another writer (or a dangling symlink) won the race.
-            pass
-    except OSError as exc:
-        raise PiSettingsError(f"Unable to create PI project settings: {exc}") from exc
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
 
 
 def current_project_pi_model(
@@ -274,21 +244,24 @@ def current_project_pi_thinking_level(
 
 def save_project_pi_runtime(
     model: PiModel,
-    thinking_level: str,
+    thinking_level: str | None,
     path: Path = PROJECT_PI_SETTINGS_PATH,
 ) -> None:
-    normalized_thinking = thinking_level.strip().lower()
-    if normalized_thinking not in PI_THINKING_LEVELS:
+    # None preserves reasoning; an explicit empty choice clears an override.
+    normalized_thinking = thinking_level.strip().lower() if thinking_level is not None else None
+    if normalized_thinking and normalized_thinking not in PI_THINKING_LEVELS:
         raise PiSettingsError(f"Unsupported PI reasoning effort: {thinking_level}")
-    ensure_project_pi_settings(path)
     if path.is_symlink():
         raise PiSettingsError("PI project settings is a symlink; refusing to replace it.")
     settings = _read_pi_settings(path)
     settings["defaultProvider"] = model.provider
     settings["defaultModel"] = model.model_id
-    settings["defaultThinkingLevel"] = normalized_thinking
-    settings.pop("fireworksPriorityServiceTier", None)
+    if normalized_thinking:
+        settings["defaultThinkingLevel"] = normalized_thinking
+    elif normalized_thinking is not None:
+        settings.pop("defaultThinkingLevel", None)
     try:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         from ._model_store import save_ordinary
         save_ordinary(path, settings)
     except OSError as exc:
@@ -299,5 +272,4 @@ def save_project_pi_model(
     model: PiModel,
     path: Path = PROJECT_PI_SETTINGS_PATH,
 ) -> None:
-    thinking_level = current_project_pi_thinking_level(path) or "medium"
-    save_project_pi_runtime(model, thinking_level, path)
+    save_project_pi_runtime(model, None, path)

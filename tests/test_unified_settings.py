@@ -20,8 +20,7 @@ class UnifiedSettingsTests(unittest.TestCase):
         app.get_record_font_family_name = lambda: ui.RECORD_FONT_FAMILY_OPTIONS[0][0]
         app.update_font_sizes = Mock()
         app.on_ai_settings_saved = Mock()
-        with patch.object(ui, "ensure_project_pi_settings"), \
-             patch.object(ui, "current_project_pi_model", return_value=("synthetic", "saved")), \
+        with patch.object(ui, "current_project_pi_model", return_value=("synthetic", "saved")), \
              patch.object(ui, "current_project_pi_thinking_level", return_value="medium"), \
              patch.object(ui, "load_ai_settings", return_value=ui.AiSettings(speech_agent_source_file="/synthetic/speech", highlight_phrases=[], grep_highlight_color=ui.DEFAULT_MATCH_COLOR, phrase_highlight_color=ui.DEFAULT_HIGHLIGHT_COLOR, search_chip_color=ui.DEFAULT_SEARCH_CHIP_COLOR)), \
              patch.object(ui.AiSettingsWindow, "_load_pi_models"):

@@ -48,7 +48,7 @@ from .agent_followup import (
     text_transport_error,
 )
 from .answer_metadata import parse_answer_metadata
-from .pi_runtime import PiSettingsError, ensure_project_pi_settings, PROJECT_PI_SETTINGS_PATH
+from .pi_runtime import PROJECT_PI_SETTINGS_PATH
 from .reading_position import AnswerPositionCache
 from .saved_answers import (
     AgentAnswerSnapshot,
@@ -7565,21 +7565,16 @@ class Focus(Adw.Application):
         if not helper.is_file():
             self._ai_transient_toast(f"Record Agent helper not found: {helper}")
             return
-        try:
-            ensure_project_pi_settings()
-        except PiSettingsError as exc:
-            self._ai_transient_toast(f"Unable to initialize PI settings: {exc}")
-            return
         pi_settings = PROJECT_PI_SETTINGS_PATH
         if (
-            not pi_settings.is_file()
+            not (PROJECT_DIR / "scripts" / "stage-pi-settings.py").is_file()
             or not FOCUS_PI_SYSTEM_PROMPT_FILE.is_file()
             or not FOCUS_PI_SKILL_FILE.is_file()
             or not FOCUS_PI_EXTENSION_FILE.is_file()
             or not FOCUS_AGENT_ANSWER_PROTOCOL_FILE.is_file()
         ):
             self._ai_transient_toast(
-                "Focus PI settings, prompt, skill, extension, or answer protocol is missing."
+                "Focus PI staging helper, prompt, skill, extension, or answer protocol is missing."
             )
             return
         followup_extension = FOCUS_PI_FOLLOWUP_EXTENSION_FILE

@@ -13,7 +13,6 @@ from focus.pi_runtime import (
     clamp_pi_thinking_level,
     current_project_pi_model,
     current_project_pi_thinking_level,
-    ensure_project_pi_settings,
     save_project_pi_runtime,
 )
 
@@ -83,7 +82,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._pi_thinking_selection_changed = False
         self._pi_model_closed = False
         try:
-            ensure_project_pi_settings()
             self._original_pi_model_key = current_project_pi_model()
             self._original_pi_thinking_level = current_project_pi_thinking_level()
             self._pi_model_settings_error = ""
@@ -392,7 +390,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 or "Loading reasoning levels for the selected model..."
             ),
         )
-        self.pi_thinking_row.set_model(Gtk.StringList.new(["Medium"]))
+        self.pi_thinking_row.set_model(Gtk.StringList.new(["Use Pi default"]))
         self.pi_thinking_row.set_sensitive(False)
         self.pi_thinking_row.connect(
             "notify::selected",
@@ -439,13 +437,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
     def _populate_pi_thinking_row(self, preferred: str) -> None:
         model = self._selected_pi_model()
-        requested = preferred or self._original_pi_thinking_level or "medium"
+        requested = preferred or ""
         self._pi_model_applying = True
         try:
             if model is None:
                 self._pi_thinking_options = [requested]
                 self.pi_thinking_row.set_model(
-                    Gtk.StringList.new([_format_pi_thinking_level(requested)])
+                    Gtk.StringList.new([_format_pi_thinking_level(requested) if requested else "Use Pi default"])
                 )
                 self.pi_thinking_row.set_selected(0)
                 self.pi_thinking_row.set_sensitive(False)
@@ -458,30 +456,35 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             if model.settings_key not in self._pi_available_model_keys:
                 self._pi_thinking_options = [requested]
                 self.pi_thinking_row.set_model(
-                    Gtk.StringList.new([_format_pi_thinking_level(requested)])
+                    Gtk.StringList.new([_format_pi_thinking_level(requested) if requested else "Use Pi default"])
                 )
                 self.pi_thinking_row.set_selected(0)
                 self.pi_thinking_row.set_sensitive(False)
                 self.pi_thinking_row.set_subtitle(
                     "The configured model is unavailable; this value is preserved."
                 )
-                self._pi_thinking_selection_changed = False
+                self._pi_thinking_selection_changed = requested != (self._original_pi_thinking_level or "")
                 return
 
-            effective = clamp_pi_thinking_level(model, requested)
+            effective = clamp_pi_thinking_level(model, requested) if requested else ""
             levels = list(model.supported_thinking_levels or ("off",))
+            if not requested:
+                levels.insert(0, "")
             self._pi_thinking_options = levels
             self.pi_thinking_row.set_model(
                 Gtk.StringList.new(
-                    [_format_pi_thinking_level(level) for level in levels]
+                    [_format_pi_thinking_level(level) if level else "Use Pi default" for level in levels]
                 )
             )
             self.pi_thinking_row.set_selected(levels.index(effective))
             self.pi_thinking_row.set_sensitive(True)
             self._pi_thinking_selection_changed = (
-                effective != self._original_pi_thinking_level
+                effective != (self._original_pi_thinking_level or "")
+                and (self._pi_model_selection_changed or self._pi_thinking_selection_changed)
             )
-            if effective != requested:
+            if not requested:
+                self.pi_thinking_row.set_subtitle("Inherit Pi reasoning; no app effort override.")
+            elif effective != requested:
                 self.pi_thinking_row.set_subtitle(
                     f"{_format_pi_thinking_level(requested)} is unsupported by "
                     f"this model; PI will use {_format_pi_thinking_level(effective)}."
@@ -527,14 +530,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if self._pi_model_applying:
             return
         thinking_level = self._selected_pi_thinking_level()
-        if not thinking_level:
-            return
         self._pi_thinking_selection_changed = (
-            thinking_level != self._original_pi_thinking_level
+            thinking_level != (self._original_pi_thinking_level or "")
         )
         self.pi_thinking_row.set_subtitle(
             "New Agent sessions start with "
             f"{_format_pi_thinking_level(thinking_level)} reasoning."
+            if thinking_level else "Inherit Pi reasoning; no app effort override."
         )
 
     def _on_refresh_pi_models(self, _button: Gtk.Button) -> None:
@@ -567,8 +569,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         selected_thinking = self._selected_pi_thinking_level()
         desired_thinking = (
             selected_thinking
-            if self._pi_thinking_selection_changed and selected_thinking
-            else self._original_pi_thinking_level or "medium"
+            if self._pi_thinking_selection_changed
+            else self._original_pi_thinking_level or ""
         )
         self._pi_model_generation += 1
         generation = self._pi_model_generation
@@ -695,6 +697,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             labels.append(
                 f"{unavailable.label} (currently configured; unavailable)"
             )
+        if current is None:
+            options.append(None)
+            labels.append("Use Pi default (inherited)")
         options.extend(models)
         labels.extend(model.label for model in models)
         if not options:
@@ -720,7 +725,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self.pi_model_row.set_sensitive(bool(models))
         if selected_model is None:
             self.pi_model_row.set_subtitle(
-                "Authorize a provider in PI, then refresh this list."
+                "Inherit Pi's current model. Install Pi, use /login and select an available model if unconfigured."
             )
         else:
             self._update_pi_model_subtitle()
@@ -848,11 +853,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if (
             self._pi_model_selection_changed
             or self._pi_thinking_selection_changed
-        ) and selected_pi_model is not None and selected_pi_thinking:
+        ) and selected_pi_model is not None:
             try:
                 save_project_pi_runtime(
                     selected_pi_model,
-                    selected_pi_thinking,
+                    selected_pi_thinking if self._pi_thinking_selection_changed else None,
                 )
                 pi_runtime_saved = True
             except PiSettingsError as exc:

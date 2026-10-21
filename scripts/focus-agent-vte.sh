@@ -52,8 +52,8 @@ if [[ ! -d "$case_root" ]]; then
   exit 2
 fi
 
-if [[ -z "$pi_project_dir" || ! -f "$pi_settings_file" ]]; then
-  printf 'Focus PI project settings not found: %s\n' "$pi_settings_file" >&2
+if [[ -z "$pi_project_dir" ]]; then
+  printf 'Focus PI project resources are unavailable.\n' >&2
   exit 2
 fi
 
@@ -94,7 +94,9 @@ mkdir -p "$workspace/tmp"
 mkdir -p "$workspace/.pi"
 # Stage only application-owned resources, never developer .pi discovery content.
 mkdir -p "$workspace/.pi/extensions" "$workspace/.pi/skills/focus-answer-record-questions"
-cp "$pi_settings_file" "$workspace/.pi/settings.json"
+# Stdlib-only guarded read; only mandatory skill expansion is workspace-owned.
+/usr/bin/python3 "$(dirname -- "${BASH_SOURCE[0]}")/stage-pi-settings.py" \
+  "$pi_settings_file" "$workspace/.pi/settings.json"
 cp "$pi_project_dir/SYSTEM.md" "$workspace/.pi/SYSTEM.md"
 cp "$pi_project_dir/skills/focus-answer-record-questions/SKILL.md" "$workspace/.pi/skills/focus-answer-record-questions/SKILL.md"
 cp "$pi_project_dir/extensions/focus-record-agent.ts" "$workspace/.pi/extensions/"

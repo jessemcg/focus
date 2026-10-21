@@ -83,7 +83,6 @@ def test_real_settings_window_omits_color_and_save_does_not_reintroduce_it(monke
     app.get_ai_settings = core.load_ai_settings
     app.update_font_sizes = Mock()
     app.on_ai_settings_saved = Mock()
-    monkeypatch.setattr(settings_module, 'ensure_project_pi_settings', lambda: None)
     monkeypatch.setattr(settings_module, 'current_project_pi_model', lambda: None)
     monkeypatch.setattr(settings_module, 'current_project_pi_thinking_level', lambda: 'high')
     monkeypatch.setattr(settings_module.AiSettingsWindow, '_load_pi_models', lambda _self: None)

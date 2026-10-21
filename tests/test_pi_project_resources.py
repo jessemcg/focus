@@ -9,23 +9,20 @@ from focus.core import (
     FOCUS_PI_SKILL_NAME,
     FOCUS_PI_SYSTEM_PROMPT_FILE,
 )
-from focus.pi_runtime import DEFAULT_PROJECT_PI_SETTINGS
+from focus.pi_runtime import current_project_pi_model, current_project_pi_thinking_level
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXTENSION = FOCUS_PI_PROJECT_DIR / "extensions" / "focus-record-agent.ts"
 
 
-def test_pi_project_settings_defaults_preserve_policy_without_forcing_model() -> None:
-    settings = DEFAULT_PROJECT_PI_SETTINGS
+def test_absent_pi_preferences_defer_to_pi_without_creating_a_file(tmp_path) -> None:
+    settings = tmp_path / "pi" / "settings.json"
 
-    assert "defaultProvider" not in settings
-    assert "defaultModel" not in settings
-    assert settings["defaultThinkingLevel"] == "low"
-    assert settings["compaction"] == {"enabled": False}
-    assert settings["retry"] == {"enabled": True}
-    assert settings["enableSkillCommands"] is True
-    assert not any("key" in name.casefold() for name in settings)
+    assert current_project_pi_model(settings) is None
+    assert current_project_pi_thinking_level(settings) is None
+    assert not settings.exists()
+    assert not settings.parent.exists()
 
 
 def test_pi_system_prompt_is_short_and_delegates_to_canonical_skill() -> None:

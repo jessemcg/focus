@@ -223,7 +223,7 @@ def test_success_ending_is_short_and_has_no_command_paths(lifecycle, capsys):
 
 def test_readme_has_one_focus_uninstall_command():
     text = (ROOT / "README.md").read_text()
-    section = text.split("**Uninstall Focus:**", 1)[1].split("**Uninstall Pi:**", 1)[0]
+    section = text.split("### Uninstall Focus", 1)[1].split("### Uninstall Pi", 1)[0]
     assert section.count('"$HOME/.local/bin/focus-uninstall"') == 1
     assert "--dry-run" not in section
 

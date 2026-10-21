@@ -189,8 +189,13 @@ behavior remains separate and unchanged.
 Public launchers explicitly set `FOCUS_CONFIG_DIR` to XDG Focus storage. Without
 that override, existing checkout `config.json`/`.pi/settings.json` remain supported
 when present; otherwise XDG storage is used. No migration or deletion occurs. New
-installations contain policy defaults without a hardcoded provider/model. Settings
-shows the effective Pi storage path. Credentials always remain with Pi.
+installations ship no model, reasoning or general Pi preference defaults. Missing
+app overrides inherit the user's live Pi settings/native behavior. Reads, refresh,
+launch and unrelated Settings saves never seed preferences. Explicit model-only
+saves retain reasoning inheritance. Credentials always remain with Pi. Existing
+standalone XDG preferences are unaffected; no paths or preferences are migrated.
+The private Agent workspace enables skill-command expansion because the fixed
+workflow invokes `/skill:`; compaction and retry policy remain inherited.
 
 Embedded resources live in `focus/agent_resources`, not developer `.pi`. Every new
 session stages the same application-owned neutral method: prompt, canonical skill,

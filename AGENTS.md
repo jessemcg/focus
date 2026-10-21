@@ -3,8 +3,8 @@
 ## Application-owned model maintenance
 
 Keep `model-settings --stdin` import-light, before GUI/Pi/backend imports.
-`model_settings.py` owns effective app path/inheritance; missing Pi settings use
-owner low-effort defaults, seeded only on explicit Apply. Vendored `_model_store`
+`model_settings.py` owns effective app path/inheritance; missing Pi settings mean
+no app override. Never seed model, reasoning or general Pi preferences. Vendored `_model_store`
 and `_model_schema` must stay independent of sibling runtime imports. Ordinary
 saves share guarded revisions/locks; rejected drafts never advance baselines.
 Reconcile/Retain are receipt-only; later edits always block rollback. Test only
@@ -101,7 +101,7 @@ authorized. Older releases may not read schema-3 saved answers; never down-conve
 - `focus/research_context.py`: strict instruction-free context schema-1/2 metadata; historical profiles are descriptive only, new metadata records focus-record-qa.
 - `focus/saved_answers.py`: strict schema-1/2/3 durable per-case saved-answer store at `<record-layout-root>/.focus/saved-answers/<answer-uuid>.json`, with typed GTK-independent list/load/save/delete results, atomic private publication, and safe handling of malformed, unknown-schema, symlinked, hard-linked, special, or broad-permission entries.
 - `focus/ui/`: secondary Libadwaita widgets and windows such as the saved-answer split-button popover, settings, and the D-Bus command reference.
-- Existing `.pi/settings.json` (or standalone XDG `pi/settings.json`): private PI provider/model selection for embedded Agent sessions. The application seeds it from `DEFAULT_PROJECT_PI_SETTINGS` in `focus/pi_runtime.py` when missing; never commit it.
+- Optional `.pi/settings.json` (or standalone XDG `pi/settings.json`): private Pi overrides. Missing files inherit live user Pi settings/native defaults; reads, refresh and unrelated saves never create them. Required skill-command expansion is enabled only in private workflow workspaces; no compaction/retry defaults are shipped.
 - `focus/agent_resources/SYSTEM.md`: short identity, evidence-scope, and safety prompt copied into each private embedded-Agent workspace; the explicit skill is canonical for workflow and answer style.
 - `focus/agent_resources/skills/focus-answer-record-questions/SKILL.md`: canonical embedded-Agent record research and citation instructions and the canonical titled-answer style (opening `# Title` plus `*Subtitle*`, then the substantive body). `focus/agent_resources/SYSTEM.md` delegates to this skill rather than duplicating the style rule; title/subtitle formatting is non-blocking and never triggers a retry.
 - `focus/agent_resources/extensions/focus-record-agent.ts`: the sole model-facing explicitly loaded extension. It registers the shell-free structured record tool and terminating answer handoff, guards text-page access, leaves the provider/model output limit unchanged (no Focus-imposed token cap or search/page/map budget), and captures one best-effort fallback answer.

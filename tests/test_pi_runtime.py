@@ -10,7 +10,6 @@ from unittest.mock import patch
 import pytest
 
 from focus.pi_runtime import (
-    DEFAULT_PROJECT_PI_SETTINGS,
     PiModel,
     PiRuntimeError,
     PiSettingsError,
@@ -21,59 +20,41 @@ from focus.pi_runtime import (
     clamp_pi_thinking_level,
     current_project_pi_model,
     current_project_pi_thinking_level,
-    ensure_project_pi_settings,
     save_project_pi_model,
     save_project_pi_runtime,
 )
 
 
-def test_ensure_project_pi_settings_seeds_defaults_when_missing(tmp_path: Path) -> None:
+def test_missing_project_settings_stay_absent_and_use_pi_defaults(tmp_path: Path) -> None:
     path = tmp_path / ".pi" / "settings.json"
 
-    ensure_project_pi_settings(path)
+    assert current_project_pi_model(path) is None
+    assert current_project_pi_thinking_level(path) is None
+    assert not path.exists()
+    assert not path.parent.exists()
 
-    assert json.loads(path.read_text(encoding="utf-8")) == DEFAULT_PROJECT_PI_SETTINGS
+
+def test_missing_project_settings_are_created_only_by_explicit_save(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+
+    save_project_pi_model(PiModel("provider", "model", "Model"), path)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "defaultProvider": "provider",
+        "defaultModel": "model",
+    }
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert list(path.parent.glob(".settings.json.*.tmp")) == []
 
 
-def test_ensure_project_pi_settings_preserves_existing_file(tmp_path: Path) -> None:
-    path = tmp_path / "settings.json"
-    path.write_text('{"defaultModel": "local-choice"}', encoding="utf-8")
-
-    ensure_project_pi_settings(path)
-
-    assert json.loads(path.read_text(encoding="utf-8")) == {"defaultModel": "local-choice"}
-
-
-def test_ensure_project_pi_settings_does_not_replace_concurrent_file(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "settings.json"
-    original_link = os.link
-
-    def concurrent_create(source: Path, destination: Path) -> None:
-        path.write_text('{"defaultModel": "user-choice"}', encoding="utf-8")
-        original_link(source, destination)
-
-    with patch("focus.pi_runtime.os.link", side_effect=concurrent_create):
-        ensure_project_pi_settings(path)
-
-    assert json.loads(path.read_text(encoding="utf-8")) == {"defaultModel": "user-choice"}
-    assert list(tmp_path.glob(".settings.json.*.tmp")) == []
-
-
-def test_ensure_project_pi_settings_preserves_dangling_symlink(
-    tmp_path: Path,
-) -> None:
+def test_missing_project_settings_keep_dangling_symlink_unsafe(tmp_path: Path) -> None:
     path = tmp_path / "settings.json"
     path.symlink_to("missing-settings.json")
 
-    ensure_project_pi_settings(path)
-
-    assert path.is_symlink()
     with pytest.raises(PiSettingsError, match="Unable to read PI project settings"):
         current_project_pi_model(path)
+    with pytest.raises(PiSettingsError, match="symlink"):
+        save_project_pi_model(PiModel("provider", "model", "Model"), path)
+    assert path.is_symlink()
 
 
 def test_save_project_runtime_does_not_replace_symlink(tmp_path: Path) -> None:
@@ -102,8 +83,8 @@ def test_save_project_runtime_seeds_missing_file(tmp_path: Path) -> None:
     assert saved["defaultProvider"] == "fireworks"
     assert saved["defaultModel"] == "accounts/fireworks/models/glm-5p2"
     assert saved["defaultThinkingLevel"] == "high"
-    assert saved["compaction"] == {"enabled": False}
-    assert saved["retry"] == {"enabled": True}
+    assert "compaction" not in saved
+    assert "retry" not in saved
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 

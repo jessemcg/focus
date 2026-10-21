@@ -242,9 +242,9 @@ Store.replace=_fixture_replace
         for p,data in before.items(): self.assertEqual(p.read_bytes(),data)
         self.assertEqual((self.root/'global-pi/settings.json').read_bytes(),global_before)
     def test_focus_missing_pi_parent_is_read_only_until_explicit_apply(self):
-        if self.package!='focus': self.skipTest('Focus owns its low-effort first-load seeding policy')
+        if self.package!='focus': self.skipTest('Focus missing-parent initialization')
         shutil.rmtree(self.pi.parent);self.call('inspect');plan=self.preview();self.assertFalse(self.pi.parent.exists())
-        self.apply(plan);saved=json.loads(self.pi.read_bytes());self.assertEqual(saved['defaultThinkingLevel'],'low');self.recovery(plan);self.assertFalse(self.pi.exists())
+        self.apply(plan);saved=json.loads(self.pi.read_bytes());self.assertNotIn('defaultThinkingLevel',saved);self.recovery(plan);self.assertFalse(self.pi.exists())
     def test_billing_uses_native_medium_not_global_effort_fallback(self):
         if self.package!='billing_helper': self.skipTest('BillingHelper owns this fixed native default')
         data=json.loads(self.pi.read_bytes());data.pop('defaultThinkingLevel');self.put(self.pi,data)
