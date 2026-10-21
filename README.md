@@ -1,7 +1,5 @@
 # Focus
 
-[Settings guide and validation](docs/unified-settings-validation.md).
-
 <img src="focus.svg" alt="Focus icon" width="96" align="right">
 
 A Linux desktop app for reading and researching court records.
