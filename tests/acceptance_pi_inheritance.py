@@ -34,8 +34,8 @@ def activate(application):
         ('current_project_pi_model', lambda: runtime.current_project_pi_model(PREFS)),
         ('current_project_pi_thinking_level', lambda: runtime.current_project_pi_thinking_level(PREFS)),
         ('save_project_pi_runtime', lambda m, t: runtime.save_project_pi_runtime(m, t, PREFS)),
-        ('load_ai_settings', lambda: ui.AiSettings(speech_agent_source_file='/synthetic/speech', highlight_phrases=['Keep literal'], grep_highlight_color=ui.DEFAULT_MATCH_COLOR, phrase_highlight_color=ui.DEFAULT_HIGHLIGHT_COLOR, search_chip_color=ui.DEFAULT_SEARCH_CHIP_COLOR)),
-        ('save_ai_settings', lambda s: (ROOT / 'saved-display.json').write_text(json.dumps({'phrases': s.highlight_phrases}))),
+        ('load_ai_settings', lambda: ui.AiSettings(speech_agent_source_file='/synthetic/speech', grep_highlight_color=ui.DEFAULT_MATCH_COLOR, search_chip_color=ui.DEFAULT_SEARCH_CHIP_COLOR)),
+        ('save_ai_settings', lambda s: (ROOT / 'saved-display.json').write_text(json.dumps({'grep': s.grep_highlight_color}))),
     ):
         p = patch.object(ui, name, value); p.start(); patches.append(p)
     p = patch.object(ui.AiSettingsWindow, '_load_pi_models', lambda self: None)
@@ -67,7 +67,8 @@ def activate(application):
         assert not w._pi_model_selection_changed and not w._pi_thinking_selection_changed
         w._on_save_clicked(None)
         assert not PREFS.exists()
-        assert json.loads((ROOT / 'saved-display.json').read_text()) == {'phrases': ['Keep literal']}
+        assert json.loads((ROOT / 'saved-display.json').read_text()) == {
+            'grep': w._read_color_control_value(w._grep_highlight_color_control, ui.DEFAULT_MATCH_COLOR)}
         print('PASS inherited/unrelated Save', flush=True)
 
     def choose_and_fail():

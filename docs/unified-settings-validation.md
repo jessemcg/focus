@@ -1,5 +1,7 @@
 # Unified Settings
 
+**Retirement (2026-10-22):** the Highlight phrases editor and the Phrase Highlight Color control were removed, together with keyword highlighting in the reader. Highlights now holds only Grep Highlight Color and Search and Cite Chip Color. `highlight_phrases` and `phrase_highlight_color` are ignored on read and dropped on the next explicit Settings save. The validation record below is historical.
+
 Pi inheritance follow-up (2026-10-21): see [validation](pi-inheritance-validation.md)
 for current missing-preference behavior and isolated native Settings acceptance.
 Older findings below describe their original validation scope.

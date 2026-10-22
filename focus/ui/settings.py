@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from .settings_navigation import SettingsNavigation, SettingsSession, install_editor_style, round_editor
+from .settings_navigation import SettingsNavigation, SettingsSession
 
 from focus.core import *  # noqa: F401,F403
 from focus.pi_runtime import (
@@ -69,9 +69,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._record_font_family_row: Adw.ComboRow | None = None
         self._record_font_family_values: list[str] = []
         self._grep_highlight_color_control: Gtk.Widget | None = None
-        self._phrase_highlight_color_control: Gtk.Widget | None = None
         self._search_chip_color_control: Gtk.Widget | None = None
-        self._highlight_phrases_buffer: Gtk.TextBuffer | None = None
         self._agent_widgets: AgentSettingsWidgets | None = None
         self._pi_model_options: list[PiModel | None] = []
         self._pi_available_model_keys: set[tuple[str, str]] = set()
@@ -101,7 +99,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
     def _build_ui(self) -> None:
         self._navigation = SettingsNavigation(lambda: self._on_save_clicked(None), lambda: self._pi_model_closed)
-        install_editor_style(self)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_margin_top(18)
@@ -173,7 +170,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
         highlight_row = Adw.ExpanderRow(
             title="Highlights",
-            subtitle="Colors and phrases",
+            subtitle="Grep and chip colors",
         )
         highlight_row.set_expanded(False)
         appearance_group.add(highlight_row)
@@ -184,82 +181,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         highlight_row.add_row(grep_color_row)
 
-        phrase_color_row, self._phrase_highlight_color_control = self._build_color_row(
-            "Phrase Highlight Color",
-            DEFAULT_HIGHLIGHT_COLOR,
-        )
-        highlight_row.add_row(phrase_color_row)
-
         search_chip_row, self._search_chip_color_control = self._build_color_row(
             "Search and Cite Chip Color",
             DEFAULT_SEARCH_CHIP_COLOR,
         )
         highlight_row.add_row(search_chip_row)
-
-        highlight_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        highlight_box.set_margin_top(6)
-        highlight_box.set_margin_bottom(6)
-        highlight_box.set_margin_start(12)
-        highlight_box.set_margin_end(12)
-        highlight_label = Gtk.Label(label="Highlight phrases", xalign=0, wrap=True)
-        highlight_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        highlight_label.set_width_chars(1)
-        highlight_box.append(highlight_label)
-        highlight_help = Gtk.Label(
-            label="One word or phrase per line. Case-sensitive.",
-            xalign=0, wrap=True,
-        )
-        highlight_help.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        highlight_help.set_width_chars(1)
-        highlight_help.add_css_class("dim-label")
-        highlight_box.append(highlight_help)
-
-        highlight_scroller = Gtk.ScrolledWindow()
-        highlight_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        highlight_scroller.set_hexpand(True)
-        highlight_scroller.set_vexpand(False)
-        highlight_scroller.set_valign(Gtk.Align.START)
-        round_editor(highlight_scroller)
-        highlight_buffer = Gtk.TextBuffer()
-        highlight_buffer.set_enable_undo(True)
-        highlight_view = Gtk.TextView.new_with_buffer(highlight_buffer)
-        highlight_view.update_property(
-            [Gtk.AccessibleProperty.LABEL, Gtk.AccessibleProperty.DESCRIPTION],
-            ["Highlight phrases", "One word or phrase per line. Case-sensitive."],
-        )
-        highlight_view.set_accepts_tab(False)
-        highlight_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        highlight_view.set_top_margin(8)
-        highlight_view.set_bottom_margin(8)
-        highlight_view.set_left_margin(8)
-        highlight_view.set_right_margin(8)
-        highlight_scroller.set_child(highlight_view)
-        highlight_box.append(highlight_scroller)
-        # Measure three normal text lines, not the draft (which may be arbitrarily
-        # long). Recompute for font/DPI changes without making the editor expand.
-        def size_editor(scroller: Gtk.ScrolledWindow) -> None:
-            view = scroller.get_child()
-            height = view.create_pango_layout("Ag\nAg\nAg").get_pixel_size()[1] + 16
-            scroller.set_max_content_height(-1)
-            scroller.set_min_content_height(height)
-            scroller.set_max_content_height(height)
-
-        size_editor(highlight_scroller)
-        highlight_view.connect("map", lambda view: size_editor(view.get_parent()))
-        highlight_view.connect("notify::scale-factor", lambda view, _pspec: size_editor(view.get_parent()))
-
-        def font_changed(scroller: Gtk.ScrolledWindow, _pspec: object) -> None:
-            # Settings notify precedes the TextView's updated font context.
-            GLib.idle_add(size_editor, scroller)
-
-        for setting in ("gtk-font-name", "gtk-xft-dpi"):
-            highlight_view.get_settings().connect_object(
-                "notify::" + setting, font_changed, highlight_scroller,
-            )
-        phrases_row = Adw.PreferencesRow(activatable=False, selectable=False)
-        phrases_row.set_child(highlight_box)
-        highlight_row.add_row(phrases_row)
-        self._highlight_phrases_buffer = highlight_buffer
 
         agent_row = self._build_agent_settings_page()
         appearance_group.add(agent_row)
@@ -417,10 +343,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         effort = self._selected_pi_thinking_level() if self._pi_thinking_selection_changed else self._original_pi_thinking_level
         return (self._agent_widgets.pi_agent_command_row.get_text(), self._agent_widgets.speech_agent_source_row.get_text(),
                 self._record_font_size_row.get_value(), self._ai_font_size_row.get_value(), self._table_font_size_row.get_value(),
-                int(self._record_font_family_row.get_selected()), self._prompt_text(self._highlight_phrases_buffer),
+                int(self._record_font_family_row.get_selected()),
                 *(self._read_color_control_value(w, default) for w, default in (
                     (self._grep_highlight_color_control, DEFAULT_MATCH_COLOR),
-                    (self._phrase_highlight_color_control, DEFAULT_HIGHLIGHT_COLOR),
                     (self._search_chip_color_control, DEFAULT_SEARCH_CHIP_COLOR))), key, effort)
 
     def _selected_pi_model(self) -> PiModel | None:
@@ -732,10 +657,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._populate_pi_thinking_row(desired_thinking)
         return False
 
-    def _prompt_text(self, buffer: Gtk.TextBuffer) -> str:
-        start, end = buffer.get_bounds()
-        return buffer.get_text(start, end, True)
-
     def _load_settings(self) -> None:
         settings = load_ai_settings()
         if self._agent_widgets is not None:
@@ -761,19 +682,10 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 )
             else:
                 self._record_font_family_row.set_selected(0)
-        if self._highlight_phrases_buffer is not None:
-            self._highlight_phrases_buffer.set_text(
-                _format_highlight_phrases(settings.highlight_phrases)
-            )
         self._set_color_control_value(
             self._grep_highlight_color_control,
             settings.grep_highlight_color,
             DEFAULT_MATCH_COLOR,
-        )
-        self._set_color_control_value(
-            self._phrase_highlight_color_control,
-            settings.phrase_highlight_color,
-            DEFAULT_HIGHLIGHT_COLOR,
         )
         self._set_color_control_value(
             self._search_chip_color_control,
@@ -795,18 +707,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         speech_agent_source_file = self._agent_widgets.speech_agent_source_row.get_text().strip()
         pi_agent_command = self._agent_widgets.pi_agent_command_row.get_text().strip()
 
-        highlight_phrases = (
-            _normalize_highlight_phrases(self._prompt_text(self._highlight_phrases_buffer))
-            if self._highlight_phrases_buffer is not None
-            else []
-        )
         grep_highlight_color = self._read_color_control_value(
             self._grep_highlight_color_control,
             DEFAULT_MATCH_COLOR,
-        )
-        phrase_highlight_color = self._read_color_control_value(
-            self._phrase_highlight_color_control,
-            DEFAULT_HIGHLIGHT_COLOR,
         )
         search_chip_color = self._read_color_control_value(
             self._search_chip_color_control,
@@ -842,9 +745,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
             ),
             pi_agent_command=pi_agent_command or DEFAULT_PI_AGENT_COMMAND,
-            highlight_phrases=highlight_phrases,
             grep_highlight_color=grep_highlight_color,
-            phrase_highlight_color=phrase_highlight_color,
             search_chip_color=search_chip_color,
         )
         selected_pi_model = self._selected_pi_model()

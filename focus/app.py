@@ -1960,18 +1960,6 @@ class Focus(Adw.Application):
                         start_iter = buf.get_iter_at_offset(line_start)
                         end_iter = buf.get_iter_at_offset(line_end)
                         buf.apply_tag(tag, start_iter, end_iter)
-        if presentation and presentation.diagnostic == "readable":
-            source = self._page_cache.get(self._reading_page, "")
-            tag = self._ensure_keyword_highlight_tag()
-            for phrase in self._ai_settings.highlight_phrases:
-                if not phrase:
-                    continue
-                for match in re.finditer(re.escape(phrase), source):
-                    start, end = presentation.mapping.display_span(*match.span())
-                    if tag and end > start:
-                        buf.apply_tag(tag, buf.get_iter_at_offset(start), buf.get_iter_at_offset(end))
-        else:
-            self._apply_keyword_highlights(buf, rendered_text)
         if not literal:
             self._apply_rounded_grid_table_no_wrap(buf, rendered_text)
         if self.scroller:
@@ -2652,51 +2640,6 @@ class Focus(Adw.Application):
         else:
             tag.set_property("background", color)
         return tag
-
-    def _ensure_keyword_highlight_tag(self) -> Gtk.TextTag | None:
-        if not self.textview:
-            return None
-        buf = self.textview.get_buffer()
-        table = buf.get_tag_table()
-        color = (
-            self._ai_settings.phrase_highlight_color
-            if self._ai_settings
-            else DEFAULT_HIGHLIGHT_COLOR
-        )
-        tag = table.lookup("keyword-highlight") if table is not None else None
-        if tag is None:
-            tag = buf.create_tag("keyword-highlight", background=color)
-        else:
-            tag.set_property("background", color)
-        return tag
-
-    def _apply_keyword_highlights(self, buf: Gtk.TextBuffer, text: str) -> None:
-        phrases = self._ai_settings.highlight_phrases if self._ai_settings else []
-        if not phrases:
-            return
-        tag = self._ensure_keyword_highlight_tag()
-        if tag is None:
-            return
-        char_count = buf.get_char_count()
-        for phrase in phrases:
-            if not phrase:
-                continue
-            start = 0
-            phrase_len = len(phrase)
-            while start < len(text):
-                idx = text.find(phrase, start)
-                if idx == -1:
-                    break
-                end = idx + phrase_len
-                if end <= idx:
-                    start = idx + 1
-                    continue
-                if idx < char_count:
-                    end = min(end, char_count)
-                    start_iter = buf.get_iter_at_offset(idx)
-                    end_iter = buf.get_iter_at_offset(end)
-                    buf.apply_tag(tag, start_iter, end_iter)
-                start = end
 
     def _append_page_links(self, buf: Gtk.TextBuffer, text: str, start_offset: int) -> None:
         table = buf.get_tag_table()

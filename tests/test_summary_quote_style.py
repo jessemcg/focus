@@ -101,7 +101,7 @@ def test_real_settings_window_omits_color_and_save_does_not_reintroduce_it(monke
         walk(window)
         assert 'Summary Emphasis Color' not in titles
         assert 'Grep Highlight Color' in titles
-        assert 'Phrase Highlight Color' in titles
+        assert 'Phrase Highlight Color' not in titles
         assert 'Search and Cite Chip Color' in titles
         assert (core.CONFIG_FILE.read_bytes(), core.CONFIG_FILE.stat().st_mtime_ns) == before
         window._on_save_clicked(None)

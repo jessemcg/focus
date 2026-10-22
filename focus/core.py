@@ -87,9 +87,7 @@ CONFIG_KEY_FONT_SIZE_PT = "font_size_pt"
 CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_TABLE_FONT_SIZE_PT = "table_font_size_pt"
 CONFIG_KEY_RECORD_FONT_FAMILY = "record_font_family"
-CONFIG_KEY_HIGHLIGHT_PHRASES = "highlight_phrases"
 CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
-CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR = "phrase_highlight_color"
 CONFIG_KEY_SEARCH_CHIP_COLOR = "search_chip_color"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
 CASE_NAME_FILENAME = "case_name.txt"
@@ -258,7 +256,6 @@ LEGACY_RECORD_FONT_FAMILY_ALIASES: dict[str, str] = {
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
-DEFAULT_HIGHLIGHT_COLOR = "#e5e4e2"     # platinum
 DEFAULT_SEARCH_CHIP_COLOR = "#99c1f1"
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
 DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
@@ -1141,28 +1138,6 @@ def _resolve_record_layout(root: Path) -> RecordLayout:
     )
 
 
-def _normalize_highlight_phrases(value: Any) -> list[str]:
-    if isinstance(value, str):
-        candidates: Iterable[str] = value.splitlines()
-    elif isinstance(value, list):
-        candidates = [item for item in value if isinstance(item, str)]
-    else:
-        candidates = []
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for phrase in candidates:
-        trimmed = phrase.strip()
-        if not trimmed or trimmed in seen:
-            continue
-        seen.add(trimmed)
-        cleaned.append(trimmed)
-    return cleaned
-
-
-def _format_highlight_phrases(phrases: Iterable[str]) -> str:
-    return "\n".join(phrase for phrase in phrases if phrase.strip())
-
-
 def _coerce_color_value(value: Any, default: str) -> str:
     if not isinstance(value, str):
         return default
@@ -1278,9 +1253,7 @@ def save_font_preferences(
 @dataclass
 class AiSettings:
     speech_agent_source_file: str
-    highlight_phrases: list[str]
     grep_highlight_color: str
-    phrase_highlight_color: str
     search_chip_color: str
     pi_agent_command: str = DEFAULT_PI_AGENT_COMMAND
 
@@ -1447,14 +1420,16 @@ RETIRED_SUMMARIZATION_CONFIG_KEYS = {
     "model_profiles", "task_default_profiles", "agent_prompt_template",
 }
 
+# Highlight phrases and their dedicated color were retired; the keys are dropped
+# from config.json the next time the application saves settings.
+RETIRED_HIGHLIGHT_CONFIG_KEYS = {"highlight_phrases", "phrase_highlight_color"}
+
 
 def load_ai_settings() -> AiSettings:
     config = _read_config()
     return AiSettings(
         speech_agent_source_file=str(config.get(CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE, DEFAULT_SPEECH_AGENT_SOURCE_FILE) or DEFAULT_SPEECH_AGENT_SOURCE_FILE).strip(),
-        highlight_phrases=_normalize_highlight_phrases(config.get(CONFIG_KEY_HIGHLIGHT_PHRASES, [])),
         grep_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR, "") or ""), DEFAULT_MATCH_COLOR),
-        phrase_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR, "") or ""), DEFAULT_HIGHLIGHT_COLOR),
         search_chip_color=_coerce_color_value(str(config.get(CONFIG_KEY_SEARCH_CHIP_COLOR, "") or ""), DEFAULT_SEARCH_CHIP_COLOR),
         pi_agent_command=str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, DEFAULT_PI_AGENT_COMMAND) or DEFAULT_PI_AGENT_COMMAND).strip(),
     )
@@ -1466,11 +1441,11 @@ def save_ai_settings(settings: AiSettings) -> None:
         config.pop(key, None)
     for key in RETIRED_SUMMARIZATION_CONFIG_KEYS:
         config.pop(key, None)
+    for key in RETIRED_HIGHLIGHT_CONFIG_KEYS:
+        config.pop(key, None)
     config[CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE] = settings.speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
     config[CONFIG_KEY_PI_AGENT_COMMAND] = settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
-    config[CONFIG_KEY_HIGHLIGHT_PHRASES] = settings.highlight_phrases
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(settings.grep_highlight_color, DEFAULT_MATCH_COLOR)
-    config[CONFIG_KEY_PHRASE_HIGHLIGHT_COLOR] = _coerce_color_value(settings.phrase_highlight_color, DEFAULT_HIGHLIGHT_COLOR)
     config[CONFIG_KEY_SEARCH_CHIP_COLOR] = _coerce_color_value(settings.search_chip_color, DEFAULT_SEARCH_CHIP_COLOR)
     _write_config(config)
 

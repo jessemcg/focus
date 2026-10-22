@@ -19,27 +19,6 @@ def descendants(widget):
         child = child.get_next_sibling()
 
 
-def round_editor(scroller):
-    scroller.add_css_class("settings-prompt-editor")
-    scroller.set_overflow(Gtk.Overflow.HIDDEN)
-
-
-def install_editor_style(window):
-    provider = Gtk.CssProvider()
-    provider.load_from_data(b"""
-      scrolledwindow.settings-prompt-editor {
-        border-radius: 12px; background-color: @view_bg_color;
-      }
-      scrolledwindow.settings-prompt-editor textview,
-      scrolledwindow.settings-prompt-editor textview text,
-      scrolledwindow.settings-prompt-editor textview border {
-        background-color: transparent; background-image: none; box-shadow: none;
-      }
-    """)
-    Gtk.StyleContext.add_provider_for_display(window.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    window._settings_editor_css = provider
-
-
 class SettingsNavigation:
     def __init__(self, save, is_closed):
         self._save = save
