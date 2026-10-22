@@ -114,6 +114,11 @@ def check_allocations(height):
             assert previous.get_x() + previous.get_width() <= rect.get_x() + 1, (previous, rect)
         previous = rect
     assert app._citation_range_label.get_width() >= 60  # Never just "C…".
+    date = app._record_boundary_date_label
+    if date.get_visible():
+        assert not date.get_layout().is_ellipsized()
+        full_width, _ = date.create_pango_layout(date.get_text()).get_pixel_size()
+        assert date.get_width() >= full_width, (date.get_width(), full_width)
 
 
 def steps():
@@ -259,10 +264,18 @@ def steps():
     app._set_show_image(True)
     populated()
     yield
+    previous_search_width = None
     for width, height_px in [(1100, 800), (900, 700), (780, 700), (665, 700)]:
         app.win.set_default_size(width, height_px)
         yield
-        assert app.win.get_width() == width, (width, app.win.get_width())
+        # A full date raises the minimum width of the fully populated row.
+        # Below that floor GTK must preserve controls, not truncate the date.
+        minimum_width = app.win.measure(Gtk.Orientation.HORIZONTAL, -1)[0]
+        assert app.win.get_width() == max(width, minimum_width)
+        search_width = app._grep_entry.get_width()
+        if previous_search_width is not None:
+            assert search_width <= previous_search_width
+        previous_search_width = search_width
         for scheme, name in [(Adw.ColorScheme.FORCE_LIGHT, "light"),
                              (Adw.ColorScheme.FORCE_DARK, "dark")]:
             Adw.StyleManager.get_default().set_color_scheme(scheme)

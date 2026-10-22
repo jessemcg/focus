@@ -1245,8 +1245,9 @@ class Focus(Adw.Application):
 
         self._record_boundary_date_label = Gtk.Label(label="")
         self._record_boundary_date_label.add_css_class("dim-label")
-        self._record_boundary_date_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self._record_boundary_date_label.set_max_width_chars(12)
+        # Keep the complete date at its natural width; the expanding search
+        # entry yields space instead of truncating record metadata.
+        self._record_boundary_date_label.set_ellipsize(Pango.EllipsizeMode.NONE)
         self._record_boundary_date_label.set_xalign(0.0)
         self._record_boundary_date_label.set_valign(Gtk.Align.CENTER)
         self._record_boundary_date_label.set_margin_start(4)
