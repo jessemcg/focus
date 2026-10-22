@@ -10,6 +10,17 @@ saves share guarded revisions/locks; rejected drafts never advance baselines.
 Reconcile/Retain are receipt-only; later edits always block rollback. Test only
 disposable source/HOME/state. See SkillsMenu's package protocol-v1 reference.
 
+## Citation interaction invariant
+
+Cite page always cites only the displayed underlying record page, independently of
+any pending range. Start range stores one ephemeral anchor; browsing derives the
+other endpoint live. The same persistent chip and two-press range action share
+inclusive, physically ordered, every-page validation in either direction. Never
+copy on start/browse/cancel. Explicit completion independently attempts normal
+clipboard then existing Prose dispatch (not confirmed Writer insertion); clear
+only after at least one route succeeds. Case reset/inventory reload/exit discard
+selection, view changes preserve it. No count controls or persisted range state.
+
 ## Settings interaction contract
 Preserve the existing Display/Highlights/Agent boxed expandable home and its font/color/model controls. Highlight phrases and the dedicated phrase highlight color are retired: Highlights contains only the Grep Highlight Color and Search and Cite Chip Color rows, and nothing in the reader applies configured keyword highlights. Compact controls stay inline. Save all drafts without closing or navigating; only successful writes advance the literal baseline. Close offers Keep Editing / Discard Unsaved Changes. Preserve pending model/effort choices through refresh failure, and report partial independent writes truthfully. See `docs/unified-settings-validation.md`.
 
