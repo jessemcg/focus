@@ -30,7 +30,7 @@ LABELS = {Category.HEARING: "Hearing", Category.REPORT: "Report",
           Category.MINUTE_ORDER: "Minute order", Category.FORM: "Form"}
 PAGE_TYPES = {
     "rt_body": Category.HEARING, "rt_body_first_page": Category.HEARING,
-    "ct_report": Category.REPORT,
+    "ct_report": Category.REPORT, "ct_report_first_page": Category.REPORT,
     "ct_minute_order": Category.MINUTE_ORDER,
     "ct_minute_order_first_page": Category.MINUTE_ORDER,
     "ct_form": Category.FORM, "ct_form_first_page": Category.FORM,

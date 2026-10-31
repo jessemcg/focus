@@ -79,7 +79,17 @@ and participant instructions; the shared editor has no Participants / Witnesses 
 RecordPrep content schema 5 also removes overview instructions and the shared
 RecordPrep editor's Case Overview category. Its fixed overview remains the same
 five-section schema-1 nonauthoritative orientation consumed by Focus; historical
-profile overview resources stay readable but inert. Focus always uses the fixed neutral method.
+profile overview resources stay readable but inert. RecordPrep schema 6 removes common
+classification guidance from new profiles; the shared validator accepts schemas 1–6,
+and common guidance affects no compiled stage. RecordPrep schema 7 adds fixed-key
+recognition descriptions and stable-ID report/form naming cards (classification v2,
+naming v4). RecordPrep schema 8/classification v3 adds the fourth report-first-page
+task and a lossless legacy-task editor representation. The mirrored validator
+accepts schemas 1–8 without importing any RecordPrep runtime/editor; old schema 7
+still requires exactly the original three starts. `record_categories.py` maps
+CT_report_first_page to the existing Report category for display/reading; do not
+invent a new category or drop report first pages as unknown. See
+docs/recordprep-schema7.md. Focus always uses the fixed neutral method.
 
 Keep private configuration/cases/profiles untouched. Configuration reads/startup
 must not clean obsolete keys or write settings; explicit Settings saves retain their

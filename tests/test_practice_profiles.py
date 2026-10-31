@@ -36,6 +36,27 @@ def draft(files=None, app="focus"):
     return contract.validate_contents(tuple((files or synthetic_files(app)).items()), app)
 
 
+def test_recordprep_schema6_omits_common_classification_guidance():
+    files = synthetic_files('recordprep')
+    manifest = json.loads(files['profile.json'])
+    manifest['schema_version'] = 6
+    for name in (contract.RETIRED_SUMMARY_RESOURCES | contract.RETIRED_PARTICIPANT_RESOURCES
+                 | contract.RETIRED_OVERVIEW_RESOURCES | {'classification'}):
+        files.pop(manifest['resources'].pop(name))
+    manifest['resources'].update(classification_tasks='tasks.json', case_name='caption.md')
+    files['tasks.json'] = contract.json_bytes({task: 'Synthetic task guidance.' for task in
+        ('rt', 'ct', 'first_hearing', 'first_minute', 'first_form', 'date_hearing', 'date_minute')})
+    files['caption.md'] = b'Historical caption field.'
+    files['profile.json'] = contract.json_bytes(manifest)
+    profile = draft(files, 'recordprep')
+    compiled = contract.compile_stage_profile(profile, 'classification_basic', core_contract=b'core')
+    assert set(dict(compiled.resources)) == {'classification_tasks'}
+    manifest['resources']['classification'] = 'common.md'
+    files.update({'profile.json': contract.json_bytes(manifest), 'common.md': b'Not allowed'})
+    with pytest.raises(contract.ProfileError):
+        draft(files, 'recordprep')
+
+
 def test_historical_contract_is_independent_immutable_and_byte_sensitive():
     files = synthetic_files()
     original = draft(files)

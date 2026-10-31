@@ -24,7 +24,7 @@ def put(path, value):
 
 @pytest.mark.parametrize("token,category", [
     ("RT_body", C.HEARING), ("RT_body_first_page", C.HEARING),
-    ("CT_report", C.REPORT), ("CT_minute_order", C.MINUTE_ORDER),
+    ("CT_report", C.REPORT), ("CT_report_first_page", C.REPORT), ("CT_minute_order", C.MINUTE_ORDER),
     ("CT_minute_order_first_page", C.MINUTE_ORDER),
     ("CT_form", C.FORM), ("CT_form_first_page", C.FORM),
 ])
@@ -38,6 +38,21 @@ def test_explicit_unnumbered_file_page(bundle, token, category):
     assert result[999] == Classification()
     with pytest.raises(FrozenInstanceError):
         result[41].status = "x"
+
+
+@pytest.mark.parametrize('source',['transcript','source_map'])
+@pytest.mark.parametrize('reading',[False,True])
+def test_report_first_page_uses_existing_report_category_without_false_conflict(bundle,source,reading):
+    rows=[{'file_page':1,'page_type':'CT_report_first_page','record_type':'CT'},
+          {'file_page':2,'page_type':'CT_report','record_type':'CT'}]
+    if source=='transcript':put(bundle.transcript_page_numbers_path,{'entries':rows})
+    else:put(bundle.source_map_path,{'pages':rows})
+    put(bundle.report_boundaries_path,[{'start_page':1,'end_page':2,'report_name':'Synthetic Report'}])
+    before={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in bundle.root.rglob('*') if p.is_file()}
+    index=load_category_index(bundle,[1,2],require_nonconflicting_body=reading)
+    assert all(index[page].category==C.REPORT and index[page].status=='classified' for page in (1,2))
+    assert index[1].caption=='Report · CT'
+    assert before=={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before}
 
 
 def test_precedence_explicit_neutral_and_no_form_extension(bundle):
