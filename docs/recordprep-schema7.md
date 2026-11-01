@@ -1,5 +1,9 @@
 # RecordPrep schemas 7/8 reader conformance
 
+Historical validation report. [Schema 9 compatibility](recordprep-schema9.md)
+supersedes the classification resource projection described here; old formats and
+stored bytes remain readable without providing instructions.
+
 Only `focus/profile_contract.py` mirrors RecordPrep byte-identically for historical
 metadata/snapshot validation. `record_categories.py` additionally maps the new
 `CT_report_first_page` marker to the existing Report category, so sidebar/reading

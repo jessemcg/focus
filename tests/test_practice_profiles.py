@@ -50,7 +50,7 @@ def test_recordprep_schema6_omits_common_classification_guidance():
     files['profile.json'] = contract.json_bytes(manifest)
     profile = draft(files, 'recordprep')
     compiled = contract.compile_stage_profile(profile, 'classification_basic', core_contract=b'core')
-    assert set(dict(compiled.resources)) == {'classification_tasks'}
+    assert compiled.resources == ()
     manifest['resources']['classification'] = 'common.md'
     files.update({'profile.json': contract.json_bytes(manifest), 'common.md': b'Not allowed'})
     with pytest.raises(contract.ProfileError):
@@ -208,5 +208,5 @@ def test_retired_recordprep_resources_remain_readable_but_inert():
     files["profile.json"] = contract.json_bytes(manifest)
     current = draft(files, "recordprep")
     for stage in ("classification_basic", "classification_advanced", "classification_dates"):
-        assert contract.compile_stage_profile(current, stage, core_contract=b"core").resources
+        assert contract.compile_stage_profile(current, stage, core_contract=b"core").resources == ()
     assert contract.validate_contents(old.files, "recordprep").files == old.files

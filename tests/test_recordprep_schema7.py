@@ -20,7 +20,7 @@ def schema7_files(version=7):
 def test_schema7_and_legacy_schemas_are_readable_without_instruction_authority(version):
     files=schema7_files(version);s=c.validate_contents(tuple(files.items()),'recordprep')
     assert s.manifest['schema_version']==version
-    assert dict(c.compile_stage_profile(s,'classification_dates',core_contract=b'fixed dates').resources)['classification_tasks']==b'{}\n'
+    assert c.compile_stage_profile(s,'classification_dates',core_contract=b'fixed dates').resources==()
     for version in range(1,7):
         old=synthetic_files('recordprep');m=json.loads(old['profile.json']);m['schema_version']=version
         if version>=2:
@@ -59,6 +59,5 @@ def test_schema8_lossless_legacy_editor_variant_is_inert_to_focus_research():
     files['tasks.json']=c.json_bytes(tasks)
     snapshot=c.validate_contents(tuple(files.items()),'recordprep')
     assert snapshot.resource('classification_tasks')==tasks
-    selected=dict(c.compile_stage_profile(snapshot,'classification_advanced',core_contract=b'fixed').resources)
-    assert json.loads(selected['classification_tasks'])['first_report']=='Report-opening clues.'
+    assert c.compile_stage_profile(snapshot,'classification_advanced',core_contract=b'fixed').resources==()
     with pytest.raises(c.ProfileError):c.compile_stage_profile(snapshot,'research',core_contract=b'fixed')
