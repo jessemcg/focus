@@ -16,6 +16,25 @@ guidance. Exactly `read`, `focus_record`, and `submit_focus_answer` are model-fa
 No shell, web, image or write tools, vector database, outside legal research or
 specialty detection is added. Passive metrics and the follow-up bridge stay unchanged.
 
+The question explicitly invokes `/skill:focus-answer-record-questions`; the wrapper
+still loads that canonical skill with `--skill`. Its `disable-model-invocation: true`
+frontmatter hides the redundant automatic listing/read invitation, not explicit
+expansion. The full workflow is already in the question and remains in follow-up
+context; the system prompt does not duplicate it.
+
+Prefer returned absolute `resolved_text_path` values for reads. The existing guard
+also accepts `text_pages/<path>.txt` from the active case root, or a bare
+`<filename>.txt` for a direct child of that case's `text_pages/`. Either alias may
+start with `./`; the existing leading `@` convention is preserved. Reject `..`
+components before normalization. No citation-to-filename inference, alternate-root
+search or workspace fallback occurs. Absolute paths retain canonical boundary
+checks and are never reinterpreted. Only verified canonical regular `.txt` source
+files are permitted, including checks against escaping symlinks and other cases.
+After permission, only `event.input.path` changes to that verified absolute path;
+Pi's built-in read, offset/limit, cancellation and truncation remain in control.
+Each read still produces one existing observation and increments the existing
+permitted-read counter only when authorized; normalization calls no helper.
+
 Question + bundle → fixed method/input pin → private agent workspace → source
 search and verified page reads → unchanged answer handoff → immutable displayed
 snapshot → optional user-invoked Save Answer.
@@ -26,6 +45,17 @@ roles and document descriptions. Verify attribution, allegations versus findings
 contradictions, negative-search coverage, OCR limitations and causal links. Prefer
 contemporaneous primary evidence for why/basis questions without a specialty document
 catalog. Do not presume party relationships, procedural stages, an appeal or doctrines.
+
+Do not assert an established cause without read source support. If the event is
+supported but its reason is not, deliver the supported portion and state the
+missing causal link. Continue targeted research for concrete unresolved issues
+with useful leads likely to change the answer, including material contradictions;
+otherwise deliver with the limitation rather than waiting for complete certainty.
+Unavailable sources or failed optional calls do not erase evidence already read.
+Avoid unchanged retries; correct a call only when needed and the correction is
+clear. “Not established in the material examined” is not a claim that evidence
+cannot exist elsewhere. Allegations, recommendations, findings and orders remain
+distinct. These are model instructions, not runtime answer checks or delivery gates.
 
 Quotations remain continuous, verbatim two-to-five-word source phrases, preferably
 distinctive three-to-five-word clickable anchors integrated grammatically, without a

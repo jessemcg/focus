@@ -141,6 +141,90 @@ not deployment or recovery copies. No migration, paid calls, remote access, real
 settings/case modifications, commit or push. Restart Focus and start a new session:
 changed component hashes must continue to reject old pins, not bypass validation.
 
+## Targeted session-metrics follow-up — Home, 2026-11-04 UTC
+
+Implemented from `e6b01fb`, leaving the pre-existing untracked `.pi/` untouched.
+The three independently scoped changes are: explicit-only canonical skill visibility;
+bounded source-page alias normalization in the existing read hook; and qualification
+rather than withholding when causal support is incomplete. Method ID/version, tools,
+retrieval, models/reasoning, lint, termination, fallback, pins and saved schemas are
+unchanged. No new answer gate, model pass, quota, dependency, telemetry field,
+launcher contract or other repository change.
+
+Evidence context: the supplied October 21–November 4 metrics window has 47 finished
+runs (45 completed, 2 aborted), six read-error runs and 520 permitted reads. Requested
+paths and call order are absent. Only one cohort meets its recurrence threshold;
+these reports cannot identify the cause of historical rejections or measure answer
+usefulness, causal accuracy, final-answer length or withholding. The prompt correction
+is consistency work, not a demonstrated recurring answer-quality fix. Expected
+behavioral/latency savings remain unmeasured.
+
+### Offline regression and isolated acceptance
+
+All execution stayed on Home. Tracked source plus reviewed new tests was copied into
+`/tmp/focus-targeted.Gx3Uvf/Focus`, without private config, `.pi/`, case data or runtime
+environments. A disposable Python 3.13 environment was explicitly provisioned and
+executed using paired `--project` / `--environment` overrides on the absolute
+UvEnvironments `project-env` helper. HOME/XDG/config/runtime/temp paths were synthetic.
+No paid/live-model evaluation or production app restart occurred.
+
+- Focused suite: **88 passed, 10 optional sibling-metrics skips**, one existing GTK
+  CSS deprecation warning. Canonical expansion and actual reader regressions ran
+  independently of that absent sibling, using the installed **Pi SDK 1.5.0** and
+  scripted provider responses with network fetch forbidden.
+- `focus_skill_expansion.mjs` loads the actual canonical skill and explicit `/skill:`
+  question. The entire body reaches provider context without an automatic skill-path
+  listing/read invitation, and remains present on a literal follow-up. Exactly two
+  scripted requests occur, without a corrective turn.
+- `focus_extension_contract.mjs` exercises actual built-in reading through the
+  canonical extension hook: absolute paths, both aliases, `./`/`@`, spaces, nested
+  case-relative pages, internal canonical symlinks, offset/limit and a parallel batch.
+  Returned source bytes match; a shadow workspace file is not used. Built-in line/
+  byte truncation, offset errors and cancellation remain intact. Normalization makes
+  **zero helper calls**, emits one existing observation per read, and retains the
+  permitted-read count in diagnostics.
+- Outside absolute paths, another case, escaping symlinks, raw traversal components,
+  images, directories, missing sources, citation labels and unsupported relative
+  forms remain recoverable errors. A subsequent qualified submission succeeds.
+  Redirected `text_pages` roots and existing changed-input/resource pin checks pass.
+- Imperfect/qualified submissions are captured unchanged despite lint warnings or
+  missing title/subtitle/quote anchors. Existing stop/length/error/abort fallback
+  capture remains available. Focus initiates no corrective model turn. Prompt
+  contracts check application instructions only, not user-facing answer quality.
+- Full isolated pytest: **841 passed + 11 subtests, 16 skipped**, eight existing
+  deprecation warnings (GTK CSS, forkpty, Adw MessageDialog). Skips: ten optional
+  sibling PiRunMetrics SDK integrations, one optional sibling wrapper integration,
+  and five shared model-settings cases for other application owners. No sibling was
+  installed or modified to remove skips.
+- Synthetic answer switching under `G_DEBUG=fatal-criticals`: **320 transitions,
+  zero GTK criticals**, identity and reading-position restoration pass. Extended
+  reliability-display acceptance passes under the same setting: a plain qualified
+  partial/error answer preserves its exact text and limitation, is readable, and
+  leaves Save Answer enabled despite `limited_quote_support`. Synthetic saved
+  answer bytes remain unchanged; the new answer is not automatically saved.
+- Native Computer Use independently confirmed the owned **Focus — Synthetic
+  Reliability Acceptance** window, the complete qualification, **“Partial
+  answer—Agent error.”**, and a sensitive/enabled **Save Answer** button. No save
+  click or real-case interaction occurred. The preview has its own app ID/state.
+
+Development fixture corrections are not production fixes: a Node `join()` had erased
+an intended raw traversal component before testing, and the first line-truncation
+fixture hit the byte cutoff first. Both fixtures were corrected. Initial full-suite
+attempts also exposed existing harness assumptions: the checkout must be named
+`Focus` for shared owner tests, and umask `022` supports both safe ordinary settings
+and the deliberate broad-directory rejection fixture. Final acceptance used that
+layout/umask, without changing unrelated tests or weakening permission checks.
+
+Bounded evidence: `/tmp/focus-targeted.Gx3Uvf/` retains focused/full-suite, SDK,
+answer-switching and GUI logs plus tested-source hashes. The owned preview exited
+normally; disposable source, environment and synthetic state were removed after
+acceptance. Compile, Node/shell syntax, whitespace and ten-file tested-source parity
+checks pass. Normal next application/session launch adopts the
+changed resources through existing fingerprints; do not modify an active session.
+Subsequent existing metrics should be reviewed by configuration and eligible count,
+with small samples described cautiously. Human source comparison is still required
+to assess usefulness/accuracy; no automatic scoring, retry or delivery gate was added.
+
 ## Limits and adoption
 
 Deterministic/offline acceptance is **not live-model comparative answer-quality
