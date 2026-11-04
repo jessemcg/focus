@@ -53,7 +53,27 @@ def test_pi_record_skill_has_repeatable_stop_first_workflow_and_soft_style() -> 
     assert "private profiles" in skill
     assert "contradictions" in skill
     assert "historical allegation or later summary alone" in skill
-    assert "Run as many additional targeted `search` calls as needed" in skill
+    assert "disable-model-invocation: true" in skill
+    assert "do not submit unless" not in skill
+    assert "Run as many additional targeted" not in skill
+    for guidance in (
+        "do not assert an established cause without read source support",
+        "answer the supported portion and identify the missing causal link plainly",
+        "a concrete unresolved issue and a useful lead are likely to change the answer",
+        "a material contradiction",
+        "do not wait for complete certainty",
+        "failed optional call does not invalidate evidence already read",
+        "Avoid unchanged retries",
+        "only when it is needed and its correction is clear",
+        "does not mean evidence cannot exist elsewhere",
+        "Prefer returned absolute `resolved_text_path` values",
+        "`text_pages/<path>.txt` relative to the active case root",
+        "a bare `<filename>.txt` for a direct child",
+        "optionally prefixed with `./` or a leading `@`",
+        "`..` path components are rejected",
+        "Use `lookup` for unknown citations",
+    ):
+        assert guidance in skill
     assert "no corpus-wide grep tool" in skill
     assert "Run at most one follow-up" not in skill
     assert "budgets are enforced by the tools" not in skill

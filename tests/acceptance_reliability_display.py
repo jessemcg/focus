@@ -24,7 +24,7 @@ core.CONFIG_FILE = root/'config.json'
 module.APPLICATION_ID = f'com.mcglaw.Focus.Reliability.p{os.getpid()}'
 bundle = root/'bundle'
 (bundle/'text_pages').mkdir(parents=True)
-(bundle/'text_pages/0001.txt').write_text('The agency recommended continued supervised visitation.\n')
+(bundle/'text_pages/0001.txt').write_text('The agency recommended continued supervised visitation.\nThe inspection was postponed.\n')
 (bundle/'case_name.txt').write_text('Synthetic reliability acceptance')
 app = module.Focus(input_override=bundle)
 result = {'ok':False}
@@ -73,8 +73,27 @@ def prepare():
         app._display_agent_snapshot(app._agent_live_snapshot,is_saved=False)
         assert app._agent_displayed_snapshot.answer_id != followup.answer_id
         assert app._agent_subview_name == core.AGENT_SUBVIEW_ANSWER
+        # A plain qualified answer remains readable and savable despite an error
+        # and lint warning: no title, subtitle, quote anchors or corrective turn.
+        qualified = 'The inspection was postponed. Its reason is not established in the material examined.'
+        partial = _artifact_payload(app._agent_run_id,4,qualified,capture='assistant_fallback',status='partial')
+        partial['diagnostics']['stop_reason'] = 'error'
+        partial['warnings'] = ['limited_quote_support']
+        _write(app._agent_answer_artifact_path,partial)
+        app._poll_agent_answer()
+        assert app._agent_displayed_snapshot.markdown == qualified
+        assert app._agent_displayed_snapshot.status == 'partial'
+        assert app._agent_displayed_snapshot.stop_reason == 'error'
+        assert 'Agent error' in app._agent_answer_status
+        output = app._ai_outputs[core.AI_VIEW_AGENT_QA]
+        buffer = output.view.get_buffer()
+        visible = buffer.get_text(buffer.get_start_iter(),buffer.get_end_iter(),True)
+        assert qualified in visible
+        assert app._save_answer_button.get_sensitive()
+        assert stored.read_bytes() == before
+        assert list(stored.parent.glob('*.json')) == [stored]  # no automatic save
         result['ok'] = True
-        print('RELIABILITY DISPLAY PASS: revisions, partial/best-effort, quote links, saved isolation',flush=True)
+        print('RELIABILITY DISPLAY PASS: revisions, partial/best-effort, quote links, saved isolation, qualified error answer savable',flush=True)
     except Exception:
         import traceback
         traceback.print_exc()
