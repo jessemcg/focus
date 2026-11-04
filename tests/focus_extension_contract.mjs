@@ -1,6 +1,6 @@
 // Execute the checked-in extension, not a source-string approximation. Offline only.
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, symlinkSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, symlinkSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -110,10 +110,145 @@ for (const error of ['ENOENT', 'cancelled', 'timeout']) {
   await assert.rejects(fixture.tools.focus_record.execute('id', { action: 'context' }, new AbortController().signal), new RegExp(error));
 }
 const ctx = { cwd: root };
-for (const path of [join(root, 'outside.txt'), join(text, 'escape.txt'), join(root, 'bundle/image_pages/0001.png'), 'missing']) {
-  assert.equal((await h.handlers.tool_call({ toolName: 'read', input: { path } }, ctx)).block, true);
+// Source aliases never fall back to a workspace file or another case.
+writeFileSync(join(root, '0001.txt'), 'WORKSPACE_PRIVATE_CANARY');
+writeFileSync(join(text, 'page with spaces.txt'), 'First synthetic line\nSecond source line\nThird source line');
+mkdirSync(join(text, 'nested'));
+writeFileSync(join(text, 'nested/deep.txt'), 'Nested source bytes');
+writeFileSync(join(text, '0001.png'), 'IMAGE_PRIVATE_CANARY');
+mkdirSync(join(text, 'directory.txt'));
+mkdirSync(join(root, 'other-case/text_pages'), {recursive:true});
+writeFileSync(join(root, 'other-case/text_pages/0001.txt'), 'OTHER_CASE_PRIVATE_CANARY');
+symlinkSync(join(text, '0001.txt'), join(text, 'local-link.txt'));
+const allowed = [join(text, '0001.txt'), '@' + join(text, '0001.txt')];
+for (const prefix of ['', './', '@', '@./']) {
+  for (const path of ['0001.txt', 'text_pages/0001.txt', 'page with spaces.txt', 'text_pages/page with spaces.txt', 'text_pages/nested/deep.txt', 'local-link.txt']) {
+    allowed.push(prefix + path);
+  }
 }
-assert.equal(await h.handlers.tool_call({ toolName: 'read', input: { path: join(text, '0001.txt') } }, ctx), undefined);
+const denied = [join(root, 'outside.txt'), join(root, 'other-case/text_pages/0001.txt'),
+  join(text, 'escape.txt'), 'escape.txt', 'text_pages/escape.txt',
+  join(root, 'bundle/image_pages/0001.png'), join(text, '0001.png'), '0001.png',
+  text, join(text, 'directory.txt'), 'directory.txt', 'missing.txt', 'text_pages/missing.txt',
+  '../bundle/text_pages/0001.txt', 'text_pages/../text_pages/0001.txt',
+  './text_pages/nested/../0001.txt', text + '/nested/../0001.txt',
+  'bundle/text_pages/0001.txt', 'nested/deep.txt', '././0001.txt', 'CT 1', 'missing'];
+for (const path of denied) {
+  const event = { toolName: 'read', toolCallId: 'denied', input: { path, offset: 2, limit: 1 } };
+  const before = structuredClone(event.input);
+  const blocked = await h.handlers.tool_call(event, ctx);
+  assert.equal(blocked?.block, true, path);
+  assert.notEqual(blocked.terminate, true, 'denial is recoverable');
+  assert.deepEqual(event.input, before, 'denied inputs are not rewritten');
+}
+const expectedPath = path => realpathSync(join(text, path.replace(/^@/, '').replace(/^\.\//, '').replace(/^text_pages\//, '')));
+for (const path of allowed) {
+  const input = {path, offset: 2, limit: 1};
+  assert.equal(await h.handlers.tool_call({toolName:'read',toolCallId:'allowed',input}, ctx), undefined);
+  assert.deepEqual(input, {path: path.startsWith('/') || path.startsWith('@/') ? realpathSync(path.replace(/^@/, '')) : expectedPath(path), offset:2, limit:1});
+}
+// Pi's actual built-in reader executes these calls through the actual hook.
+// Sibling reads are requested in one batch, using Pi's default parallel mode.
+const sdk = await import(pathToFileURL(join(pkg, 'dist/index.js')));
+const ai = await import(pathToFileURL(join(pkg, 'node_modules/@earendil-works/pi-ai/dist/index.js')));
+const model = { id:'synthetic', name:'Synthetic', provider:'focus-read-test', api:'openai-completions',
+  baseUrl:'http://127.0.0.1:1', reasoning:false, input:['text'], contextWindow:65536, maxTokens:1024,
+  cost:{input:0,output:0,cacheRead:0,cacheWrite:0} };
+const longSource = Array.from({length:2100}, (_, i) => `Line ${i + 1}`).join('\n');
+writeFileSync(join(text, 'long.txt'), longSource);
+writeFileSync(join(text, 'wide.txt'), Array.from({length:100}, () => 'x'.repeat(1000)).join('\n'));
+const reads = [...allowed.map(path => ({path})), ...denied.map(path => ({path})),
+  {path:'@./page with spaces.txt',offset:2,limit:1}, {path:'text_pages/long.txt'},
+  {path:'wide.txt'}, {path:'0001.txt',offset:999}];
+const qualified = 'The inspection was postponed. Its reason is not established in the material examined.';
+let sdkCalls = 0; let sdkExecs = 0; const sdkObservations = []; const contexts = [];
+const provider = { ...model, apiKey:'synthetic-not-a-key', models:[model], streamSimple(_model, context) {
+  contexts.push(structuredClone(context));
+  const content = sdkCalls++ === 0 ? reads.map((arguments_, i) => ({type:'toolCall',id:`read-${i}`,name:'read',arguments:arguments_}))
+    : [{type:'toolCall',id:'submit',name:'submit_focus_answer',arguments:{answer_kind:'answered',markdown:qualified}}];
+  assert.ok(sdkCalls <= 2, 'no Focus corrective turn after submission');
+  const stream = new ai.AssistantMessageEventStream();
+  const message = {role:'assistant',api:model.api,provider:model.provider,model:model.id,timestamp:1,
+    usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},
+    stopReason:'toolUse',content};
+  queueMicrotask(() => { stream.push({type:'done',reason:'toolUse',message}); stream.end(); });
+  return stream;
+} };
+const settingsManager = sdk.SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:false}});
+const loader = new sdk.DefaultResourceLoader({cwd:root,agentDir:join(root,'sdk-agent'),settingsManager,
+  noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,
+  extensionFactories:[pi => {
+    // Run the canonical factory under Pi, with a failing subprocess canary.
+    factory(new Proxy(pi, {get(target, key) {
+      if (key === 'exec') return () => { sdkExecs++; throw new Error('Read normalization must not call a helper'); };
+      return target[key];
+    }}));
+    pi.events.on('pi-run-metrics:observation:v1', e => sdkObservations.push(e));
+    pi.registerProvider(model.provider,provider);
+  }]});
+await loader.reload();
+assert.deepEqual(loader.getExtensions().errors, []);
+const modelRuntime = await sdk.ModelRuntime.create({authPath:join(root,'sdk-auth.json'),modelsPath:join(root,'sdk-models.json')});
+const { session } = await sdk.createAgentSession({cwd:root,agentDir:join(root,'sdk-agent'),modelRuntime,model,
+  resourceLoader:loader,settingsManager,sessionManager:sdk.SessionManager.inMemory(root),tools:['read','focus_record','submit_focus_answer']});
+try {
+  await session.bindExtensions({mode:'print',onError:e => {throw new Error(e.message);}});
+  assert.deepEqual(session.getActiveToolNames().sort(), ['focus_record','read','submit_focus_answer']);
+  await session.prompt('Read the synthetic source pages and answer with the supported limitation.');
+  assert.equal(sdkCalls,2);
+  assert.equal(sdkExecs,0);
+  const results = contexts[1].messages.filter(m => m.role === 'toolResult');
+  assert.equal(results.length,reads.length);
+  for (let i = 0; i < allowed.length; i++) {
+    assert.ok(!results[i].isError, allowed[i]);
+    const canonical = allowed[i].startsWith('/') || allowed[i].startsWith('@/')
+      ? realpathSync(allowed[i].replace(/^@/, '')) : expectedPath(allowed[i]);
+    assert.deepEqual(results[i].content, [{type:'text',text:readFileSync(canonical,'utf8')}]);
+  }
+  for (let i = allowed.length; i < allowed.length + denied.length; i++) {
+    assert.equal(results[i].isError,true,reads[i].path);
+    assert.ok(!JSON.stringify(results[i].content).includes('PRIVATE_CANARY'));
+  }
+  assert.match(results.at(-4).content[0].text, /^Second source line\n\n\[1 more lines/);
+  assert.match(results.at(-3).content[0].text, /Showing lines 1-2000 of 2100/);
+  assert.equal(results.at(-3).details.truncation.truncatedBy,'lines');
+  assert.equal(results.at(-2).details.truncation.truncatedBy,'bytes');
+  assert.equal(results.at(-1).isError,true); // permitted, built-in offset error remains recoverable
+  const observations = sdkObservations.filter(e => e.kind === 'observation');
+  assert.equal(observations.length,reads.length);
+  assert.equal(new Set(observations.map(e => e.toolCallId)).size,reads.length);
+  assert.ok(observations.every(e => e.component === 'focus_read_guard'));
+  const permitted = observations.filter(e => e.code === 'read.permitted').length;
+  assert.equal(permitted,allowed.length + 4);
+  const artifact = JSON.parse(readFileSync(process.env.FOCUS_AGENT_ANSWER_ARTIFACT,'utf8'));
+  assert.equal(artifact.diagnostics.pages_read,permitted);
+  assert.equal(artifact.markdown,qualified);
+  assert.equal(artifact.capture,'submit_tool');
+  assert.ok(artifact.warnings.includes('limited_quote_support'));
+} finally { session.dispose(); }
+// The hook only changes path; the built-in cancellation contract still applies.
+const cancelledRead = new AbortController(); cancelledRead.abort();
+const input = {path:'@./0001.txt',offset:1,limit:1};
+await h.handlers.tool_call({toolName:'read',toolCallId:'cancelled-read',input},ctx);
+await assert.rejects(sdk.createReadTool(root).execute('cancelled-read',input,cancelledRead.signal), /aborted/i);
+// Non-blocking delivery and best-effort capture are independent of optional metrics.
+for (const markdown of [qualified, '# Title only\n\n' + qualified, '**Imperfect** CT 1 “a quotation longer than five words here”.']) {
+  const delivery = harness(async () => { throw new Error('No helper expected'); });
+  const result = await delivery.tools.submit_focus_answer.execute('answer',{answer_kind:'answered',markdown});
+  assert.equal(result.details.accepted,true);
+  assert.equal(result.terminate,true);
+  assert.equal(JSON.parse(readFileSync(process.env.FOCUS_AGENT_ANSWER_ARTIFACT,'utf8')).markdown,markdown);
+}
+for (const stopReason of ['stop','length','error','aborted']) {
+  const fallback = harness(async () => { throw new Error('No helper expected'); });
+  fallback.handlers.message_end({message:{role:'assistant',stopReason,content:[{type:'text',text:qualified}]}});
+  await fallback.handlers.agent_settled({});
+  const artifact = JSON.parse(readFileSync(process.env.FOCUS_AGENT_ANSWER_ARTIFACT,'utf8'));
+  assert.equal(artifact.markdown,qualified);
+  assert.equal(artifact.capture,'assistant_fallback');
+  assert.equal(artifact.status,stopReason === 'stop' ? 'complete' : 'partial');
+  assert.equal(artifact.diagnostics.stop_reason,stopReason);
+}
 // Exercise Pi's real shell-free executor too. A short test-only deadline avoids
 // waiting two minutes; the extension's requested 120000ms is asserted above.
 const { execCommand } = await import(pathToFileURL(join(pkg, 'dist/core/exec.js')));

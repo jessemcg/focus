@@ -127,7 +127,11 @@ def test_focus_extension_is_shell_free_uncapped_and_terminating() -> None:
     assert "counters.pagesRead += 1" in source
     assert "guardedRecordPath" in source
     assert "outside the active case text_pages source boundary" in source
-    assert "Use the returned absolute resolved_text_path or focus_record lookup" in source
+    assert "Prefer the returned absolute resolved_text_path" in source
+    assert "Supported aliases are text_pages/<path>.txt" in source
+    assert "Use focus_record lookup for unknown citations" in source
+    assert "(event.input as any).path = checked.path" in source
+    assert "resolve(cwd, raw)" not in source
     assert 'result.killed' in source
     assert 'invalid_protocol' in source
     assert "terminate: true" in source

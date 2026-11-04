@@ -28,8 +28,13 @@ def test_actual_extension_contract(tmp_path):
     node = shutil.which('node')
     if not node:
         pytest.skip('Installed Pi/Node required')
+    env = {key: os.environ[key] for key in ('PATH', 'PI_METRICS_TEST_SDK') if key in os.environ}
+    for key in ('HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR', 'TMPDIR'):
+        path = tmp_path / key.lower()
+        path.mkdir(mode=0o700)
+        env[key] = str(path)
     result = subprocess.run([node, str(PROJECT / 'tests/focus_extension_contract.mjs')],
-                            cwd=PROJECT / 'tests', env=dict(_test_environment(), FOCUS_CONTRACT_ROOT=str(tmp_path), FOCUS_CONTRACT_PYTHON=sys.executable),
+                            cwd=PROJECT / 'tests', env=dict(env, FOCUS_CONTRACT_ROOT=str(tmp_path), FOCUS_CONTRACT_PYTHON=sys.executable),
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stderr
 

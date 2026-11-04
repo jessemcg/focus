@@ -259,18 +259,28 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
     }
   }
 
-  async function guardedRecordPath(rawPath: unknown, cwd: string): Promise<string> {
-    if (!nonempty(rawPath)) return "invalid_target";
+  async function guardedRecordPath(rawPath: unknown): Promise<
+    { status: "permitted"; path: string }
+    | { status: "missing_path" | "outside_boundary" | "invalid_target" }
+  > {
+    if (!nonempty(rawPath)) return { status: "invalid_target" };
     const raw = (rawPath as string).replace(/^@/, "");
-    if (raw.split("/").includes("..")) return "outside_boundary";
-    const candidate = resolve(cwd, raw);
+    if (raw.split("/").includes("..")) return { status: "outside_boundary" };
+    const alias = raw.replace(/^\.\//, "");
+    // Only these source-page aliases have a meaning outside the disposable cwd.
+    // Never search, fall back to workspace paths, or reinterpret absolute paths.
+    let candidate: string;
+    if (isAbsolute(raw)) candidate = raw;
+    else if (alias.startsWith("text_pages/") && alias.endsWith(".txt")) candidate = resolve(caseRoot, alias);
+    else if (!alias.includes("/") && alias.endsWith(".txt")) candidate = resolve(textRoot, alias);
+    else return { status: "outside_boundary" };
     try {
       const canonical = await realpath(candidate);
-      if (!inside(canonical, canonicalTextRoot)) return "outside_boundary";
-      if (!canonical.endsWith(".txt") || !(await stat(canonical)).isFile()) return "invalid_target";
-      return "permitted";
+      if (!inside(canonical, canonicalTextRoot)) return { status: "outside_boundary" };
+      if (!canonical.endsWith(".txt") || !(await stat(canonical)).isFile()) return { status: "invalid_target" };
+      return { status: "permitted", path: canonical };
     } catch (error: any) {
-      return error?.code === "ENOENT" ? "missing_path" : "invalid_target";
+      return { status: error?.code === "ENOENT" ? "missing_path" : "invalid_target" };
     }
   }
 
@@ -306,7 +316,7 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
     counters.toolCalls += 1;
   });
 
-  pi.on("tool_call", async (event, ctx) => {
+  pi.on("tool_call", async (event) => {
     await ready;
     if (transportError) {
       if (event.toolName === "read") observe("focus_read_guard", event.toolCallId, "read.unclassified_execution_failure");
@@ -314,14 +324,15 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
       return { block: true, reason: `Focus transport failure: ${transportError}` };
     }
     if (event.toolName === "read") {
-      const status = await guardedRecordPath((event.input as any)?.path, ctx.cwd);
-      observe("focus_read_guard", event.toolCallId, `read.${status}`);
-      if (status !== "permitted") {
-        const reason = status === "missing_path" ? "Requested path is missing."
-          : status === "outside_boundary" ? "Requested path is outside the active case text_pages source boundary."
+      const checked = await guardedRecordPath((event.input as any)?.path);
+      observe("focus_read_guard", event.toolCallId, `read.${checked.status}`);
+      if (checked.status !== "permitted") {
+        const reason = checked.status === "missing_path" ? "Requested path is missing."
+          : checked.status === "outside_boundary" ? "Requested path is outside the active case text_pages source boundary."
             : "Requested target must be a regular .txt source file, not a directory, image or special file.";
-        return { block: true, reason: `${reason} Use the returned absolute resolved_text_path or focus_record lookup; do not guess paths relative to this workspace.` };
+        return { block: true, reason: `${reason} Prefer the returned absolute resolved_text_path. Supported aliases are text_pages/<path>.txt from the active case root or a bare <filename>.txt in its text_pages/, optionally prefixed with ./ or a leading @. Use focus_record lookup for unknown citations; other workspace-relative paths are not supported.` };
       }
+      (event.input as any).path = checked.path;
       counters.pagesRead += 1;
     }
   });
