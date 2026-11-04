@@ -1,5 +1,6 @@
 ---
 name: focus-answer-record-questions
+disable-model-invocation: true
 description: Answer factual, chronological, procedural, hearing, report, and transcript questions from the active Focus record bundle using the structured read-only Focus record tool, verified source text, and clickable record quotes. Use for any question that must be answered from the supplied case bundle rather than external sources.
 ---
 
