@@ -43,7 +43,7 @@ def test_schema9_rejects_unknown_contracts(mutation):
     files=schema9_files();manifest=json.loads(files['profile.json'])
     if mutation=='retired-resource':
         manifest['resources']['classification_tasks']='tasks.json';files['tasks.json']=b'{}\n'
-    if mutation=='unknown-schema':manifest['schema_version']=10
+    if mutation=='unknown-schema':manifest['schema_version']=11
     if mutation=='missing-naming':files.pop(manifest['resources'].pop('naming'))
     if mutation=='wrong-api':manifest['profile_api']=2
     if mutation=='unsupported-name':files[manifest['resources']['naming']]=b'{"schema_version":5}'

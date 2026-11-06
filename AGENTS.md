@@ -85,14 +85,18 @@ and common guidance affects no compiled stage. RecordPrep schema 7 adds fixed-ke
 recognition descriptions and stable-ID report/form naming cards (classification v2,
 naming v4). RecordPrep schema 8/classification v3 adds the fourth report-first-page
 task and a lossless legacy-task editor representation. The mirrored validator
-accepts schemas 1–9 without importing any RecordPrep runtime/editor; old schema 7
+accepts schemas 1–10 without importing any RecordPrep runtime/editor; old schema 7
 still requires exactly the original three starts. Schema 9 omits classification_tasks;
 RecordPrep owns all structural/start definitions independently of profiles. Historical
 schema-1–8 task data stays readable/literal but is never selected into compiled
-classification stages. Naming v1–v4 remains valid in schema 9; unknown schemas fail
+classification stages. Naming v1–v4 remains valid in schema 10; unknown schemas fail
 closed. Keep profile_contract.py byte-identical and profile_artifacts.py unchanged.
-No Focus recognition resources, runtime, editor, prompt or research changes belong
-in this compatibility update. See docs/recordprep-schema9.md. `record_categories.py` maps
+Schema10 additionally omits minutes and rejects its reintroduction; compiled minute
+resources are empty for every supported schema. RecordPrep owns all new minute
+instructions, including unassigned/custom work; historical 1–9 resources remain literal.
+Keep research instructions, UI, minute TXT/edition presentation and source-map schemas
+unchanged. See docs/recordprep-schema10.md. No Focus recognition resources, runtime,
+editor, prompt or research changes belong in this compatibility update. See docs/recordprep-schema9.md. `record_categories.py` maps
 CT_report_first_page to the existing Report category for display/reading; do not
 invent a new category or drop report first pages as unknown. See
 docs/recordprep-schema7.md. Focus always uses the fixed neutral method.
