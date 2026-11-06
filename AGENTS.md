@@ -89,8 +89,9 @@ accepts schemas 1–10 without importing any RecordPrep runtime/editor; old sche
 still requires exactly the original three starts. Schema 9 omits classification_tasks;
 RecordPrep owns all structural/start definitions independently of profiles. Historical
 schema-1–8 task data stays readable/literal but is never selected into compiled
-classification stages. Naming v1–v4 remains valid in schema 10; unknown schemas fail
-closed. Keep profile_contract.py byte-identical and profile_artifacts.py unchanged.
+classification stages. Naming v1–v5 remains valid in schema 10; naming5 adds optional
+fixed/source_title card modes, with absent mode fixed. Historical naming4 remains
+strict and schemas7/8 still require4. Unknown schemas/modes fail closed. Keep profile_contract.py byte-identical and profile_artifacts.py unchanged.
 Schema10 additionally omits minutes and rejects its reintroduction; compiled minute
 resources are empty for every supported schema. RecordPrep owns all new minute
 instructions, including unassigned/custom work; historical 1–9 resources remain literal.
