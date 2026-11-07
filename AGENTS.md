@@ -3,7 +3,12 @@
 ## Motions and summary availability (current)
 
 Read docs/motions.md. Focus stays profile-free and reader-only; accept RecordPrep
-schema 11/profile API 1 plus historical schemas 1–10/naming 1–5 without writes.
+schema 12/profile API 1 plus historical schemas 1–11/naming 1–5 without writes.
+Schema 12 retains motion_naming but omits/rejects motions topics; new motion final
+metadata6 includes fixed Request/Reasons application descriptors, including checked
+zero output. Optional validated logical groups/aliases preserve physical documents,
+exact member spans and lead anchors; preparation context never supplies research
+instructions. Edition heading/quote links remain physical-source navigation.
 Mirror BOTH profile_contract.py and profile_artifacts.py byte-for-byte. Motion is a
 distinct rose category (#A04F5F light / #E39AA8 dark). Filter empty known/custom
 sidebar groups in presentation only; own-page/bookmark groups remain. Summary

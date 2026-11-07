@@ -32,6 +32,7 @@ core.CONFIG_FILE = root / 'focus-config.json'
 module.APPLICATION_ID = f'com.mcglaw.Focus.MotionsAcceptance.p{os.getpid()}'
 manifest = json.loads((bundle / 'manifest.json').read_text())
 final = bundle / manifest['files']['summarized_motions']
+grouped = 'motion_groups' in manifest['files']
 before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in bundle.rglob('*') if p.is_file()}
 application = module.Focus(input_override=bundle)
 failures = []
@@ -60,6 +61,17 @@ def check():
         require(application._summary_availability(core.SUMMARY_SOURCE_MOTIONS).available, 'nonempty motion final')
         require(all(application._category_index[p].category == Category.MOTION for p in range(1, 7)),
                 'motion source-map categories')
+        if grouped:
+            require(('page', '5') in application._summary_link_tag_lookup.values(), 'group heading link uses lead, not preceding support')
+            require(('phrase', 'distinct inspection phrase') in application._summary_link_tag_lookup.values(), 'supporting-paper quote link')
+            application._activate_link(('page', '5'))
+            require(application.pages[application.current_index] == 5, 'heading navigates to lead page')
+            application._activate_link(('phrase', 'distinct inspection phrase'))
+            from focus import agent_helper
+            source_map = agent_helper._load_source_map(bundle)
+            matches = agent_helper._page_match_payloads(bundle, agent_helper._lookup_pages_for_file(source_map, 'text_pages/0008.txt'))
+            require(matches[0]['motion_entries'][0]['group_id'] == 'motion:0005', 'support lookup retains logical context')
+            require(matches[0]['document_ids'] == ['motion:0007'], 'support lookup retains physical identity')
         prior_view = (application._ai_active_view, application._summary_active_source, str(application._summary_loaded_path))
         final_bytes = final.read_bytes(); final.unlink()
         application._refresh_summary_availability()
@@ -110,6 +122,8 @@ def capture(name):
 
 def finish():
     try:
+        if grouped:
+            require(set(application._grep_hits) == {8}, 'support quote searches exact physical source page')
         capture('motions-light-narrow')
         core.Adw.StyleManager.get_default().set_color_scheme(core.Adw.ColorScheme.FORCE_DARK)
         core.GLib.timeout_add(700, dark_capture)

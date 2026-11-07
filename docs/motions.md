@@ -1,11 +1,27 @@
 # Motions and usable-summary controls
 
 Focus remains profile-free: preparation rules and summary topics belong to RecordPrep.
-The mirrored, reader-only contracts accept content schema 11/profile API 1, including
-separate `motion_naming` and `motions` resources, while retaining schemas 1–10 and
-naming formats 1–5 without writes or implicit adoption. Keep **both**
-`profile_contract.py` and `profile_artifacts.py` byte-identical to RecordPrep.
-Dependency 1.14.0 is the first bundled producer of this contract.
+The mirrored, reader-only contracts accept content schema **12**/profile API 1,
+retaining `motion_naming` eligibility but omitting/rejecting `motions` topic resources.
+Historical schemas 1–11 and naming formats 1–5 stay readable without writes or implicit
+adoption. Keep **both** `profile_contract.py` and `profile_artifacts.py` byte-identical
+to RecordPrep. Dependency 1.15.0 supplies this contract; the application owns every
+new motion summary's Request/Reasons method, not Focus or preparation profiles.
+
+Optional validated `motion_groups` describe logical entries over unchanged physical
+`documents`. They retain exact member spans, source titles, roles and lead anchors;
+source-map aliases and per-page `motion_entries` provide navigation context, never
+instructions or authoritative findings. A motion, opposition and reply remain separate
+entries, each with its own explicitly linked support. Support can precede the lead or
+be nonadjacent. Physical `counts.motions` and logical `counts.motion_entries` are
+separate. Missing grouping preserves historical singleton browsing without migration.
+
+Concise labels identify the filing/request, such as **Motion to compel police records**;
+the party belongs in metadata/narrative. New motion final metadata schema **6** supports
+both nonempty and checked-zero summaries. Fixed-layout PDF editions carry heading links
+to the lead anchor, not the lowest member page; supporting-paper quotations still
+search original physical source pages. No repagination, research-policy or renderer
+layout change is required.
 
 `MOTIONS`, `CT_motion`, `CT_motion_first_page`, motion boundaries and source-map motion
 documents map to Motion, distinct from Form/Report. Light rose is **#A04F5F**, adjusted
@@ -46,4 +62,6 @@ No private configuration/case migration, provider call, app restart, deployment,
 dependency or entry-point changes are needed. Publish this compatible consumer before
 the RecordPrep producer if publication is separately authorized. See RecordPrep's
 `docs/motions-workflow.md` and the offline validation report for workflow/adoption and
-actual validation evidence; see [the local validation report](motions-validation.md).
+actual validation evidence. See [grouped-motion validation](grouped-motions-validation.md)
+for the current checks; [the original motion/category validation](motions-validation.md)
+remains historical evidence.

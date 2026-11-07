@@ -465,6 +465,8 @@ def command_map(args: argparse.Namespace) -> None:
         "case_name": source_map.get("case_name", ""),
         "counts": source_map.get("counts", {}),
     }
+    if "motion_groups" in source_map:
+        base["motion_groups"] = source_map["motion_groups"]
     if args.section == "documents":
         base["documents"] = source_map.get("documents", [])
     elif args.section == "participants":

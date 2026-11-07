@@ -145,10 +145,15 @@ def inspect_summary(path: Path | None, source: str, *, case_name: str = "") -> S
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             expected_kind = "hearings" if source == "hearing" else source
+            if isinstance(meta, dict) and meta.get("schema_version") == 6:
+                from .profile_artifacts import motion_application_metadata
+                if expected_kind != "motions":
+                    raise ValueError("Schema 6 is motion-only.")
+                motion_application_metadata(meta.get("application_metadata"))
             if (isinstance(meta, dict)
                     and meta.get("artifact") == "recordprep-summary-final-meta"
                     and type(meta.get("schema_version")) is int
-                    and meta["schema_version"] in (3, 4, 5)
+                    and meta["schema_version"] in (3, 4, 5, 6)
                     and meta.get("kind") == expected_kind
                     and meta.get("final_text_sha256") == hashlib.sha256(data).hexdigest()
                     and isinstance(meta.get("item_ids"), list)
