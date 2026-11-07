@@ -46,6 +46,9 @@ class AppearanceHarness:
         self.input_dir = tmp_path
         self.rebuilds = 0
 
+    def _refresh_summary_availability(self):
+        pass
+
     def _rebuild_toc_sidebar(self):
         self.rebuilds += 1
 
@@ -122,10 +125,11 @@ class SidebarRebuildHarness:
 
 def test_sidebar_categories_follow_case_tools_order():
     categories = [
-        TocCategory("FORMS", None, []),
-        TocCategory("REPORTS", None, []),
-        TocCategory("MINUTE ORDERS", None, []),
-        TocCategory("HEARINGS", None, []),
+        TocCategory("FORMS", 1, []),
+        TocCategory("REPORTS", 2, []),
+        TocCategory("MINUTE ORDERS", 3, []),
+        TocCategory("MOTIONS", 4, []),
+        TocCategory("HEARINGS", 5, []),
     ]
     harness = SidebarRebuildHarness(categories)
 
@@ -135,6 +139,7 @@ def test_sidebar_categories_follow_case_tools_order():
         "FORMS",
         "HEARINGS",
         "REPORTS",
+        "MOTIONS",
         "MINUTE ORDERS",
     ]
     assert harness.placeholder_calls == [True]
@@ -142,9 +147,10 @@ def test_sidebar_categories_follow_case_tools_order():
 
 def test_sidebar_unknown_categories_follow_known_ones():
     categories = [
-        TocCategory("REPORTS", None, []),
-        TocCategory("MISCELLANY", None, []),
-        TocCategory("HEARINGS", None, []),
+        TocCategory("REPORTS", 1, []),
+        TocCategory("MISCELLANY", 2, []),
+        TocCategory("HEARINGS", 3, []),
+        TocCategory("EMPTY CUSTOM", None, []),
     ]
     harness = SidebarRebuildHarness(categories)
 

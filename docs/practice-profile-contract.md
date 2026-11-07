@@ -3,10 +3,15 @@
 Focus no longer compiles or manages practice profiles. See the
 [fixed research method and metadata schemas](research-method.md).
 
-The unchanged profile_contract.py and profile_artifacts.py are vendored byte-identically
+The profile_contract.py and profile_artifacts.py are vendored byte-identically
 with RecordPrep. Their proven strict historical reference, participant and preparation
 validators remain reader dependencies. Identity/artifact metadata never authorizes
 instructions. No private snapshot lookup is needed to view a historical answer.
+
+RecordPrep schema 11/profile API 1 adds separate motion_naming and motions resources;
+schemas 1–10 and naming 1–5 stay strict and readable without mutation. See
+[Motions and usable-summary controls](motions.md). No preparation resource becomes
+Focus research authority, and no RecordPrep runtime/editor is imported.
 
 Historical saved schema 2/context schema 1 retain their recorded Focus profile reference
 and component, or explicit unassigned values. They are not relabeled as focus-record-qa.

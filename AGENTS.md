@@ -1,5 +1,18 @@
 # Repository Guidelines
 
+## Motions and summary availability (current)
+
+Read docs/motions.md. Focus stays profile-free and reader-only; accept RecordPrep
+schema 11/profile API 1 plus historical schemas 1–10/naming 1–5 without writes.
+Mirror BOTH profile_contract.py and profile_artifacts.py byte-for-byte. Motion is a
+distinct rose category (#A04F5F light / #E39AA8 dark). Filter empty known/custom
+sidebar groups in presentation only; own-page/bookmark groups remain. Summary
+buttons and direct actions share read-only content-aware availability, hide wrapper
+children too, refresh on reload/reactivation, and fall back to Agent Q&A when needed.
+Wrap controls without changing saved files. Publish this compatible consumer before
+RecordPrep only with separate authorization. This section supersedes older schema-10
+and shared-file-only statements below.
+
 ## Application-owned model maintenance
 
 Keep `model-settings --stdin` import-light, before GUI/Pi/backend imports.

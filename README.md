@@ -8,9 +8,15 @@ and uses the [Pi coding agent](https://github.com/earendil-works/pi/tree/main/pa
 for AI questions.
 
 - Browse transcripts and page images with bookmarks, search, and citation navigation.
-- Read hearing, report, and minute-order summaries alongside the record.
+- Read hearing, report, motion-paper, and minute-order summaries alongside the record.
 - Ask AI questions, follow up, and jump from quoted text back to the source.
 - Save answers with each case for later reference.
+
+## Motions and summaries
+
+[Motions and usable-summary controls](docs/motions.md) describe the distinct rose
+category, empty-group filtering, wrapping controls and content-aware summary buttons.
+Focus remains profile-free and reads existing RecordPrep bundles without migration.
 
 ## Install
 

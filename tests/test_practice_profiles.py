@@ -12,7 +12,7 @@ from focus import profile_contract as contract
 def synthetic_files(application="focus"):
     resources = {name: f"resources/{name}.{suffix}"
                  for name, suffix in contract.RESOURCE_TYPES[application].items()
-                 if name not in {"classification_tasks", "case_name"}}
+                 if name not in {"classification_tasks", "case_name", "motion_naming", "motions"}}
     manifest = {"schema_version": 1, "profile_api": 1, "specialty_id": "synthetic-employment",
                 "application": application, "display_name": "Synthetic Employment",
                 "description": "Synthetic fixture only.", "version": "1.0",

@@ -39,6 +39,7 @@ SUPPORTED_LAYOUT_IDS: tuple[str, ...] = (
 FOCUS_SOURCE_TO_EDITION_KIND = {
     "hearing": "hearings",
     "reports": "reports",
+    "motions": "motions",
     "minutes": "minutes",
 }
 

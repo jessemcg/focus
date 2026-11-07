@@ -170,14 +170,14 @@ class CaseToolHarness:
     def _ensure_ai_panel_visible(self) -> None:
         self.calls.append(("visible", None))
 
-    def _on_minutes_summary_clicked(self, _button: object) -> None:
-        self.calls.append(("summary", SUMMARY_SOURCE_MINUTES))
+    def _summary_availability(self, source):
+        return SimpleNamespace(available=True, path=Path('synthetic-summary.txt'))
 
-    def _on_hearing_summary_clicked(self, _button: object) -> None:
-        self.calls.append(("summary", SUMMARY_SOURCE_HEARING))
+    def _refresh_summary_availability(self):
+        pass
 
-    def _on_reports_summary_clicked(self, _button: object) -> None:
-        self.calls.append(("summary", SUMMARY_SOURCE_REPORTS))
+    def _load_summary_from_path(self, path, *, source):
+        self.calls.append(("summary", source))
 
 
 class ToggleHarness:

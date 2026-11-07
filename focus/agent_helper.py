@@ -799,8 +799,8 @@ def _document_context_for_page(
                 "id": document_id,
                 "type": str(document.get("type") or ""),
                 "label": str(document.get("label") or ""),
-                "date": str(document.get("date") or document.get("report_date") or ""),
-                "name": str(document.get("report_name") or ""),
+                "date": str(document.get("date") or document.get("motion_date") or document.get("report_date") or ""),
+                "name": str(document.get("motion_name") or document.get("report_name") or document.get("label") or ""),
             }
         )
     return context

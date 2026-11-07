@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 class Category(StrEnum):
     HEARING = "hearing"
     REPORT = "report"
+    MOTION = "motion"
     MINUTE_ORDER = "minute_order"
     FORM = "form"
     UNKNOWN = "unknown"
@@ -23,19 +24,21 @@ class Category(StrEnum):
 PALETTE = {
     Category.HEARING: ("#3F6696", "#8EB3D8"),
     Category.REPORT: ("#2C7A70", "#79B9AA"),
+    Category.MOTION: ("#A04F5F", "#E39AA8"),
     Category.MINUTE_ORDER: ("#8A6944", "#C8AC84"),
     Category.FORM: ("#78618F", "#B6A1CD"),
 }
-LABELS = {Category.HEARING: "Hearing", Category.REPORT: "Report",
+LABELS = {Category.HEARING: "Hearing", Category.REPORT: "Report", Category.MOTION: "Motion",
           Category.MINUTE_ORDER: "Minute order", Category.FORM: "Form"}
 PAGE_TYPES = {
     "rt_body": Category.HEARING, "rt_body_first_page": Category.HEARING,
     "ct_report": Category.REPORT, "ct_report_first_page": Category.REPORT,
+    "ct_motion": Category.MOTION, "ct_motion_first_page": Category.MOTION,
     "ct_minute_order": Category.MINUTE_ORDER,
     "ct_minute_order_first_page": Category.MINUTE_ORDER,
     "ct_form": Category.FORM, "ct_form_first_page": Category.FORM,
 }
-HEADINGS = {"hearings": Category.HEARING, "reports": Category.REPORT,
+HEADINGS = {"hearings": Category.HEARING, "reports": Category.REPORT, "motions": Category.MOTION,
             "minute orders": Category.MINUTE_ORDER, "forms": Category.FORM}
 
 # Sidebar display order: Forms stays on top, then the record categories in the
@@ -44,7 +47,8 @@ SIDEBAR_CATEGORY_ORDER = {
     Category.FORM: 0,
     Category.HEARING: 1,
     Category.REPORT: 2,
-    Category.MINUTE_ORDER: 3,
+    Category.MOTION: 3,
+    Category.MINUTE_ORDER: 4,
 }
 
 
@@ -181,6 +185,7 @@ def load_category_index(layout: RecordLayout, file_pages: Iterable[int],
     ranges: dict[int, set[Category]] = {}
     for category, path in ((Category.HEARING, layout.hearing_boundaries_path),
                            (Category.REPORT, layout.report_boundaries_path),
+                           (Category.MOTION, layout.motion_boundaries_path),
                            (Category.MINUTE_ORDER, layout.minutes_boundaries_path)):
         for start, end in parse_ranges(_read_json(path)):
             for page in pages[bisect.bisect_left(pages, start):bisect.bisect_right(pages, end)]:

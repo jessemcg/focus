@@ -8,6 +8,7 @@ import threading
 
 from .core import *  # noqa: F401,F403
 from .citation_extent import resolve_citation_range
+from .summary_availability import discover_summary, filename_source, inspect_summary
 from .transcript_reading import Presentation, render_readable, search_layout, search_projection
 from .record_categories import (
     Classification,
@@ -75,6 +76,7 @@ CASE_TOOL_DESCRIPTIONS = {
 SUMMARY_SOURCE_DESCRIPTIONS = {
     SUMMARY_SOURCE_HEARING: "Browse prepared hearing summaries; verify material points in the record.",
     SUMMARY_SOURCE_REPORTS: "Browse prepared report summaries; verify material points in the record.",
+    SUMMARY_SOURCE_MOTIONS: "Browse prepared motion summaries; verify material points in the record.",
     SUMMARY_SOURCE_MINUTES: "Browse prepared minute-order summaries; verify material points in the record.",
 }
 
@@ -486,6 +488,7 @@ class Focus(Adw.Application):
         self._category_index = with_toc_fallback(self._category_base_index, self._toc_categories)
         self._refresh_category_appearance()
         self._rebuild_toc_sidebar()
+        self._refresh_summary_availability()
 
     def on_toc_text_updated(self, text: str) -> None:
         self._toc_load_generation += 1
@@ -579,6 +582,7 @@ class Focus(Adw.Application):
             return
 
         self.win = Adw.ApplicationWindow(application=self)
+        self.win.connect("notify::is-active", self._on_window_active_changed)
         self.win.add_css_class("focus-window")
         self.win.set_default_size(900, 700)
         self.win.connect("close-request", self._on_main_window_close_request)
@@ -833,7 +837,9 @@ class Focus(Adw.Application):
         ai_nav_row.set_hexpand(True)
         ai_nav_row.set_valign(Gtk.Align.CENTER)
 
-        ai_mode_strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        ai_mode_strip = self._build_wrapping_controls_box()
+        ai_mode_strip.set_column_spacing(2)
+        ai_mode_strip.set_max_children_per_line(5)
         ai_mode_strip.add_css_class("focus-pill-group")
         ai_mode_strip.set_halign(Gtk.Align.START)
         ai_mode_strip.set_valign(Gtk.Align.CENTER)
@@ -844,7 +850,7 @@ class Focus(Adw.Application):
             "Ask citation-grounded questions with the embedded PI Agent",
             ("dialog-question-symbolic", "system-search-symbolic"),
         )
-        ai_mode_strip.append(agent_mode_button)
+        ai_mode_strip.insert(agent_mode_button, -1)
 
         hearings_button = self._build_summary_mode_button(
             "Hearings",
@@ -852,7 +858,7 @@ class Focus(Adw.Application):
             "Open hearing summaries",
             ("x-office-calendar-symbolic", "document-open-symbolic"),
         )
-        ai_mode_strip.append(hearings_button)
+        ai_mode_strip.insert(hearings_button, -1)
 
         reports_button = self._build_summary_mode_button(
             "Reports",
@@ -860,7 +866,13 @@ class Focus(Adw.Application):
             "Open report summaries",
             ("text-x-generic-symbolic", "document-open-symbolic"),
         )
-        ai_mode_strip.append(reports_button)
+        ai_mode_strip.insert(reports_button, -1)
+
+        motions_button = self._build_summary_mode_button(
+            "Motions", SUMMARY_SOURCE_MOTIONS, "Open motion summaries",
+            ("text-x-generic-symbolic", "document-open-symbolic"),
+        )
+        ai_mode_strip.insert(motions_button, -1)
 
         minutes_button = self._build_summary_mode_button(
             "Minute Orders",
@@ -868,8 +880,9 @@ class Focus(Adw.Application):
             "Open minute-order summaries",
             ("text-x-generic-symbolic", "document-open-symbolic"),
         )
-        ai_mode_strip.append(minutes_button)
+        ai_mode_strip.insert(minutes_button, -1)
         ai_nav_row.insert(ai_mode_strip, -1)
+        self._refresh_summary_availability()
 
         # Saved Answers is a labeled split button kept at the right end of the
         # case-tools bar, away from the view toggles. The main part resumes the
@@ -2199,9 +2212,11 @@ class Focus(Adw.Application):
     def _rebuild_toc_sidebar(self) -> None:
         if self._toc_sidebar_root_store is None:
             return
+        self._sidebar_rebuilding = True
         self._toc_sidebar_root_store.remove_all()
         ordered_categories = sorted(
-            self._toc_categories,
+            (category for category in self._toc_categories
+             if category.bookmarks or category.page is not None),
             key=lambda category: sidebar_category_rank(category.title),
         )
         for category in ordered_categories:
@@ -2209,6 +2224,7 @@ class Focus(Adw.Application):
             self._toc_sidebar_root_store.append(item)
         self._update_sidebar_placeholder(bool(ordered_categories))
         self._apply_sidebar_expansion_state(self._current_view_state())
+        self._sidebar_rebuilding = False
         self._sync_sidebar_active_page()
 
     def _create_sidebar_children_model(self, item: GObject.Object) -> Gio.ListModel | None:
@@ -2469,7 +2485,17 @@ class Focus(Adw.Application):
         list_row: Gtk.ListBoxRow,
     ) -> None:
         self._update_sidebar_row_expand_widgets(list_row, tree_row)
-        self._current_view_state().sidebar_expanded = self._get_sidebar_expanded_keys()
+        if not getattr(self, "_sidebar_rebuilding", False):
+            item = tree_row.get_item()
+            if isinstance(item, FocusSidebarItem):
+                state = self._current_view_state()
+                retained = set(state.sidebar_expanded)
+                key = self._sidebar_item_key(item)
+                if tree_row.get_expanded():
+                    retained.add(key)
+                else:
+                    retained.discard(key)
+                state.sidebar_expanded = sorted(retained)
 
     def _sidebar_item_key(self, item: FocusSidebarItem) -> str:
         page = "" if item.page is None else str(item.page)
@@ -4560,11 +4586,16 @@ class Focus(Adw.Application):
             self._refresh_case_tools_status()
 
     def _infer_summary_source(self, path: Path) -> str:
+        inferred = filename_source(path)
+        if inferred:
+            return inferred
         name = path.name.casefold()
         if name in HEARING_SUMMARY_CANDIDATES or "hearing" in name:
             return SUMMARY_SOURCE_HEARING
         if name in REPORTS_SUMMARY_CANDIDATES or "report" in name:
             return SUMMARY_SOURCE_REPORTS
+        if name in MOTIONS_SUMMARY_CANDIDATES or "motion" in name:
+            return SUMMARY_SOURCE_MOTIONS
         manifest_path = _find_manifest_near_path(self.input_dir)
         if manifest_path:
             manifest = _read_manifest_file(manifest_path)
@@ -5507,6 +5538,7 @@ class Focus(Adw.Application):
             "show_minutes_summary": SUMMARY_SOURCE_MINUTES,
             "show_hearings_summary": SUMMARY_SOURCE_HEARING,
             "show_reports_summary": SUMMARY_SOURCE_REPORTS,
+            "show_motions_summary": SUMMARY_SOURCE_MOTIONS,
         }.items():
             action = Gio.SimpleAction.new(action_name, None)
             action.connect(
@@ -6504,14 +6536,47 @@ class Focus(Adw.Application):
             self._update_embedded_ai_panel_height(force=True)
         self._refresh_search_highlighted_button()
 
+    def _summary_availability(self, source: str):
+        definitions = {
+            SUMMARY_SOURCE_HEARING: (HEARING_SUMMARY_MANIFEST_KEYS, HEARING_SUMMARY_CANDIDATES, ("hearing",)),
+            SUMMARY_SOURCE_REPORTS: (REPORTS_SUMMARY_MANIFEST_KEYS, REPORTS_SUMMARY_CANDIDATES, ("report",)),
+            SUMMARY_SOURCE_MOTIONS: (MOTIONS_SUMMARY_MANIFEST_KEYS, MOTIONS_SUMMARY_CANDIDATES, ("motion",)),
+            SUMMARY_SOURCE_MINUTES: ((MINUTES_SUMMARY_MANIFEST_KEY,), (), ("minute",)),
+        }
+        if not hasattr(self, "_summary_availability_cache"):
+            self._summary_availability_cache = {}
+        return discover_summary(self.input_dir, source, _find_manifest_near_path(self.input_dir),
+                                *definitions[source], cache=self._summary_availability_cache)
+
+    def _refresh_summary_availability(self) -> None:
+        for source, button in self._summary_source_buttons.items():
+            result = self._summary_availability(source)
+            button.set_visible(result.available)
+            parent = button.get_parent()
+            if isinstance(parent, Gtk.FlowBoxChild):
+                parent.set_visible(result.available)
+        if (self._ai_active_view == AI_VIEW_FILE and self._summary_loaded_path is not None
+                and self._summary_active_source in self._summary_source_buttons):
+            result = self._summary_availability(self._summary_active_source)
+            if not result.available:
+                self._set_ai_view(AI_VIEW_AGENT_QA)
+            elif result.path and result.path.resolve() != self._summary_loaded_path:
+                self._load_summary_from_path(result.path, source=self._summary_active_source, show_toast=False)
+
+    def _on_window_active_changed(self, window, _param) -> None:
+        if window.is_active():
+            self._refresh_summary_availability()
+
     def _open_case_tool_summary(self, source: str) -> None:
+        result = self._summary_availability(source)
+        self._refresh_summary_availability()
+        if not result.available:
+            label = {SUMMARY_SOURCE_HEARING: "Hearing", SUMMARY_SOURCE_REPORTS: "Report",
+                     SUMMARY_SOURCE_MOTIONS: "Motion", SUMMARY_SOURCE_MINUTES: "Minute-order"}.get(source, source)
+            self._ai_transient_toast(f"{label} summary unavailable ({result.status}).")
+            return
         self._ensure_ai_panel_visible()
-        if source == SUMMARY_SOURCE_MINUTES:
-            self._on_minutes_summary_clicked(None)
-        elif source == SUMMARY_SOURCE_HEARING:
-            self._on_hearing_summary_clicked(None)
-        elif source == SUMMARY_SOURCE_REPORTS:
-            self._on_reports_summary_clicked(None)
+        self._load_summary_from_path(result.path, source=source)
 
     def _case_tool_description(self, view_name: str | None = None) -> str:
         target = view_name or self._ai_active_view
@@ -6581,6 +6646,10 @@ class Focus(Adw.Application):
         """Whether the currently cached summary is a digest, not a final."""
         path = self._summary_loaded_path
         if path is not None and not _is_eligible_summary_file(path):
+            return True
+        if path is not None and not inspect_summary(
+                path, getattr(self, "_summary_active_source", None) or Focus._infer_summary_source(self, path),
+                case_name=_read_case_name(self.input_dir) or "").available:
             return True
         return bool(self._summary_raw) and (
             RECORDPREP_DIGEST_MARKER in self._summary_raw
@@ -7991,7 +8060,8 @@ class Focus(Adw.Application):
     ) -> Path | None:
         summaries_dir = self.input_dir / SUMMARY_DIR_NAME
         if not summaries_dir.exists():
-            self._ai_transient_toast(f"Summaries folder not found: {summaries_dir}")
+            if show_toast:
+                self._ai_transient_toast(f"Summaries folder not found: {summaries_dir}")
             return None
         matches: list[Path] = []
         try:
@@ -8109,42 +8179,16 @@ class Focus(Adw.Application):
         return ranked[0][2]
 
     def _on_minutes_summary_clicked(self, _button: Gtk.Button) -> None:
-        manifest_path = _find_manifest_near_path(self.input_dir)
-        if not manifest_path:
-            self._ai_transient_toast(
-                f"Minutes summary manifest not found near input dir: {self.input_dir}"
-            )
-            return
-        self._load_summary_from_manifest(
-            "Minutes",
-            manifest_path,
-            MINUTES_SUMMARY_MANIFEST_KEY,
-            SUMMARY_SOURCE_MINUTES,
-        )
+        self._open_case_tool_summary(SUMMARY_SOURCE_MINUTES)
 
     def _on_hearing_summary_clicked(self, _button: Gtk.Button) -> None:
-        manifest_path = _find_manifest_near_path(self.input_dir)
-        summary_path = self._find_preferred_summary_path(
-            "Hearing",
-            manifest_path,
-            HEARING_SUMMARY_MANIFEST_KEYS,
-            HEARING_SUMMARY_CANDIDATES,
-            ("hearing",),
-        )
-        if summary_path:
-            self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_HEARING)
+        self._open_case_tool_summary(SUMMARY_SOURCE_HEARING)
 
     def _on_reports_summary_clicked(self, _button: Gtk.Button) -> None:
-        manifest_path = _find_manifest_near_path(self.input_dir)
-        summary_path = self._find_preferred_summary_path(
-            "Reports",
-            manifest_path,
-            REPORTS_SUMMARY_MANIFEST_KEYS,
-            REPORTS_SUMMARY_CANDIDATES,
-            ("report", "reports"),
-        )
-        if summary_path:
-            self._load_summary_from_path(summary_path, source=SUMMARY_SOURCE_REPORTS)
+        self._open_case_tool_summary(SUMMARY_SOURCE_REPORTS)
+
+    def _on_motions_summary_clicked(self, _button: Gtk.Button) -> None:
+        self._open_case_tool_summary(SUMMARY_SOURCE_MOTIONS)
 
     def _auto_load_summary_file(self, *, preferred_source: str | None = None) -> None:
         if self._auto_loading_summary:
@@ -8153,47 +8197,15 @@ class Focus(Adw.Application):
         try:
             if self._summary_has_text() and not self._cached_summary_is_ineligible():
                 return
-            manifest_path = _find_manifest_near_path(self.input_dir)
-            if manifest_path and preferred_source in (None, SUMMARY_SOURCE_MINUTES):
-                manifest = _read_manifest_file(manifest_path)
-                files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-                summary_path = _path_from_manifest(files.get(MINUTES_SUMMARY_MANIFEST_KEY), manifest_path.parent)
-                if summary_path and _is_eligible_summary_file(summary_path):
-                    self._load_summary_from_path(
-                        summary_path,
-                        allow_auto=True,
-                        source=SUMMARY_SOURCE_MINUTES,
-                        show_toast=False,
-                    )
-                    return
-
-            def _resolve(kind_label: str, keys: tuple[str, ...], candidates: tuple[str, ...], keywords: tuple[str, ...], source: str) -> bool:
-                summary_path = self._find_preferred_summary_path(
-                    kind_label,
-                    manifest_path,
-                    keys,
-                    candidates,
-                    keywords,
-                    show_toast=False,
-                )
-                if not summary_path:
-                    return False
-                self._load_summary_from_path(
-                    summary_path,
-                    allow_auto=True,
-                    source=source,
-                    show_toast=False,
-                )
-                return True
-
-            kinds = (
-                ("Hearing", HEARING_SUMMARY_MANIFEST_KEYS, HEARING_SUMMARY_CANDIDATES, ("hearing",), SUMMARY_SOURCE_HEARING),
-                ("Reports", REPORTS_SUMMARY_MANIFEST_KEYS, REPORTS_SUMMARY_CANDIDATES, ("report", "reports"), SUMMARY_SOURCE_REPORTS),
-            )
-            if preferred_source == SUMMARY_SOURCE_REPORTS:
-                kinds = (kinds[1], kinds[0])
-            for kind_label, keys, candidates, keywords, source in kinds:
-                if _resolve(kind_label, keys, candidates, keywords, source):
+            sources = [SUMMARY_SOURCE_HEARING, SUMMARY_SOURCE_REPORTS,
+                       SUMMARY_SOURCE_MOTIONS, SUMMARY_SOURCE_MINUTES]
+            if preferred_source in sources:
+                sources.remove(preferred_source)
+                sources.insert(0, preferred_source)
+            for source in sources:
+                result = self._summary_availability(source)
+                if result.available:
+                    self._load_summary_from_path(result.path, allow_auto=True, source=source, show_toast=False)
                     return
         finally:
             self._auto_loading_summary = False
@@ -8377,12 +8389,18 @@ class Focus(Adw.Application):
             return
         target = path.expanduser()
         resolved = target.resolve(strict=False)
+        source = source or self._infer_summary_source(resolved)
+        result = inspect_summary(resolved, source, case_name=_read_case_name(self.input_dir) or "")
+        if not result.available:
+            if show_toast:
+                self._ai_transient_toast(f"Summary unavailable ({result.status}): {resolved.name}")
+            return
         if not resolved.exists() or not resolved.is_file():
             self._ai_transient_toast(f"File not found: {resolved}")
             return
         try:
-            text = resolved.read_text(encoding="utf-8", errors="ignore")
-        except OSError as exc:  # noqa: BLE001
+            text = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:  # noqa: BLE001
             self._ai_transient_toast(f"Could not read {resolved.name}: {exc}")
             return
         state = self._current_view_state()

@@ -158,6 +158,9 @@ REPORTS_SUMMARY_MANIFEST_KEYS = (
 SUMMARY_SOURCE_MINUTES = "minutes"
 SUMMARY_SOURCE_HEARING = "hearing"
 SUMMARY_SOURCE_REPORTS = "reports"
+SUMMARY_SOURCE_MOTIONS = "motions"
+MOTIONS_SUMMARY_CANDIDATES = ("motions_sum.txt", "motions_summary.txt", "summarized_motions.txt")
+MOTIONS_SUMMARY_MANIFEST_KEYS = ("summarized_motions",)
 SUMMARY_BOOKMARKS_FILENAME = "summary_bookmarks.json"
 
 
@@ -658,6 +661,11 @@ class RecordLayout:
     transcript_page_number_series_path: Path
     source_map_path: Path
     is_record_prep: bool
+
+    @property
+    def motion_boundaries_path(self) -> Path:
+        manifest = _read_record_prep_manifest(self.root) or {}
+        return _record_boundary_path(self.root, manifest, "motion_boundaries", "motion_boundaries.json")
 
 
 @dataclass(frozen=True)
@@ -2682,7 +2690,7 @@ def _extract_summary_emphasis_spans(
         return []
     if source == SUMMARY_SOURCE_HEARING:
         pattern = SUMMARY_HEARING_ENTRY_RE
-    elif source == SUMMARY_SOURCE_REPORTS:
+    elif source in (SUMMARY_SOURCE_REPORTS, SUMMARY_SOURCE_MOTIONS):
         pattern = SUMMARY_REPORT_ENTRY_RE
     elif source == SUMMARY_SOURCE_MINUTES:
         pattern = SUMMARY_MINUTE_LABEL_RE

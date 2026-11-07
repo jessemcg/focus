@@ -11,7 +11,7 @@ def schema7_files(version=7):
         files.pop(m['resources'].pop(key))
     m['resources'].update(classification_tasks='tasks.json',case_name='caption.md')
     files['profile.json']=c.json_bytes(m);files['caption.md']=b'Inert caption history.'
-    files['tasks.json']=c.json_bytes({'schema_version':3 if version==8 else 2,'page_types':{side:{key:'Recognition description.' for key in keys} for side,keys in c.CLASSIFICATION_PAGE_TYPES.items()},'first_pages':{key:'Start clues.' for key in c.CLASSIFICATION_FIRST_PAGE_TYPES if version==8 or key!='first_report'}})
+    files['tasks.json']=c.json_bytes({'schema_version':3 if version==8 else 2,'page_types':{side:{key:'Recognition description.' for key in keys} for side,keys in c.CLASSIFICATION_PAGE_TYPES.items()},'first_pages':{key:'Start clues.' for key in c.HISTORICAL_FIRST_PAGE_TASKS[3 if version==8 else 2]}})
     files[m['resources']['naming']]=c.json_bytes({'schema_version':4,'reports':[{'id':'report-1','name':'Synthetic Report','guidance':''}],'forms':[]})
     return files
 

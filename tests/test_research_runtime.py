@@ -144,6 +144,7 @@ def test_staging_rejects_broad_permissions_and_symlink_ancestors(tmp_path):
     pin = runtime.ResearchPin.capture(case(tmp_path / "case"))
     workspace = tmp_path / "workspace"
     workspace.mkdir(mode=0o755)
+    workspace.chmod(0o755)  # Deliberately broad even under a private test umask.
     with pytest.raises(ProfileError, match="store_permissions"):
         runtime.stage_research_resources(pin, workspace)
     workspace.chmod(0o700)
