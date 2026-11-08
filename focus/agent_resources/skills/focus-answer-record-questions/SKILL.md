@@ -32,7 +32,7 @@ The workflow is text-only. If extracted text cannot establish handwriting, check
   # Inspection Was Postponed
   *Access remained unavailable*
 
-  The letter requested “access to the site”...
+  The letter requested “access to the site before the scheduled inspection”...
   ```
 
   The title is specific to the record question (about 3–8 words, at most 64 characters). The subtitle states the bottom line in about 2–5 words (at most 40 characters) and must not repeat the title, use a generic label, or overstate certainty. Both must reflect any material uncertainty accurately.
@@ -45,8 +45,10 @@ The workflow is text-only. If extracted text cannot establish handwriting, check
 
 ## Direct quotations from source material
 
-- Select a continuous, verbatim two-to-five-word record quote from a source text page you have actually read. Prefer distinctive three-to-five-word anchors that help the reader locate the relevant passage through Focus's clickable phrase search. Never quote navigation snippets, overview prose, participant metadata, or generated summaries as source evidence.
-- Weave short direct quotations into your own sentences, integrating each quotation grammatically instead of stating a paraphrase and then duplicating it as a quotation. For example, if a fictional source says `The inspector requested access to the site`, write: The inspector requested “access to the site”. Do not write: The inspector asked to enter the site; the inspector requested “access to the site”.
+- Select continuous, verbatim source quotations normally containing 6–12 words, usually 8–10, from a source text page you have actually read. Choose the shortest natural phrase that meaningfully distinguishes the relevant action, condition, reason, or disputed assertion and helps the reader locate the passage through Focus's clickable phrase search. Never quote navigation snippets, overview prose, participant metadata, or generated summaries as source evidence.
+- Prefer distinctive substantive wording over stock courtroom language, routine appearances, generic names/dates, and boilerplate. Include enough surrounding source wording to reduce incidental phrase-search matches, but do not add irrelevant identifiers merely to make a quotation unique. Repeated or copied source passages may legitimately produce multiple useful hits; do not require or claim record-wide uniqueness, or run extra searches to establish it.
+- Do not pad, truncate, or rewrite source wording to meet the range. Useful shorter or longer quotations remain valid exceptions; length guidance and warnings must never cause rejection or another model pass.
+- Weave direct quotations into your own sentences, integrating each quotation grammatically instead of stating a paraphrase and then duplicating it as a quotation. For example, if a fictional source says `The inspector requested access to the site before the scheduled inspection`, write: The inspector requested “access to the site before the scheduled inspection”. Do not write: The inspector asked to enter the site before the inspection; the inspector requested “access to the site before the scheduled inspection”.
 - The full source passage supplies the meaning and context; a short quote is an exact-wording anchor, not independent proof of an inferred proposition. Use a quotation only when its relationship to the point is unambiguous, and paraphrase otherwise. Preserve speaker attribution, denials, uncertainty, material qualifications, and event dates around the quoted words. Do not turn an allegation or recommendation into a finding or order, or trim away a negation to imply the opposite meaning.
 - Copy source wording exactly: do not stitch fragments, insert ellipses or bracketed substitutions, silently clean up OCR, or change words to fit your sentence. Choose a different intact phrase or paraphrase when a faithful short quotation will not work. Never invent a quotation when no suitable anchor exists.
 - Use double quotation marks only for genuine record language, with punctuation outside the closing quotation mark. Keep each quoted phrase continuous, without a line break or sentence-ending punctuation inside it. Do not emit RecordPrep quote-id placeholders or manufacture Markdown links; Focus makes the quoted words clickable.

@@ -57,11 +57,17 @@ clear. “Not established in the material examined” is not a claim that eviden
 cannot exist elsewhere. Allegations, recommendations, findings and orders remain
 distinct. These are model instructions, not runtime answer checks or delivery gates.
 
-Quotations remain continuous, verbatim two-to-five-word source phrases, preferably
-distinctive three-to-five-word clickable anchors integrated grammatically, without a
-fixed count or capitalization transformation. Concise titles/subtitles and early useful
-submission are non-blocking presentation guidance, not formatting-repair loops or
-research budgets.
+Quotations are continuous, verbatim source phrases normally containing 6–12 words,
+usually 8–10. Prefer the shortest natural substantive anchor that distinguishes the
+point over boilerplate; preserve negation, qualifications and attribution. Integrate
+quotes grammatically without duplicating a paraphrase, padding to a word count, or
+adding irrelevant identifiers. Repeated/copied passages may produce multiple useful
+hits: there is no uniqueness requirement or extra search to establish uniqueness.
+Useful shorter/longer quotations remain valid, with no fixed count or capitalization
+transformation. Python and extension lint warn only above 12 words; the warning is
+advisory and never blocks, changes, or retries an answer. Historical saved warnings
+remain readable unchanged. Concise titles/subtitles and early useful submission are
+non-blocking presentation guidance, not formatting-repair loops or research budgets.
 
 ## Runtime integrity
 

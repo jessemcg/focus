@@ -231,8 +231,29 @@ const cancelledRead = new AbortController(); cancelledRead.abort();
 const input = {path:'@./0001.txt',offset:1,limit:1};
 await h.handlers.tool_call({toolName:'read',toolCallId:'cancelled-read',input},ctx);
 await assert.rejects(sdk.createReadTool(root).execute('cancelled-read',input,cancelledRead.signal), /aborted/i);
+// Quote guidance is advisory in both explicit submission and fallback capture.
+for (const words of [3, 5, 6, 8, 10, 12, 13, 20]) {
+  for (const [open, close] of [['"', '"'], ['“', '”']]) {
+    const markdown = `The record says ${open}${Array(words).fill('source').join(' ')}${close}.`;
+    for (const capture of ['submit_tool', 'assistant_fallback']) {
+      const delivery = harness(async () => { throw new Error('No helper expected'); });
+      if (capture === 'submit_tool') {
+        const result = await delivery.tools.submit_focus_answer.execute('quote', {answer_kind:'answered', markdown});
+        assert.equal(result.details.accepted, true);
+        assert.equal(result.terminate, true);
+      } else {
+        delivery.handlers.message_end({message:{role:'assistant',stopReason:'stop',content:[{type:'text',text:markdown}]}});
+        await delivery.handlers.agent_settled({});
+      }
+      const artifact = JSON.parse(readFileSync(process.env.FOCUS_AGENT_ANSWER_ARTIFACT, 'utf8'));
+      assert.equal(artifact.markdown, markdown);
+      assert.equal(artifact.capture, capture);
+      assert.equal(artifact.warnings.includes('long_quote'), words > 12);
+    }
+  }
+}
 // Non-blocking delivery and best-effort capture are independent of optional metrics.
-for (const markdown of [qualified, '# Title only\n\n' + qualified, '**Imperfect** CT 1 “a quotation longer than five words here”.']) {
+for (const markdown of [qualified, '# Title only\n\n' + qualified, '**Imperfect** CT 1 “a quotation with more than twelve words that remains useful and must be delivered”.']) {
   const delivery = harness(async () => { throw new Error('No helper expected'); });
   const result = await delivery.tools.submit_focus_answer.execute('answer',{answer_kind:'answered',markdown});
   assert.equal(result.details.accepted,true);

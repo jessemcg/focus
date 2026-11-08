@@ -97,7 +97,8 @@ def lint_focus_answer(markdown: str) -> tuple[str, ...]:
     """Return category-only, non-blocking diagnostics without changing text."""
     warnings: set[str] = set()
     quotes = _QUOTE_RE.findall(markdown)
-    if any(len(re.findall(r"\b[\w’'-]+\b", quote)) > 5 for quote in quotes):
+    # Advisory only; mirror the canonical skill's range and the extension lint.
+    if any(len(re.findall(r"\b[\w’'-]+\b", quote)) > 12 for quote in quotes):
         warnings.add("long_quote")
     if "**" in markdown or "__" in markdown:
         warnings.add("bold_markup")

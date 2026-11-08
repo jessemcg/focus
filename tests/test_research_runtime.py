@@ -50,7 +50,8 @@ def test_neutral_method_invariant_and_retired_stores_inert(tmp_path, monkeypatch
         pin.assert_current(root)
     assert sentinel.read_text() == "corrupt retired store"
     assert set(config.iterdir()) == {sentinel}
-    assert "two-to-five-word" in compiled.skill and "submit_focus_answer" in compiled.skill
+    assert "normally containing 6–12 words, usually 8–10" in compiled.skill
+    assert "submit_focus_answer" in compiled.skill
     assert "Practice research guidance" not in compiled.skill
 
 

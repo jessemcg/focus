@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from focus.agent_answer import (
     create_focus_run_id,
     focus_answer_artifact_path,
@@ -53,27 +55,37 @@ def _write_artifact(path, payload: object, mode: int = 0o600) -> None:
     path.chmod(mode)
 
 
+@pytest.mark.parametrize("words", [3, 5, 6, 8, 10, 12, 13, 20])
+@pytest.mark.parametrize("marks", [('"', '"'), ('“', '”')])
+def test_quote_length_warning_is_advisory(words, marks, tmp_path) -> None:
+    quote = " ".join(["source"] * words)
+    markdown = f"The record says {marks[0]}{quote}{marks[1]}."
+    assert ("long_quote" in lint_focus_answer(markdown)) == (words > 12)
+    run_id = create_focus_run_id()
+    path = focus_answer_artifact_path(run_id, tmp_path)
+    _write_artifact(path, _artifact(run_id, markdown))
+    result = read_focus_answer_artifact(path, run_id=run_id)
+    assert result.error == ""
+    assert result.artifact.markdown == markdown
+    assert ("long_quote" in result.artifact.warnings) == (words > 12)
+
+
 def test_lint_diagnostics_never_mutate_formatting_imperfect_markdown() -> None:
     markdown = (
         "**Planning checklist:** preserve this best-effort answer.\n\n"
-        "The case overview says \"this quotation contains far more than five words\". "
-        "See CT 12."
+        'The case overview says "this quotation contains more than twelve words '
+        'and must still be delivered unchanged". See CT 12.'
     )
-
+    original = markdown
     warnings = lint_focus_answer(markdown)
-
     assert {"long_quote", "bold_markup", "record_metadata"} <= set(warnings)
-    assert markdown == (
-        "**Planning checklist:** preserve this best-effort answer.\n\n"
-        "The case overview says \"this quotation contains far more than five words\". "
-        "See CT 12."
-    )
+    assert markdown == original
 
 
 def test_valid_submit_artifact_is_accepted_unchanged_with_nonblocking_warning(tmp_path) -> None:
     run_id = create_focus_run_id()
     path = focus_answer_artifact_path(run_id, tmp_path)
-    markdown = 'The answer rests on "a quotation longer than five total words".'
+    markdown = 'The answer rests on "a quotation with more than twelve total words that still supplies useful source language".'
     _write_artifact(path, _artifact(run_id, markdown))
 
     result = read_focus_answer_artifact(path, run_id=run_id)

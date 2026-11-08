@@ -50,7 +50,8 @@ function assistantText(message: any): string {
 function lintAnswer(markdown: string): string[] {
   const warnings = new Set<string>();
   const quotes = [...markdown.matchAll(/["“]([^"”\n]+)["”]/g)].map((match) => match[1] ?? "");
-  if (quotes.some((quote) => (quote.match(/\b[\p{L}\p{N}’'-]+\b/gu) ?? []).length > 5)) {
+  // Advisory only; mirror the canonical skill's range and Python answer lint.
+  if (quotes.some((quote) => (quote.match(/\b[\p{L}\p{N}’'-]+\b/gu) ?? []).length > 12)) {
     warnings.add("long_quote");
   }
   if (markdown.includes("**") || markdown.includes("__")) warnings.add("bold_markup");

@@ -81,7 +81,7 @@ def test_pi_record_skill_has_repeatable_stop_first_workflow_and_soft_style() -> 
     assert "submit_focus_answer" in skill
     assert "first substantively useful answer" in skill
     assert "Do not spend another search or model turn merely to polish" in skill
-    assert "two-to-five-word record quote" in skill
+    assert "normally containing 6–12 words, usually 8–10" in skill
     assert "not an acceptance gate" in skill
     assert "Substantive usefulness" in skill
     assert "Q/A formatting alone does not establish testimony" in skill
@@ -95,8 +95,16 @@ def test_record_quote_guidance_adapts_recordprep_without_acceptance_gates() -> N
     skill = FOCUS_PI_SKILL_FILE.read_text(encoding="utf-8")
 
     for guidance in (
-        "continuous, verbatim two-to-five-word record quote",
-        "distinctive three-to-five-word anchors",
+        "continuous, verbatim source quotations normally containing 6–12 words, usually 8–10",
+        "Prefer distinctive substantive wording",
+        "shortest natural phrase",
+        "do not add irrelevant identifiers",
+        "multiple useful hits",
+        "do not require or claim record-wide uniqueness",
+        "or run extra searches to establish it",
+        "Do not pad, truncate, or rewrite source wording",
+        "Useful shorter or longer quotations remain valid exceptions",
+        "warnings must never cause rejection or another model pass",
         "source text page you have actually read",
         "integrating each quotation grammatically",
         "duplicating it as a quotation",
