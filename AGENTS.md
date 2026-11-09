@@ -1,10 +1,24 @@
 # Repository Guidelines
 
+## Application-owned hearing topics (current)
+
+Accept RecordPrep schema14/profile API1, which omits hearings; historical schemas1–13
+remain readable without writes. Report topics and report/form naming remain
+profile-owned in RecordPrep. Application hearing metadata uses existing row4 /
+Markdown3 / final-meta6 with `recordprep-hearing-topics-1`, neutral Appearances title,
+and the stable serialized `parent_appearances` ID. Validate its fixed instruction-free
+descriptors with summary_application_metadata; historical artifacts retain their
+recorded headings. Summary availability accepts both fixed hearing and motion meta6,
+including honestly empty output. Mirror both shared contract/artifact files exactly.
+No research/prompt/profile-management changes, migration or private rewrites. This
+supersedes older schema13 maximum and motion-only meta6 statements below.
+
 ## Motions and summary availability (current)
 
 Read docs/motions.md. Focus stays profile-free and reader-only; accept RecordPrep
-schema 12/profile API 1 plus historical schemas 1–11/naming 1–5 without writes.
-Schema 12 retains motion_naming but omits/rejects motions topics; new motion final
+schema 13/profile API 1 plus historical schemas 1–12/naming 1–5 without writes.
+Schema 13 omits/rejects motion_naming and motions; schema 12 retains historical
+motion_naming only. No historical motion naming resource is compiled; new motion final
 metadata6 includes fixed Request/Reasons application descriptors, including checked
 zero output. Optional validated logical groups/aliases preserve physical documents,
 exact member spans and lead anchors; preparation context never supplies research

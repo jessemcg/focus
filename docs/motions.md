@@ -1,12 +1,21 @@
 # Motions and usable-summary controls
 
 Focus remains profile-free: preparation rules and summary topics belong to RecordPrep.
-The mirrored, reader-only contracts accept content schema **12**/profile API 1,
-retaining `motion_naming` eligibility but omitting/rejecting `motions` topic resources.
-Historical schemas 1–11 and naming formats 1–5 stay readable without writes or implicit
+The mirrored, reader-only contracts accept content schema **14**/profile API 1,
+omitting/rejecting `hearings`, `motion_naming` and `motions` resources. Motion naming is
+application-owned in RecordPrep; report/form naming remains profile-owned. Historical
+motion catalogs are readable data, never compiled instructions.
+Historical schemas 1–13 and naming formats 1–5 stay readable without writes or implicit
 adoption. Keep **both** `profile_contract.py` and `profile_artifacts.py` byte-identical
-to RecordPrep. Dependency 1.15.0 supplies this contract; the application owns every
+to RecordPrep. Dependency 1.17.0 supplies this contract; the application owns every
 new motion summary's Request/Reasons method, not Focus or preparation profiles.
+
+Hearing topics are also fixed, with practice-neutral Appearances. New hearing
+row4/Markdown3/meta6 data uses the strict `recordprep-hearing-topics-1` descriptor;
+summary availability accepts valid empty/nonempty hearing metadata without writes.
+Historical headings/catalogs remain as recorded. The serialized `parent_appearances`
+ID stays stable, but new display text is Appearances. Report topics and report/form
+naming remain profile-owned in RecordPrep; none supplies Focus research instructions.
 
 Optional validated `motion_groups` describe logical entries over unchanged physical
 `documents`. They retain exact member spans, source titles, roles and lead anchors;

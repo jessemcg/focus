@@ -146,10 +146,8 @@ def inspect_summary(path: Path | None, source: str, *, case_name: str = "") -> S
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             expected_kind = "hearings" if source == "hearing" else source
             if isinstance(meta, dict) and meta.get("schema_version") == 6:
-                from .profile_artifacts import motion_application_metadata
-                if expected_kind != "motions":
-                    raise ValueError("Schema 6 is motion-only.")
-                motion_application_metadata(meta.get("application_metadata"))
+                from .profile_artifacts import summary_application_metadata
+                summary_application_metadata(meta.get("application_metadata"), expected_kind)
             if (isinstance(meta, dict)
                     and meta.get("artifact") == "recordprep-summary-final-meta"
                     and type(meta.get("schema_version")) is int
