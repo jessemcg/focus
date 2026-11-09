@@ -12,12 +12,6 @@ for AI questions.
 - Ask AI questions, follow up, and jump from quoted text back to the source.
 - Save answers with each case for later reference.
 
-## Motions and summaries
-
-[Motions and usable-summary controls](docs/motions.md) describe the distinct rose
-category, empty-group filtering, wrapping controls and content-aware summary buttons.
-Focus remains profile-free and reads existing RecordPrep bundles without migration.
-
 ## Install
 
 Focus is intentionally distributed as source rather than a Flatpak or Debian package
