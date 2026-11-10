@@ -1,7 +1,8 @@
 # Procedural filings display compatibility
 
 Focus displays the former Form category as **Procedural filing**, and shows both
-saved `Forms` and `Procedural filings` TOC headings as **Procedural filings**.
+saved `Forms` and `Procedural filings` TOC headings as **PROC. FILINGS**.
+Only the sidebar heading is abbreviated; other descriptive text remains spelled out.
 Heading recognition is case-insensitive with surrounding whitespace ignored.
 Both aliases keep the existing purple category and first sidebar position.
 
@@ -20,7 +21,7 @@ reclassify historical CT_form pages based on a document title. Regenerate those
 classifications in RecordPrep when desired; a display rename does not adopt new
 classification semantics. Shared schema files remain byte-identical with RecordPrep.
 
-## Validation
+## Original terminology-change validation (before heading abbreviation)
 
 Isolated source/environment and synthetic HOME/XDG under
 `/tmp/focus-procedural-validation`; no providers or real cases:

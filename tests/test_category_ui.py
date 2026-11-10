@@ -93,7 +93,7 @@ def test_async_toc_guards_and_appearance_only(tmp_path):
 def test_procedural_display_preserves_titles_keys_and_bookmarks(heading):
     section = TocCategory(heading, 7, [TocBookmark('Forms', 12)])
     item = FocusSidebarItem.from_category(section, {12: Classification(C.MOTION)})
-    assert item.display_title == 'Procedural filings'
+    assert item.display_title == 'PROC. FILINGS'
     assert item.title == section.title == heading
     assert item.page == 7 and item.document_category == C.FORM
     assert Focus._sidebar_item_key(None, item) == f'{heading}::7'

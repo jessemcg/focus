@@ -48,16 +48,19 @@ def check():
         store = application._toc_sidebar_root_store
         assert store.get_n_items() == 2
         first = store.get_item(0)
-        assert first.title == 'FORMS' and first.display_title == 'Procedural filings'
+        assert first.title == 'FORMS' and first.display_title == 'PROC. FILINGS'
         assert first.document_category == Category.FORM
         assert application._sidebar_item_key(first) == 'FORMS::'
         labels = [w.get_text() for w in descendants(window) if isinstance(w, core.Gtk.Label)]
-        assert 'Procedural filings' in labels and 'FORMS' not in labels
+        assert 'PROC. FILINGS' in labels and 'FORMS' not in labels
+        heading = next(w for w in descendants(window)
+                       if isinstance(w, core.Gtk.Label) and w.get_text() == 'PROC. FILINGS')
+        assert heading.get_layout().get_line_count() == 1
         assert application._category_index[1].caption == 'Procedural filing · CT'
         assert application._category_index[2].caption == application._category_index[3].caption == 'Motion · CT'
         # Rebind from current spelling in memory, without touching canonical TOC.
         application._update_toc_from_text('Procedural filings\n    Address notification 1\nMOTIONS\n    Request and supporting declaration 2\n')
-        assert store.get_item(0).display_title == 'Procedural filings'
+        assert store.get_item(0).display_title == 'PROC. FILINGS'
         assert store.get_item(0).document_category == Category.FORM
         assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in bundle.rglob('*') if p.is_file()}
     except Exception as exc:

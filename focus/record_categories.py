@@ -81,7 +81,7 @@ def heading_category(title: object) -> Category:
 
 def display_heading(title: str) -> str:
     """Translate only known headings; never rename source documents or stored keys."""
-    return "Procedural filings" if heading_category(title) == Category.FORM else title
+    return "PROC. FILINGS" if heading_category(title) == Category.FORM else title
 
 
 @dataclass(frozen=True)

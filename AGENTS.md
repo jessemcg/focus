@@ -3,7 +3,7 @@
 ## Procedural filings display
 
 Display Form as Procedural filing; recognize both Forms and Procedural filings TOC
-headings and render both as Procedural filings. Keep literal parsed/sidebar titles
+headings and render both as PROC. FILINGS (sidebar heading only). Keep literal parsed/sidebar titles
 for expansion keys, bookmark titles, serialized form/CT_form IDs and bundle files.
 Never reclassify old requests from their titles; explicit CT_motion metadata governs
 new standardized requests. Shared schemas and research instructions are unchanged.
