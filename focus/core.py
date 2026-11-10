@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
-from .record_categories import Category, Classification, PALETTE, heading_category
+from .record_categories import Category, Classification, PALETTE, heading_category, display_heading
 
 import gi
 from markdown_it import MarkdownIt
@@ -1506,6 +1506,11 @@ class FocusSidebarItem(GObject.GObject):
             for child in children:
                 store.append(child)
             self._children_store = store
+
+    @property
+    def display_title(self) -> str:
+        # Keep literal title for expansion keys and canonical TOC identity.
+        return display_heading(self.title) if self.kind == "category" else self.title
 
     def get_children_model(self) -> Gio.ListModel | None:
         return self._children_store

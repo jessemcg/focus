@@ -1,5 +1,14 @@
 # Repository Guidelines
 
+## Procedural filings display
+
+Display Form as Procedural filing; recognize both Forms and Procedural filings TOC
+headings and render both as Procedural filings. Keep literal parsed/sidebar titles
+for expansion keys, bookmark titles, serialized form/CT_form IDs and bundle files.
+Never reclassify old requests from their titles; explicit CT_motion metadata governs
+new standardized requests. Shared schemas and research instructions are unchanged.
+See docs/procedural-filings.md and tests/acceptance_procedural_filings.py.
+
 ## Application-owned hearing topics (current)
 
 Accept RecordPrep schema14/profile API1, which omits hearings; historical schemas1–13
@@ -149,7 +158,7 @@ authorized. Older releases may not read schema-3 saved answers; never down-conve
 
 ## Project Structure & Module Organization
 - `focus/`: Python package for the Libadwaita GTK4 app and helper CLIs.
-- `focus/app.py`: main `Focus` application class; owns transcript browsing, the always-visible TOC sidebar (Forms first, then Hearings/Reports/Minute Orders to match the Case Tools strip), the always-visible Case Tools panel, dual-view state, image view, grep, summary browsing, and embedded Agent orchestration.
+- `focus/app.py`: main `Focus` application class; owns transcript browsing, the always-visible TOC sidebar (Procedural filings first, then Hearings/Reports/Motions/Minute Orders to match the Case Tools strip), the always-visible Case Tools panel, dual-view state, image view, grep, summary browsing, and embedded Agent orchestration.
 - `focus/core.py`: shared constants, dataclasses, config helpers, record layout/index parsing, summary discovery, citation formatting, and markdown/link rendering. Minute-only exact line prefixes Appearances: / Orders: / Next: use the summary-emphasis tag in continuous and structured edition views, with the same theme-aware foreground, medium weight and normal scale as direct quotations, but not their quote/phrase links. Summary Emphasis Color is retired: ignore historical values without rewriting private settings. Current minute entries keep adjacent date/field lines and one blank line between entries, using the same display/search offset mapping. Preserve text, offsets, other summary kinds and edition schemas; see docs/minute-labels.md.
 - `focus/pi_runtime.py`: PI runtime integration for authenticated model discovery and atomic updates to the project-local PI provider/model setting.
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.

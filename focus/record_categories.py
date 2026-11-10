@@ -29,7 +29,7 @@ PALETTE = {
     Category.FORM: ("#78618F", "#B6A1CD"),
 }
 LABELS = {Category.HEARING: "Hearing", Category.REPORT: "Report", Category.MOTION: "Motion",
-          Category.MINUTE_ORDER: "Minute order", Category.FORM: "Form"}
+          Category.MINUTE_ORDER: "Minute order", Category.FORM: "Procedural filing"}
 PAGE_TYPES = {
     "rt_body": Category.HEARING, "rt_body_first_page": Category.HEARING,
     "ct_report": Category.REPORT, "ct_report_first_page": Category.REPORT,
@@ -39,9 +39,10 @@ PAGE_TYPES = {
     "ct_form": Category.FORM, "ct_form_first_page": Category.FORM,
 }
 HEADINGS = {"hearings": Category.HEARING, "reports": Category.REPORT, "motions": Category.MOTION,
-            "minute orders": Category.MINUTE_ORDER, "forms": Category.FORM}
+            "minute orders": Category.MINUTE_ORDER, "forms": Category.FORM,
+            "procedural filings": Category.FORM}
 
-# Sidebar display order: Forms stays on top, then the record categories in the
+# Sidebar display order: Procedural filings stays on top, then the record categories in the
 # same order as the Case Tools summary strip.
 SIDEBAR_CATEGORY_ORDER = {
     Category.FORM: 0,
@@ -76,6 +77,11 @@ def positive_page(value: object) -> int | None:
 
 def heading_category(title: object) -> Category:
     return HEADINGS.get(normalize(title), Category.UNKNOWN)
+
+
+def display_heading(title: str) -> str:
+    """Translate only known headings; never rename source documents or stored keys."""
+    return "Procedural filings" if heading_category(title) == Category.FORM else title
 
 
 @dataclass(frozen=True)

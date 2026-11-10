@@ -33,12 +33,13 @@ search original physical source pages. No repagination, research-policy or rende
 layout change is required.
 
 `MOTIONS`, `CT_motion`, `CT_motion_first_page`, motion boundaries and source-map motion
-documents map to Motion, distinct from Form/Report. Light rose is **#A04F5F**, adjusted
+documents map to Motion, distinct from Procedural filing/Report. Standardized substantive
+requests use these same motion identifiers; see [Procedural filings](procedural-filings.md). Light rose is **#A04F5F**, adjusted
 from the proposed #A04454 to satisfy the existing colored-background contrast contract;
 dark rose is **#E39AA8**. Category treatments otherwise preserve the established
 selection, image/text and theme behavior.
 
-Sidebar presentation is Forms → Hearings → Reports → Motions → Minute Orders, then
+Sidebar presentation is Procedural filings → Hearings → Reports → Motions → Minute Orders, then
 custom groups. Hide known **and custom** groups only when they have neither a bookmark
 nor their own page. Preserve the canonical parsed TOC, bookmark order, own-page groups
 and expansion state across reloads. This is presentation, not a rewrite of `toc.txt`.

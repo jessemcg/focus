@@ -2326,7 +2326,7 @@ class Focus(Adw.Application):
         if depth == 0:
             row_box.add_css_class("focus-sidebar-top-level")
         self._set_category_class(row_box, Classification(item.document_category))
-        title_label.set_text(item.title)
+        title_label.set_text(item.display_title)
         self._update_sidebar_row_expand_widgets(list_row, tree_row)
         self._update_sidebar_row_active_state(list_row)
 

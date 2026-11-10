@@ -6,7 +6,7 @@ import pytest
 from focus.core import TocBookmark, TocCategory, _resolve_record_layout, load_record_boundaries
 from focus.record_categories import (
     Category as C, Classification, PALETTE, load_category_index, parse_ranges,
-    positive_page, with_toc_fallback,
+    positive_page, with_toc_fallback, heading_category, sidebar_category_rank,
 )
 
 
@@ -27,6 +27,7 @@ def put(path, value):
     ("CT_report", C.REPORT), ("CT_report_first_page", C.REPORT), ("CT_minute_order", C.MINUTE_ORDER),
     ("CT_minute_order_first_page", C.MINUTE_ORDER),
     ("CT_form", C.FORM), ("CT_form_first_page", C.FORM),
+    ("CT_motion", C.MOTION), ("CT_motion_first_page", C.MOTION),
 ])
 def test_explicit_unnumbered_file_page(bundle, token, category):
     put(bundle.transcript_page_numbers_path, {"entries": [
@@ -53,6 +54,36 @@ def test_report_first_page_uses_existing_report_category_without_false_conflict(
     assert all(index[page].category==C.REPORT and index[page].status=='classified' for page in (1,2))
     assert index[1].caption=='Report · CT'
     assert before=={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before}
+
+
+@pytest.mark.parametrize('heading', ['Forms', ' FORMS ', 'Procedural filings', ' PROCEDURAL FILINGS '])
+def test_procedural_heading_aliases_and_read_only_fallback(bundle, heading):
+    toc = [TocCategory(heading, None, [TocBookmark('Address notification', 1)])]
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in bundle.root.rglob('*') if p.is_file()}
+    result = load_category_index(bundle, [1], toc)
+    assert heading_category(heading) == C.FORM
+    assert sidebar_category_rank(heading) == 0
+    assert result[1].category == C.FORM
+    assert result[1].caption == 'Procedural filing'
+    assert toc[0].title == heading
+    assert before == {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in bundle.root.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('source', ['transcript', 'source_map'])
+def test_standardized_motion_is_not_reclassified_by_old_forms_heading(bundle, source):
+    rows = [{'file_page': 1, 'page_type': 'CT_motion_first_page', 'record_type': 'CT'},
+            {'file_page': 2, 'page_type': 'CT_motion', 'record_type': 'CT'},
+            {'file_page': 3, 'page_type': 'CT_form_first_page', 'record_type': 'CT'}]
+    path, key = (bundle.transcript_page_numbers_path, 'entries') if source == 'transcript' else (bundle.source_map_path, 'pages')
+    put(path, {key: rows})
+    before = (path.read_bytes(), path.stat().st_mtime_ns)
+    toc = [TocCategory('Forms', None, [TocBookmark('Request to Change Court Order', 1),
+                                     TocBookmark('Historical request', 3)])]
+    index = load_category_index(bundle, [1, 2, 3], toc)
+    assert index[1].caption == index[2].caption == 'Motion · CT'
+    # A historical request still classified CT_form is NOT reclassified by its title.
+    assert index[3].caption == 'Procedural filing · CT'
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
 
 
 def test_precedence_explicit_neutral_and_no_form_extension(bundle):

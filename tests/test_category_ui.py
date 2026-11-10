@@ -89,6 +89,21 @@ def test_async_toc_guards_and_appearance_only(tmp_path):
     assert app.current_index == 4
 
 
+@pytest.mark.parametrize('heading', ['Forms', 'FORMS', 'Procedural filings', ' PROCEDURAL FILINGS '])
+def test_procedural_display_preserves_titles_keys_and_bookmarks(heading):
+    section = TocCategory(heading, 7, [TocBookmark('Forms', 12)])
+    item = FocusSidebarItem.from_category(section, {12: Classification(C.MOTION)})
+    assert item.display_title == 'Procedural filings'
+    assert item.title == section.title == heading
+    assert item.page == 7 and item.document_category == C.FORM
+    assert Focus._sidebar_item_key(None, item) == f'{heading}::7'
+    child = item.get_children_model().get_item(0)
+    assert child.title == child.display_title == 'Forms'
+    assert child.page == 12 and child.document_category == C.MOTION
+    custom = FocusSidebarItem.from_category(TocCategory('Custom Forms', 8, []))
+    assert custom.display_title == 'Custom Forms'
+
+
 def test_sidebar_kind_independent_of_document_category():
     section = TocCategory(" REPORTS ", None, [TocBookmark("really a form", 12)])
     item = FocusSidebarItem.from_category(section, {12: Classification(C.FORM)})
