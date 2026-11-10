@@ -10,17 +10,24 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--bundle', type=Path, required=True)
 args = parser.parse_args()
-bundle = args.bundle.resolve()
-if (not bundle.is_relative_to(Path(tempfile.gettempdir()).resolve()) or
-        (bundle / '.motion-acceptance-fixture').read_text() != 'synthetic-disposable-motion-fixture-v1\n'):
+producer_bundle = args.bundle.resolve()
+if (not producer_bundle.is_relative_to(Path(tempfile.gettempdir()).resolve()) or
+        (producer_bundle / '.motion-acceptance-fixture').read_text() != 'synthetic-disposable-motion-fixture-v1\n'):
     raise SystemExit('Requires the disposable RecordPrep motion acceptance fixture, never a real case.')
+producer_before = {str(p.relative_to(producer_bundle)): (p.read_bytes(), p.stat().st_mtime_ns)
+                   for p in producer_bundle.rglob('*') if p.is_file()}
 root = Path(tempfile.mkdtemp(prefix='focus-motions-acceptance-'))
+# Availability/layout exercises intentionally populate other synthetic modes.
+# Keep those writes private so repeated consumers do not contaminate the producer.
+bundle = root / 'synthetic'
+shutil.copytree(producer_bundle, bundle)
 for name in ('HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME'):
     path = root / name.lower(); path.mkdir(mode=0o700); os.environ[name] = str(path)
 os.environ['GSETTINGS_BACKEND'] = 'memory'
@@ -154,6 +161,9 @@ def wide_capture():
 
 
 def complete():
+    producer_after = {str(p.relative_to(producer_bundle)): (p.read_bytes(), p.stat().st_mtime_ns)
+                      for p in producer_bundle.rglob('*') if p.is_file()}
+    require(producer_after == producer_before, 'producer bundle unchanged')
     (root / 'result.json').write_text(json.dumps({'failures': failures, 'bundle': str(bundle)}))
     print(json.dumps({'status': 'PASS' if not failures else 'FAIL', 'root': str(root), 'failures': failures}), flush=True)
     hold = int(os.environ.get('FOCUS_MOTIONS_HOLD_MS', '0'))

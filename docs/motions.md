@@ -20,13 +20,28 @@ naming remain profile-owned in RecordPrep; none supplies Focus research instruct
 Optional validated `motion_groups` describe logical entries over unchanged physical
 `documents`. They retain exact member spans, source titles, roles and lead anchors;
 source-map aliases and per-page `motion_entries` provide navigation context, never
-instructions or authoritative findings. A motion, opposition and reply remain separate
-entries, each with its own explicitly linked support. Support can precede the lead or
-be nonadjacent. Physical `counts.motions` and logical `counts.motion_entries` are
-separate. Missing grouping preserves historical singleton browsing without migration.
+instructions or authoritative findings. New grouping schema **2** /
+`recordprep-motion-organization-2` is deterministic classification continuity: from a
+named explicit lead, every following adjacent motion page shares one entry until a
+non-motion page or missing classification interrupts it. Independent motions,
+oppositions, replies, parties, dates and titles do not split that run. Unnamed internal
+components keep empty source titles; only the lead must be named. The first component
+owns the entry ID/anchor/title/date, including unknown dates. Neutral `motion packet`
+metadata and `lead`/`continuation` roles make no finding of substantive support.
 
-Concise labels identify the filing/request, such as **Motion to compel police records**;
-the party belongs in metadata/narrative. New motion final metadata schema **6** supports
+Schema **1** retains its historical legal-relationship semantics, nonadjacent support,
+support preceding the lead, historical names/dates and saved coverage statuses. New
+maximal-continuity restrictions never apply to those artifacts. Unknown version/contract
+pairs fail closed. Physical `counts.motions` and logical `counts.motion_entries` stay
+separate; schema-2 map validation checks exact physical documents, aliases, page membership
+and both counts against its inventory. No source-map schema or research method changes.
+Missing grouping preserves historical named-singleton browsing without migration.
+
+New packet labels use the lead's recorded source title, even if an independent or
+opposing filing follows it. One summary section explains all included requests and
+reasons with party attribution and distinct positions; grouping does not imply support.
+“Complete” in new grouping means selected-inventory accounting, not legal relationship
+review or inclusion of every motion fragment. Historical labels stay literal. New motion final metadata schema **6** supports
 both nonempty and checked-zero summaries. Fixed-layout PDF editions carry heading links
 to the lead anchor, not the lowest member page; supporting-paper quotations still
 search original physical source pages. No repagination, research-policy or renderer

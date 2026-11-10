@@ -22,6 +22,19 @@ including honestly empty output. Mirror both shared contract/artifact files exac
 No research/prompt/profile-management changes, migration or private rewrites. This
 supersedes older schema13 maximum and motion-only meta6 statements below.
 
+## Deterministic motion-packet reader compatibility
+
+Grouping schema2 / recordprep-motion-organization-2 is descriptive Python-enforced
+classification continuity, not a legal relationship finding. Validate neutral motion
+packet role, exact adjacent/maximal membership, first-component ID/title/date ownership,
+lead/continuation roles, unnamed nonlead source titles, physical map aliases/pages/counts.
+Schema1 retains historical nonadjacent/pre-lead support, names/dates and coverage statuses;
+never apply new packet restrictions to it or migrate artifacts on read. Mirror shared
+profile_artifacts.py byte-for-byte; profile_contract.py is unchanged. No research-method,
+profile, UI, source-map-schema or launcher changes. No private/bundle writes. Only explicit
+RecordPrep organization adopts the new policy; older readers cannot consume schema2.
+See docs/motions.md and tests/acceptance_motion_packets.py. Preserve untracked .pi/.
+
 ## Motions and summary availability (current)
 
 Read docs/motions.md. Focus stays profile-free and reader-only; accept RecordPrep
