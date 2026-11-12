@@ -6,12 +6,153 @@ Keep the vendored copies byte-identical. No filesystem access or acceptance here
 from __future__ import annotations
 
 from bisect import bisect_right
+import hashlib
+import json
+import re
 from dataclasses import asdict
 from pathlib import PurePosixPath
 from typing import Any
 
 from .profile_contract import DIGEST, STAGE_RESOURCES, ProfileError, ProfileRef, ProfileSnapshot
 from .profile_contract import _identifier, _object, _require, _text
+
+# Topic quotation contracts are instruction-free and independent of profile schema.
+QUOTE_MATCH_POLICY = "recordprep-topic-quotes-1"
+QUOTE_WORD_POLICY = "recordprep-whitespace-words-1"
+QUOTE_NAVIGATION_CONTRACT = "recordprep-quote-destinations-1"
+QUOTE_EDITORIAL_CONTRACT = "recordprep-quote-editorial-1"
+_QUOTE_LIGATURES = dict(zip("ﬀﬁﬂﬃﬄﬅﬆ", ("ff", "fi", "fl", "ffi", "ffl", "st", "st")))
+_QUOTE_BREAK_HYPHEN = re.compile(r"(?<=[^\W\d_])[-\u00ad][ \t]*\r?\n[ \t]*(?=[^\W\d_])")
+QUOTE_NAVIGATION_FIELDS = (
+    "schema_version", "editorial_contract", "navigation_contract", "final_text_sha256",
+    "note_hashes", "source_identities", "editorial_sections", "quote_occurrences",
+)
+
+
+def quotation_case_character(char: str) -> str:
+    lower = char.lower()
+    return lower if len(lower) == 1 and len(char.upper()) == 1 else char
+
+
+def quotation_layout(text: str, *, case_sensitive: bool = False) -> tuple[str, tuple[int, ...], tuple[int, ...]]:
+    """Policy-1 layout spelling plus original Unicode-codepoint offset map.
+
+    Expand only listed compatibility ligatures; remove soft hyphens; collapse
+    whitespace. Remove a hyphen and physical LF/CRLF only between letters, with
+    optional horizontal indentation, not a space or blank-line break. Do not
+    normalize punctuation, other controls, full-width forms or Unicode case
+    expansions. Every consumer uses this same instruction-free policy.
+    """
+    omitted = {i for m in _QUOTE_BREAK_HYPHEN.finditer(text) for i in range(m.start(), m.end())}
+    chars, starts, ends = [], [], []
+    for index, char in enumerate(text):
+        if index in omitted or char == "\u00ad":
+            continue
+        if char.isspace():
+            if chars and chars[-1] == " ":
+                ends[-1] = index + 1
+            else:
+                chars.append(" "); starts.append(index); ends.append(index + 1)
+            continue
+        for expanded in _QUOTE_LIGATURES.get(char, char):
+            chars.append(expanded if case_sensitive else quotation_case_character(expanded))
+            starts.append(index); ends.append(index + 1)
+    return "".join(chars), tuple(starts), tuple(ends)
+
+
+def quotation_navigation_hash(value: dict) -> str:
+    payload = {k: value[k] for k in QUOTE_NAVIGATION_FIELDS}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=True,
+                                    separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def validate_quotation_destination(occurrence: dict, source_bytes: bytes) -> None:
+    """Validate a selected source span, never search/choose an occurrence."""
+    try:
+        anchor = occurrence["anchor"]
+        if occurrence["status"] != "anchored" or not isinstance(anchor, dict):
+            raise ValueError("Quotation has no verified destination.")
+        number, start, end = (anchor[k] for k in ("file_page", "source_start", "source_end"))
+        text = source_bytes.decode("utf-8")
+        if (set(anchor) != {"file_page", "path", "sha256", "source_start", "source_end"}
+                or type(number) is not int or number < 1 or anchor["path"] != f"text_pages/{number:04d}.txt"
+                or anchor["sha256"] != hashlib.sha256(source_bytes).hexdigest()
+                or type(start) is not int or type(end) is not int or not 0 <= start < end <= len(text)
+                or text[start:end] != occurrence["source_text"]
+                or not isinstance(occurrence["display_text"], str) or not occurrence["display_text"].strip()
+                or quotation_layout(text[start:end])[0] != quotation_layout(occurrence["display_text"])[0]):
+            raise ValueError("Quotation destination is stale or invalid.")
+    except (KeyError, TypeError, AttributeError, UnicodeError) as exc:
+        raise ValueError("Malformed quotation destination.") from exc
+
+
+def validate_summary_navigation_metadata(value: Any, final_text: str) -> dict:
+    """Validate metadata-7 structure/integrity, without files/profile lookup.
+
+    A successful structural validation is not source validation. Readers must
+    separately validate each destination's exact bytes and permitted source id.
+    Unsupported/malformed new contracts must never enable historical guessing.
+    """
+    try:
+        if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
+                or value["schema_version"] != 7 or value.get("editorial_contract") != QUOTE_EDITORIAL_CONTRACT
+                or value.get("navigation_contract") != QUOTE_NAVIGATION_CONTRACT
+                or value.get("final_text_sha256") != hashlib.sha256(final_text.encode("utf-8")).hexdigest()
+                or value.get("navigation_sha256") != quotation_navigation_hash(value)):
+            raise ValueError("Navigation metadata/text integrity mismatch.")
+        hashes, sources, sections = value["note_hashes"], value["source_identities"], value["editorial_sections"]
+        if (not isinstance(hashes, dict) or not isinstance(sources, dict) or set(hashes) != set(sources)
+                or not isinstance(sections, list) or len(sections) != len(hashes)
+                or {s["item_id"] for s in sections} != set(hashes)
+                or any(not isinstance(k, str) or not isinstance(v, str) or DIGEST.fullmatch(v) is None for k, v in hashes.items())):
+            raise ValueError("Invalid editorial note bindings.")
+        for section in sections:
+            if section["note_sha256"] != hashes[section["item_id"]] or not isinstance(section["paragraphs"], list):
+                raise ValueError("Invalid editorial section.")
+        for identities in sources.values():
+            if not isinstance(identities, list):
+                raise ValueError("Invalid source identities.")
+            numbers = []
+            for identity in identities:
+                number = identity["file_page"]
+                if (set(identity) != {"file_page", "path", "sha256"} or type(number) is not int or number < 1
+                        or identity["path"] != f"text_pages/{number:04d}.txt"
+                        or not isinstance(identity["sha256"], str) or DIGEST.fullmatch(identity["sha256"]) is None):
+                    raise ValueError("Invalid source identity.")
+                numbers.append(number)
+            if numbers != sorted(set(numbers)):
+                raise ValueError("Invalid source identity order.")
+        if not isinstance(value["quote_occurrences"], list):
+            raise ValueError("Invalid quotation occurrence ledger.")
+        previous, seen = 0, set()
+        for occurrence in value["quote_occurrences"]:
+            start, end, item = occurrence["start"], occurrence["end"], occurrence["item_id"]
+            if (type(start) is not int or type(end) is not int or not previous <= start < end <= len(final_text)
+                    or occurrence["display_text"] != final_text[start:end] or item not in hashes
+                    or occurrence["note_sha256"] != hashes[item]
+                    or not isinstance(occurrence["quote_id"], str) or not occurrence["quote_id"].startswith(item + "/")
+                    or not isinstance(occurrence["occurrence_id"], str) or not occurrence["occurrence_id"].startswith(item + "/occurrence/")
+                    or occurrence["occurrence_id"] in seen or occurrence["word_policy"] != QUOTE_WORD_POLICY
+                    or any(type(occurrence[k]) is not int or occurrence[k] < 0 for k in ("trim_start_words", "trim_end_words"))
+                    or occurrence["initial_case"] not in {"preserve", "lower", "upper"}):
+                raise ValueError("Invalid quotation occurrence.")
+            previous = end
+            seen.add(occurrence["occurrence_id"])
+            if occurrence["status"] == "anchored":
+                anchor = occurrence["anchor"]
+                if (not isinstance(anchor, dict) or set(anchor) != {"file_page", "path", "sha256", "source_start", "source_end"}
+                        or {k: anchor[k] for k in ("file_page", "path", "sha256")} not in sources[item]
+                        or type(anchor["source_start"]) is not int or type(anchor["source_end"]) is not int
+                        or not 0 <= anchor["source_start"] < anchor["source_end"]
+                        or not isinstance(occurrence["source_text"], str)):
+                    raise ValueError("Invalid quotation anchor.")
+            elif (occurrence["status"] not in {"unmatched", "ambiguous"}
+                  or occurrence["anchor"] is not None or occurrence["source_text"] is not None):
+                raise ValueError("Invalid unverified quotation.")
+        return value
+    except (KeyError, TypeError, AttributeError, OverflowError) as exc:
+        raise ValueError("Malformed new-contract navigation metadata.") from exc
+
 
 PARTICIPANT_TEMPLATE_WARNING = "Participant review has not been completed."
 LEGACY_COUNSEL_ROLES = (

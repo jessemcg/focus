@@ -27,6 +27,7 @@ def test_labels_match_real_quote_tags_and_refresh_without_replacing_text():
         _summary_buffer=buffer, _summary_view=view, _summary_scroller=None,
         _summary_active_source=core.SUMMARY_SOURCE_MINUTES, _summary_loaded_path=None,
         _summary_link_tags=[], _summary_link_tag_lookup={}, _ai_outputs={},
+        _quotation_navigation_for_current=lambda:None,
         _rgba_luminance=Focus._rgba_luminance,
         _recolor_link_tags=Focus._recolor_link_tags,
     )

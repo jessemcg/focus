@@ -137,7 +137,7 @@ def inspect_summary(path: Path | None, source: str, *, case_name: str = "") -> S
         return SummaryAvailability(path, "missing")
     except (OSError, UnicodeError):
         return SummaryAvailability(path, "unreadable", ("summary_unreadable",))
-    if "recordprep:digest-" in text:
+    if 'recordprep:digest-' in text or '<!-- recordprep-topic-notes ' in text:
         return SummaryAvailability(path, "intermediate", ("digest_not_final",))
     diagnostics = []
     meta_path = path.with_suffix(".meta.json")
@@ -145,13 +145,16 @@ def inspect_summary(path: Path | None, source: str, *, case_name: str = "") -> S
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             expected_kind = "hearings" if source == "hearing" else source
+            if isinstance(meta, dict) and meta.get('schema_version') == 7:
+                from .profile_artifacts import validate_summary_navigation_metadata
+                validate_summary_navigation_metadata(meta, text)
             if isinstance(meta, dict) and meta.get("schema_version") == 6:
                 from .profile_artifacts import summary_application_metadata
                 summary_application_metadata(meta.get("application_metadata"), expected_kind)
             if (isinstance(meta, dict)
                     and meta.get("artifact") == "recordprep-summary-final-meta"
                     and type(meta.get("schema_version")) is int
-                    and meta["schema_version"] in (3, 4, 5, 6)
+                    and meta["schema_version"] in (3, 4, 5, 6, 7)
                     and meta.get("kind") == expected_kind
                     and meta.get("final_text_sha256") == hashlib.sha256(data).hexdigest()
                     and isinstance(meta.get("item_ids"), list)

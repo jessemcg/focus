@@ -9,6 +9,39 @@ writer exclusion and sync-conflict checks. Explicit saves still publish 0600;
 machine-local recovery state retains its separate private-storage policy.
 Test only synthetic files; never rewrite private settings for validation.
 
+## Pipe-tolerant phrase search
+
+Find and historical phrase-link search normalize ASCII `|` to a space in both
+query and source search copies. Preserve raw text and normalized-to-original
+highlight offsets. Keep this rule aligned with RecordPrep quote_search.py
+(`focus-phrase-search-2`); no runtime sibling dependency. Do not change exact
+occurrence-ledger navigation or repair private bundles. See docs/pipe-search.md.
+
+## Exact topic-summary quotation navigation (retained compatibility)
+
+RecordPrep's topic-note producer redesign was rolled back to `63f9e13`; its current
+pipeline uses digest quote banks and Focus-style record-wide phrase verification.
+The reader support below remains for compatible saved/new-format artifacts, not
+as a statement that the current producer generates them. Older mirroring claims
+below describe the prior coordinated implementation; do not restore discarded
+RecordPrep code merely to make those claims true.
+
+Read docs/quote-navigation-foundation.md. New RecordPrep row5 / Markdown4 / final-meta7
+and edition-map3 summaries use a hash-bound occurrence ledger in both continuous and
+paginated views. Validate final TXT, metadata, permitted physical inventory and raw
+source bytes/codepoint spans; revalidate again on activation, then map exact source
+ranges through newline/reading presentation. Never phrase-search a new-contract quote,
+choose an implicit repeated occurrence or downgrade damaged/missing new metadata to
+historical navigation. Unresolved/stale quotes stay readable with disabled links and
+an accessible warning; they require no repair/approval and do not block preparation.
+Schema3 fragments retain one occurrence ID across PDF pages; unchanged Letter-v3 layout.
+A stale edition may use valid continuous ledger rendering, never legacy phrase maps.
+Historical schemas retain recorded semantics; no read-time conversion or case writes.
+Mirror profile_artifacts.py and quote_projection.py exactly with RecordPrep;
+profile_contract.py/schema14/API1 and research/citation/settings contracts are unchanged.
+Source delivery is not a running-process upgrade: restart compatible Focus before
+explicitly generating/opening new-format summaries. No automatic bundle regeneration.
+
 ## Procedural filings display
 
 Display Form as Procedural filing; recognize both Forms and Procedural filings TOC
@@ -22,7 +55,7 @@ See docs/procedural-filings.md and tests/acceptance_procedural_filings.py.
 
 Accept RecordPrep schema14/profile API1, which omits hearings; historical schemas1–13
 remain readable without writes. Report topics and report/form naming remain
-profile-owned in RecordPrep. Application hearing metadata uses existing row4 /
+profile-owned in RecordPrep. Historical application hearing metadata uses row4 /
 Markdown3 / final-meta6 with `recordprep-hearing-topics-1`, neutral Appearances title,
 and the stable serialized `parent_appearances` ID. Validate its fixed instruction-free
 descriptors with summary_application_metadata; historical artifacts retain their
@@ -49,9 +82,9 @@ See docs/motions.md and tests/acceptance_motion_packets.py. Preserve untracked .
 Read docs/motions.md. Focus stays profile-free and reader-only; accept RecordPrep
 schema 13/profile API 1 plus historical schemas 1–12/naming 1–5 without writes.
 Schema 13 omits/rejects motion_naming and motions; schema 12 retains historical
-motion_naming only. No historical motion naming resource is compiled; new motion final
-metadata6 includes fixed Request/Reasons application descriptors, including checked
-zero output. Optional validated logical groups/aliases preserve physical documents,
+motion_naming only. No historical motion naming resource is compiled; historical motion
+final metadata6 includes fixed Request/Reasons application descriptors, including checked
+zero output. Current metadata7 retains those descriptors and exact packet ownership. Optional validated logical groups/aliases preserve physical documents,
 exact member spans and lead anchors; preparation context never supplies research
 instructions. Edition heading/quote links remain physical-source navigation.
 Mirror BOTH profile_contract.py and profile_artifacts.py byte-for-byte. Motion is a
@@ -117,9 +150,9 @@ Never create a Dropbox .venv or use production environments for disposable tests
 
 See `docs/research-method.md` and `docs/research-method-validation.md`. Every new
 Q&A uses application-owned focus-record-qa v1, with no profile/store/selection
-argument, confirmation or advanced option. Only `profile_contract.py` and
-`profile_artifacts.py` remain vendored byte-identically with RecordPrep for historical
-compatibility/validation. No UI/store/workflow parity requirement remains. Never
+argument, confirmation or advanced option. The instruction-free `profile_contract.py`,
+`profile_artifacts.py` and quotation `quote_projection.py` remain byte-identical with
+RecordPrep for compatibility/validation; none supplies research instructions. No UI/store/workflow parity requirement remains. Never
 import sibling code or instructions at runtime; preparation provenance is descriptive.
 
 `research_runtime.py` compiles and privately stages canonical application resources,
@@ -186,7 +219,7 @@ authorized. Older releases may not read schema-3 saved answers; never down-conve
 - `focus/cli.py`: `focus` console command. Keep GUI/helper launch behavior routed through this module instead of adding root entry scripts.
 - `focus/current_case.py`: updates project-root `config.json` from the shared currently selected case file.
 - `focus/agent_helper.py`: read-only compact research context, source-map lookup, targeted map inspection, and database-free per-query diversified lexical search with explicit-query-date proximity and specialty-neutral lexical ranking used by embedded PI Agent sessions.
-- `focus/summary_editions.py`: strict page-map loader and page renderer for RecordPrep's page-matched summary editions; accepts every supported RecordPrep schema/layout pairing (schema v1 with current v2 or legacy v1 Letter editions, schema v2 with the v3 Letter edition that records bold quoted-phrase spans) and validates sidecars as a unit (hashes, paths, link and quote spans) without repaginating or parsing the PDF layout, exposing the loaded `layout_id` and `schema_version` for migration and state decisions. Paginated display text applies a paragraph-spacing transformation (normally one empty line per block; new minute fields stay adjacent with only one blank line between entries, never at page edges or across paper-page boundaries) for display and paginated search only; stored sidecar text, link offsets, and legacy continuous summaries are unchanged. Schema v2 editions additionally expose a structured paginated display representation (literal text plus validated bold/phrase and page-link spans remapped through the paragraph-spacing transformation, with page-link syntax reinserted only for the legacy entry-emphasis patterns); legacy editions keep the established link-synthesis pipeline.
+- `focus/summary_editions.py`: strict page-map loader and page renderer for RecordPrep's page-matched summary editions; accepts every supported RecordPrep schema/layout pairing (schema v1 with current v2 or legacy v1 Letter editions, schema v2 with the v3 Letter edition that records bold quoted-phrase spans, and schema v3 with the unchanged v3 Letter layout and exact occurrence fragments) and validates sidecars as a unit (hashes, paths, link and quote spans) without repaginating or parsing the PDF layout, exposing the loaded `layout_id` and `schema_version` for migration and state decisions. Paginated display text applies a paragraph-spacing transformation (normally one empty line per block; new minute fields stay adjacent with only one blank line between entries, never at page edges or across paper-page boundaries) for display and paginated search only; stored sidecar text, link offsets, and legacy continuous summaries are unchanged. Schema v2 editions additionally expose a structured paginated display representation (literal text plus validated bold/phrase and page-link spans remapped through the paragraph-spacing transformation, with page-link syntax reinserted only for the legacy entry-emphasis patterns); legacy editions keep the established link-synthesis pipeline.
 - `focus/agent_answer.py`: non-blocking answer lint categories plus strict app-owned answer-artifact parsing and runtime cleanup helpers.
 - `focus/agent_followup.py`: GTK-independent client and protocol types for the bounded Unix-socket follow-up bridge; creates/removes the application-owned runtime directory, validates path/token/type, and raises typed busy/unavailable/uncertain/protocol failures without queueing or replaying prompts.
 - `focus/answer_metadata.py`: GTK-independent recognition of the leading `# Title` / `*Subtitle*` answer metadata, normalized labels, and the protected metadata-prefix offset used to keep those labels out of transcript-search link targets.

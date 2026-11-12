@@ -92,6 +92,7 @@ def test_real_gtk_structured_and_continuous_paths_make_labels_bold_not_links():
         _summary_buffer=buffer, _summary_active_source=SUMMARY_SOURCE_MINUTES,
         _summary_loaded_path=None, _summary_view=None, _summary_scroller=None,
         _summary_link_tags=[], _summary_link_tag_lookup={},
+        _quotation_navigation_for_current=lambda:None,
         _resolve_ai_quote_color=lambda _view: color,
     )
     harness._ensure_summary_emphasis_tag = lambda buf: Focus._ensure_summary_emphasis_tag(harness, buf)

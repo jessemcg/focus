@@ -2105,6 +2105,9 @@ NORMALIZE_REPLACEMENTS = {
     "\u00A0": " ",
     "\u00B7": " ",
     "\u2022": " ",
+    # OCR/transcript gutter bars are separators for phrase search, not words.
+    # One-for-one replacement preserves normalized-to-source highlight mapping.
+    "|": " ",
 }
 
 

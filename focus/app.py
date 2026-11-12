@@ -1199,6 +1199,10 @@ class Focus(Adw.Application):
         self._connect_summary_scroll_watch()
         self._ai_output_scrollers.append(self._summary_scroller)
 
+        self._summary_navigation_warning = Gtk.Label(xalign=0, wrap=True, visible=False)
+        self._summary_navigation_warning.add_css_class('warning')
+        self._summary_navigation_warning.set_selectable(True)
+        file_view.append(self._summary_navigation_warning)
         file_view.append(self._summary_scroller)
 
         self._ai_view_stack.add_titled(agent_view, AI_VIEW_AGENT_QA, "Agent Q&A")
@@ -3215,7 +3219,98 @@ class Focus(Adw.Application):
             protected_prefix,
         )
 
+    def _load_quotation_navigation(self, path):
+        from .quote_navigation import load_summary_navigation
+        expected_paths = getattr(self, '_anchored_summary_paths', set())
+        expected = path in expected_paths
+        try:
+            edition_map = path.parent / 'editions' / (path.stem + '.pages.json')
+            expected = expected or json.loads(edition_map.read_bytes()).get('schema_version') == 3
+        except (OSError, ValueError, AttributeError):
+            pass
+        navigation = load_summary_navigation(summary_path=path, bundle_root=self.input_dir,
+                                               permitted_pages=self.pages, new_contract_expected=expected)
+        if navigation.mode != 'legacy':
+            expected_paths.add(path)
+        self._anchored_summary_paths = expected_paths
+        self._summary_navigation = navigation
+        self._summary_navigation_path = path
+        warning = getattr(self, '_summary_navigation_warning', None)
+        if warning is not None:
+            message = ('Quotation navigation is unavailable or stale; no guessed source links.' if navigation.mode == 'disabled'
+                       else f'{navigation.unresolved_count} quotation(s) unverified or stale; their source links are disabled.' if navigation.warnings else '')
+            warning.set_text(message)
+            warning.set_visible(bool(message))
+
+    def _quotation_navigation_for_current(self):
+        if getattr(self, '_summary_navigation_path', None) == getattr(self, '_summary_loaded_path', None):
+            return getattr(self, '_summary_navigation', None)
+        return None
+
+    def _apply_anchored_summary(self, text, navigation):
+        from .quote_navigation import navigation_display
+        buffer = self._summary_buffer
+        if buffer is None:
+            return
+        table = buffer.get_tag_table()
+        for tag in self._summary_link_tags:
+            table.remove(tag)
+        self._summary_link_tags.clear()
+        self._summary_link_tag_lookup.clear()
+        try:
+            display, spans = navigation_display(text, navigation)
+        except ValueError:
+            display, spans = text, ()
+            self._ai_transient_toast('Summary changed; quotation links disabled. Reload the summary.')
+        buffer.set_text(display)
+        color = self._resolve_ai_quote_color(self._summary_view)
+        for start,end,identity in spans:
+            occurrence = navigation.occurrence(identity)
+            tag = buffer.create_tag(None, foreground_rgba=color, weight=Pango.Weight.MEDIUM)
+            buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_iter_at_offset(end))
+            self._summary_link_tags.append(tag)
+            if occurrence is not None and occurrence.destination is not None:
+                self._summary_link_tag_lookup[tag] = ('quotation', identity)
+
+    def _activate_quotation(self, identity):
+        from .quote_navigation import revalidate_destination, normalize_source_display, _read_inside
+        navigation = self._quotation_navigation_for_current()
+        if navigation is None or navigation.mode != 'anchored' or self._summary_loaded_path is None:
+            return
+        destination = revalidate_destination(summary_path=self._summary_loaded_path, bundle_root=self.input_dir,
+            permitted_pages=self.pages, navigation_sha256=navigation.navigation_sha256, occurrence_id=identity)
+        if destination is None:
+            self._load_quotation_navigation(self._summary_loaded_path)
+            self._ai_transient_toast('Quotation destination is stale or unverified; no guessed navigation.')
+            return
+        try:
+            data = _read_inside(self.input_dir, destination.path, 16 * 1024 * 1024)
+            import hashlib
+            if hashlib.sha256(data).hexdigest() != destination.source_sha256:
+                raise ValueError('Source changed.')
+            content = normalize_source_display(data.decode('utf-8'))[0]
+            self._show_page_from_link(str(destination.file_page))
+            loaded, _, _ = self._read_page_text(destination.file_page)
+            if loaded != content:
+                raise ValueError('Displayed source changed.')
+            a,b = destination.display_start,destination.display_end
+            display, highlights = self._render_page_display(destination.file_page, content, [(a,b)])
+            literal = destination.file_page in self._reading_pages
+            self._set_text(display, highlights, literal=literal)
+            if highlights:
+                a,b = highlights[0]
+                if not literal:
+                    _text,_styles,mapping = _render_markdown_text(display)
+                    a,b = self._map_markdown_offset(a,mapping), self._map_markdown_offset(b,mapping)
+            GLib.idle_add(self._scroll_current_record_offset, destination.file_page, self._reading_snapshot, a, False)
+        except (OSError, ValueError, UnicodeError):
+            self._ai_transient_toast('Quotation source changed; exact highlighting disabled. Reload the record.')
+
     def _apply_summary_links(self, text: str) -> None:
+        navigation = self._quotation_navigation_for_current()
+        if navigation is not None and not navigation.legacy_phrase_links:
+            self._apply_anchored_summary(text, navigation)
+            return
         self._apply_link_spans(
             text,
             self._summary_buffer,
@@ -3251,6 +3346,8 @@ class Focus(Adw.Application):
         self._apply_structured_summary_emphasis(display)
 
         quote_color = self._resolve_ai_quote_color(self._summary_view)
+        navigation = self._quotation_navigation_for_current()
+        exact_ids = {(a,b):identity for a,b,identity in display.quote_occurrences}
         for start, end, phrase in display.phrase_spans:
             if end <= start:
                 continue
@@ -3260,7 +3357,13 @@ class Focus(Adw.Application):
                 underline=Pango.Underline.NONE,
                 weight=Pango.Weight.MEDIUM,
             )
-            self._summary_link_tag_lookup[tag] = ("phrase", phrase)
+            if navigation is None or navigation.legacy_phrase_links:
+                self._summary_link_tag_lookup[tag] = ('phrase', phrase)
+            else:
+                identity = exact_ids.get((start,end))
+                occurrence = navigation.occurrence(identity) if identity is not None else None
+                if occurrence is not None and occurrence.destination is not None:
+                    self._summary_link_tag_lookup[tag] = ('quotation', identity)
             buffer.apply_tag(tag, buffer.get_iter_at_offset(start), buffer.get_iter_at_offset(end))
             self._summary_link_tags.append(tag)
 
@@ -4372,6 +4475,9 @@ class Focus(Adw.Application):
 
     def _activate_link(self, link: tuple[str, str]) -> None:
         kind, value = link
+        if kind == 'quotation':
+            self._activate_quotation(value)
+            return
         if kind == "page":
             self._show_page_from_link(value)
             return
@@ -8399,7 +8505,7 @@ class Focus(Adw.Application):
             self._ai_transient_toast(f"File not found: {resolved}")
             return
         try:
-            text = resolved.read_text(encoding="utf-8")
+            text = resolved.read_bytes().decode('utf-8')
         except (OSError, UnicodeError) as exc:  # noqa: BLE001
             self._ai_transient_toast(f"Could not read {resolved.name}: {exc}")
             return
@@ -8422,6 +8528,7 @@ class Focus(Adw.Application):
         self._set_summary_active_source(source)
         state.summary_loaded_path = resolved
         state.summary_active_source = source
+        self._load_quotation_navigation(resolved)
         self._summary_edition = self._load_summary_edition_for(resolved, source)
         if self._summary_is_paged():
             assert self._summary_edition is not None

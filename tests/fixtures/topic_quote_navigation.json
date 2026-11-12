@@ -1,0 +1,289 @@
+{
+  "fictional": true,
+  "source": "\ud83d\ude00 Heading\r\nNotice before entry. The court required notice before entry after a joint survey.\rA later issue remains disputed.\n",
+  "source_page": 12,
+  "cases": {
+    "hearings": {
+      "text": "Hearing Summaries\nFictional\n\nFictional access decision \u2014 Hearing\n\nAccess required \u201cNotice before entry\u201d. The record also contains \u201can unresolved proposed quotation\u201d.\n",
+      "metadata": {
+        "schema_version": 7,
+        "editorial_contract": "recordprep-quote-editorial-1",
+        "navigation_contract": "recordprep-quote-destinations-1",
+        "final_text_sha256": "b75bbe3621a246c70bc9a14823f168c079fe53c8239bfcbd9ef42e49bd964105",
+        "note_hashes": {
+          "hearing:0012": "3c4574893b42b6ed866f4e58f9fd41a05a7f72d075c1e75e71a3051ca42c58b4"
+        },
+        "source_identities": {
+          "hearing:0012": [
+            {
+              "file_page": 12,
+              "path": "text_pages/0012.txt",
+              "sha256": "8293f5dc39b82c78cd7aeaf0eca1a2fe9317c6a2950f66685e553aae3e799a42"
+            }
+          ]
+        },
+        "editorial_sections": [
+          {
+            "item_id": "hearing:0012",
+            "note_sha256": "3c4574893b42b6ed866f4e58f9fd41a05a7f72d075c1e75e71a3051ca42c58b4",
+            "paragraphs": [
+              [
+                {
+                  "text": "Access required "
+                },
+                {
+                  "quote_ref": "hearing:0012/issue/1",
+                  "trim_start_words": 3,
+                  "trim_end_words": 4,
+                  "initial_case": "upper"
+                },
+                {
+                  "text": ". The record also contains "
+                },
+                {
+                  "quote_ref": "hearing:0012/issue/2",
+                  "trim_start_words": 0,
+                  "trim_end_words": 0,
+                  "initial_case": "preserve"
+                },
+                {
+                  "text": "."
+                }
+              ]
+            ],
+            "fallback": false
+          }
+        ],
+        "quote_occurrences": [
+          {
+            "quote_id": "hearing:0012/issue/1",
+            "start": 83,
+            "end": 102,
+            "display_text": "Notice before entry",
+            "source_text": "notice before entry",
+            "anchor": {
+              "file_page": 12,
+              "path": "text_pages/0012.txt",
+              "sha256": "8293f5dc39b82c78cd7aeaf0eca1a2fe9317c6a2950f66685e553aae3e799a42",
+              "source_start": 51,
+              "source_end": 70
+            },
+            "status": "anchored",
+            "word_policy": "recordprep-whitespace-words-1",
+            "trim_start_words": 3,
+            "trim_end_words": 4,
+            "initial_case": "upper",
+            "item_id": "hearing:0012",
+            "occurrence_id": "hearing:0012/occurrence/1",
+            "note_sha256": "3c4574893b42b6ed866f4e58f9fd41a05a7f72d075c1e75e71a3051ca42c58b4"
+          },
+          {
+            "quote_id": "hearing:0012/issue/2",
+            "start": 131,
+            "end": 163,
+            "display_text": "an unresolved proposed quotation",
+            "source_text": null,
+            "anchor": null,
+            "status": "unmatched",
+            "word_policy": "recordprep-whitespace-words-1",
+            "trim_start_words": 0,
+            "trim_end_words": 0,
+            "initial_case": "preserve",
+            "item_id": "hearing:0012",
+            "occurrence_id": "hearing:0012/occurrence/2",
+            "note_sha256": "3c4574893b42b6ed866f4e58f9fd41a05a7f72d075c1e75e71a3051ca42c58b4"
+          }
+        ],
+        "navigation_sha256": "adfac9e9137a5e4eb79490fd597c03373fe906373793e960d85946921836c70c"
+      }
+    },
+    "reports": {
+      "text": "Report Summaries\nFictional\n\nFictional access decision\n\nAccess required \u201cNotice before entry\u201d. The record also contains \u201can unresolved proposed quotation\u201d.\n",
+      "metadata": {
+        "schema_version": 7,
+        "editorial_contract": "recordprep-quote-editorial-1",
+        "navigation_contract": "recordprep-quote-destinations-1",
+        "final_text_sha256": "a54267622870c1ec7528da8e36f5b7333f394f99ba4246e2ddd63aa30a5fe08a",
+        "note_hashes": {
+          "report:0012": "ae2519e60568f3d699830468e6c2095c29c73740784eee4df6f88d22b4dab245"
+        },
+        "source_identities": {
+          "report:0012": [
+            {
+              "file_page": 12,
+              "path": "text_pages/0012.txt",
+              "sha256": "8293f5dc39b82c78cd7aeaf0eca1a2fe9317c6a2950f66685e553aae3e799a42"
+            }
+          ]
+        },
+        "editorial_sections": [
+          {
+            "item_id": "report:0012",
+            "note_sha256": "ae2519e60568f3d699830468e6c2095c29c73740784eee4df6f88d22b4dab245",
+            "paragraphs": [
+              [
+                {
+                  "text": "Access required "
+                },
+                {
+                  "quote_ref": "report:0012/issue/1",
+                  "trim_start_words": 3,
+                  "trim_end_words": 4,
+                  "initial_case": "upper"
+                },
+                {
+                  "text": ". The record also contains "
+                },
+                {
+                  "quote_ref": "report:0012/issue/2",
+                  "trim_start_words": 0,
+                  "trim_end_words": 0,
+                  "initial_case": "preserve"
+                },
+                {
+                  "text": "."
+                }
+              ]
+            ],
+            "fallback": false
+          }
+        ],
+        "quote_occurrences": [
+          {
+            "quote_id": "report:0012/issue/1",
+            "start": 72,
+            "end": 91,
+            "display_text": "Notice before entry",
+            "source_text": "notice before entry",
+            "anchor": {
+              "file_page": 12,
+              "path": "text_pages/0012.txt",
+              "sha256": "8293f5dc39b82c78cd7aeaf0eca1a2fe9317c6a2950f66685e553aae3e799a42",
+              "source_start": 51,
+              "source_end": 70
+            },
+            "status": "anchored",
+            "word_policy": "recordprep-whitespace-words-1",
+            "trim_start_words": 3,
+            "trim_end_words": 4,
+            "initial_case": "upper",
+            "item_id": "report:0012",
+            "occurrence_id": "report:0012/occurrence/1",
+            "note_sha256": "ae2519e60568f3d699830468e6c2095c29c73740784eee4df6f88d22b4dab245"
+          },
+          {
+            "quote_id": "report:0012/issue/2",
+            "start": 120,
+            "end": 152,
+            "display_text": "an unresolved proposed quotation",
+            "source_text": null,
+            "anchor": null,
+            "status": "unmatched",
+            "word_policy": "recordprep-whitespace-words-1",
+            "trim_start_words": 0,
+            "trim_end_words": 0,
+            "initial_case": "preserve",
+            "item_id": "report:0012",
+            "occurrence_id": "report:0012/occurrence/2",
+            "note_sha256": "ae2519e60568f3d699830468e6c2095c29c73740784eee4df6f88d22b4dab245"
+          }
+        ],
+        "navigation_sha256": "384473872ce4c4ca74b0225910e75de43508ef4b8f639b1bdd44d67f639b06be"
+      }
+    },
+    "motions": {
+      "text": "Motion Summaries\nFictional\n\nFictional access decision\n\nAccess required \u201cNotice before entry\u201d. The record also contains \u201can unresolved proposed quotation\u201d.\n",
+      "metadata": {
+        "schema_version": 7,
+        "editorial_contract": "recordprep-quote-editorial-1",
+        "navigation_contract": "recordprep-quote-destinations-1",
+        "final_text_sha256": "96fe90125f0e1dd87dcb7f44336892a9d767b2ebfd9a4611863de38c6dab4b80",
+        "note_hashes": {
+          "motion:0012": "81b03a7ac4b64aceb32b2623d72807e1aee118ef71e78876cd39b40d63b5c4ef"
+        },
+        "source_identities": {
+          "motion:0012": [
+            {
+              "file_page": 12,
+              "path": "text_pages/0012.txt",
+              "sha256": "8293f5dc39b82c78cd7aeaf0eca1a2fe9317c6a2950f66685e553aae3e799a42"
+            }
+          ]
+        },
+        "editorial_sections": [
+          {
+            "item_id": "motion:0012",
+            "note_sha256": "81b03a7ac4b64aceb32b2623d72807e1aee118ef71e78876cd39b40d63b5c4ef",
+            "paragraphs": [
+              [
+                {
+                  "text": "Access required "
+                },
+                {
+                  "quote_ref": "motion:0012/issue/1",
+                  "trim_start_words": 3,
+                  "trim_end_words": 4,
+                  "initial_case": "upper"
+                },
+                {
+                  "text": ". The record also contains "
+                },
+                {
+                  "quote_ref": "motion:0012/issue/2",
+                  "trim_start_words": 0,
+                  "trim_end_words": 0,
+                  "initial_case": "preserve"
+                },
+                {
+                  "text": "."
+                }
+              ]
+            ],
+            "fallback": false
+          }
+        ],
+        "quote_occurrences": [
+          {
+            "quote_id": "motion:0012/issue/1",
+            "start": 72,
+            "end": 91,
+            "display_text": "Notice before entry",
+            "source_text": "notice before entry",
+            "anchor": {
+              "file_page": 12,
+              "path": "text_pages/0012.txt",
+              "sha256": "8293f5dc39b82c78cd7aeaf0eca1a2fe9317c6a2950f66685e553aae3e799a42",
+              "source_start": 51,
+              "source_end": 70
+            },
+            "status": "anchored",
+            "word_policy": "recordprep-whitespace-words-1",
+            "trim_start_words": 3,
+            "trim_end_words": 4,
+            "initial_case": "upper",
+            "item_id": "motion:0012",
+            "occurrence_id": "motion:0012/occurrence/1",
+            "note_sha256": "81b03a7ac4b64aceb32b2623d72807e1aee118ef71e78876cd39b40d63b5c4ef"
+          },
+          {
+            "quote_id": "motion:0012/issue/2",
+            "start": 120,
+            "end": 152,
+            "display_text": "an unresolved proposed quotation",
+            "source_text": null,
+            "anchor": null,
+            "status": "unmatched",
+            "word_policy": "recordprep-whitespace-words-1",
+            "trim_start_words": 0,
+            "trim_end_words": 0,
+            "initial_case": "preserve",
+            "item_id": "motion:0012",
+            "occurrence_id": "motion:0012/occurrence/2",
+            "note_sha256": "81b03a7ac4b64aceb32b2623d72807e1aee118ef71e78876cd39b40d63b5c4ef"
+          }
+        ],
+        "navigation_sha256": "3b9784dcbfde99c51b8efd6844d7c37bd65a610a7744bc543ba0746e5e897c08"
+      }
+    }
+  }
+}

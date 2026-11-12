@@ -165,6 +165,19 @@ def _load(root: Path, summary_path: Path, focus_source: str = "hearing"):
 
 
 class EditionDiscoveryTests(unittest.TestCase):
+    def test_physical_link_uses_exact_rendered_ligature_label_and_target(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            label = 'Traﬃc records and oﬃcial ﬁles'
+            root, summary, _pages = _build_edition(Path(temporary),
+                source_text='Traffic records and official files\n',
+                pages_spec=[{'text':label,'first':1,'last':1,'links':[
+                    {'start':0,'end':len(label),'label':label,'target':12}]}])
+            edition = _load(root,summary)
+            page = edition.pages[0]
+            link = page.links[0]
+            self.assertEqual(page.text[link.start:link.end],label)
+            self.assertEqual(link.target_page,12)
+
     def test_manifest_companion_discovery(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root, summary_path, _pages = _build_edition(Path(temporary))
@@ -531,6 +544,7 @@ class PagedHarness:
     _repaginated_bookmark_page = Focus._repaginated_bookmark_page
     _on_summary_bookmark_clicked = Focus._on_summary_bookmark_clicked
     _load_summary_from_path = Focus._load_summary_from_path
+    _load_quotation_navigation = Focus._load_quotation_navigation
     _extract_summary_bookmark_entry = Focus._extract_summary_bookmark_entry
     _summary_bookmarks_path_for = Focus._summary_bookmarks_path_for
     _read_summary_bookmarks = Focus._read_summary_bookmarks
@@ -560,6 +574,7 @@ class PagedHarness:
         self._summary_buffer = object()  # truthy sentinel; rendering is faked
         self._summary_view = None
         self.input_dir = Path(tempfile.mkdtemp())
+        self.pages = []
         self.link_applied: list[str] = []
         self.highlight_calls = 0
         self.toasts: list[str] = []

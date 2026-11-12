@@ -28,6 +28,7 @@ SUPPORTED_SCHEMA_LAYOUTS: dict[int, tuple[str, ...]] = {
         "recordprep-summary-letter-v2",
     ),
     2: ("recordprep-summary-letter-v3",),
+    3: ("recordprep-summary-letter-v3",),
 }
 SUPPORTED_LAYOUT_IDS: tuple[str, ...] = (
     "recordprep-summary-letter-v1",
@@ -71,6 +72,7 @@ class SummaryEditionQuote:
     phrase: str
     start: int
     end: int
+    occurrence_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,7 @@ class SummaryEdition:
     pages: tuple[SummaryEditionPage, ...]
     layout_id: str = ""
     schema_version: int = 1
+    navigation_sha256: str = ""
 
     @property
     def page_count(self) -> int:
@@ -182,7 +185,7 @@ def load_summary_edition(
     if page_map.get("artifact") != PAGE_MAP_ARTIFACT:
         problems.append("artifact identifier mismatch")
     schema_version = page_map.get("schema_version")
-    if schema_version not in SUPPORTED_SCHEMA_LAYOUTS:
+    if type(schema_version) is not int or schema_version not in SUPPORTED_SCHEMA_LAYOUTS:
         problems.append("unsupported schema version")
     if page_map.get("kind") != edition_kind:
         problems.append("category mismatch")
@@ -227,6 +230,39 @@ def load_summary_edition(
     declared_count = pdf_info.get("page_count")
     if not isinstance(declared_count, int) or declared_count != len(pages):
         raise SummaryEditionError("Page map page count does not match its PDF.")
+
+    navigation_sha256 = ''
+    if schema_version < 3:
+        # Identical visible TXT does not make a historical phrase map current
+        # for a new ledger. Fall back to continuous exact-ledger rendering.
+        try:
+            from .quote_navigation import _read_inside, _relative, _NEW_FIELDS
+            metadata = json.loads(_read_inside(bundle_root, _relative(summary_path.with_suffix('.meta.json'), bundle_root), 32 * 1024 * 1024))
+            version = metadata.get('schema_version') if isinstance(metadata,dict) else None
+            if ('navigation_sha256' in source_info or (isinstance(metadata,dict) and
+                    (_NEW_FIELDS.intersection(metadata) or (type(version) is int and version >= 7)))):
+                raise ValueError('Historical edition cannot represent current quotation navigation.')
+        except FileNotFoundError:
+            if 'navigation_sha256' in source_info:
+                raise SummaryEditionError('Current quotation navigation requires a schema-3 edition.')
+        except (OSError, ValueError, KeyError, TypeError, UnicodeError) as exc:
+            raise SummaryEditionError('Edition quotation navigation is missing, stale or invalid.') from exc
+    if schema_version == 3:
+        try:
+            from .quote_navigation import _read_inside, _relative
+            from .profile_artifacts import validate_summary_navigation_metadata
+            from .quote_projection import page_fragments
+            raw_text = _read_inside(bundle_root, _relative(summary_path, bundle_root), 32 * 1024 * 1024).decode('utf-8')
+            metadata = json.loads(_read_inside(bundle_root, _relative(summary_path.with_suffix('.meta.json'), bundle_root), 32 * 1024 * 1024))
+            validate_summary_navigation_metadata(metadata, raw_text)
+            navigation_sha256 = metadata['navigation_sha256']
+            if source_info.get('navigation_sha256') != navigation_sha256:
+                raise ValueError('Stale navigation identity.')
+            expected = page_fragments(raw_text, metadata, {p['page']:p['text'] for p in pages})
+            if any(p.get('quotes') != expected[p['page']] for p in pages):
+                raise ValueError('Quotation ledger mismatch.')
+        except (OSError, ValueError, KeyError, TypeError, UnicodeError) as exc:
+            raise SummaryEditionError('Edition quotation navigation is missing, stale or invalid.') from exc
 
     validated: list[SummaryEditionPage] = []
     previous_last_line = 0
@@ -280,8 +316,8 @@ def load_summary_edition(
                 raise SummaryEditionError("Page map link spans overlap.")
 
         quotes: list[SummaryEditionQuote] = []
-        raw_quotes = entry.get("quotes") if schema_version == 2 else None
-        if schema_version == 2:
+        raw_quotes = entry.get("quotes") if schema_version >= 2 else None
+        if schema_version >= 2:
             if not isinstance(raw_quotes, list):
                 raise SummaryEditionError("Page map quote spans are missing.")
             quote_spans: list[tuple[int, int]] = []
@@ -307,7 +343,8 @@ def load_summary_edition(
                 quote_spans.append((q_start, q_end))
                 quotes.append(
                     SummaryEditionQuote(
-                        label=q_label, phrase=phrase, start=q_start, end=q_end
+                        label=q_label, phrase=phrase, start=q_start, end=q_end,
+                        occurrence_id=quote['occurrence_id'] if schema_version == 3 else '',
                     )
                 )
             ordered_quotes = sorted(quote_spans)
@@ -336,6 +373,7 @@ def load_summary_edition(
         pages=tuple(validated),
         layout_id=layout_id,
         schema_version=schema_version if isinstance(schema_version, int) else 1,
+        navigation_sha256=navigation_sha256,
     )
 
 
@@ -505,6 +543,7 @@ class SummaryPageDisplay:
     text: str
     phrase_spans: tuple[tuple[int, int, str], ...] = ()
     page_link_spans: tuple[tuple[int, int, str], ...] = ()
+    quote_occurrences: tuple[tuple[int, int, str], ...] = ()
 
 
 def render_page_display(edition: SummaryEdition, page_number: int) -> SummaryPageDisplay:
@@ -541,6 +580,7 @@ def render_page_display(edition: SummaryEdition, page_number: int) -> SummaryPag
         text=text,
         phrase_spans=tuple(phrase_spans),
         page_link_spans=tuple(page_link_spans),
+        quote_occurrences=tuple((*mapped(q.start, q.end), q.occurrence_id) for q in page.quotes) if edition.schema_version == 3 else (),
     )
 
 
