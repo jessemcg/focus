@@ -2206,8 +2206,10 @@ SUMMARY_HEARING_ENTRY_RE = re.compile(
     r"(?=\s+\[)",
     re.IGNORECASE | re.MULTILINE,
 )
+# Entry labels and their trailing page links must share one physical line.
+# Using \s here can consume a newline and emphasize the preceding paragraph.
 SUMMARY_REPORT_ENTRY_RE = re.compile(
-    r"^(?P<entry>[^\[\n][^\n]*?)(?=\s+\[[^\]\n]+\]\(\s*page\s*:\s*\d{1,8}\s*\)\s*$)",
+    r"^(?P<entry>[^\[\r\n][^\r\n]*?)(?=[^\S\r\n]+\[[^\]\r\n]+\]\([^\S\r\n]*page[^\S\r\n]*:[^\S\r\n]*\d{1,8}[^\S\r\n]*\)[^\S\r\n]*\r?$)",
     re.IGNORECASE | re.MULTILINE,
 )
 # Minute labels are presentation, not quotation/search links. Match only the
