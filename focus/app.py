@@ -695,12 +695,25 @@ class Focus(Adw.Application):
         right_scroll_icon.set_valign(Gtk.Align.CENTER)
         right_scroll_hint.append(right_scroll_icon)
 
-        right_scroll_label = Gtk.Label(label="Use Mouse Wheel")
+        right_scroll_label = Gtk.Label(
+            label="Scroll · Left-click next · Right-click back"
+        )
+        right_scroll_label.set_wrap(True)
+        right_scroll_label.set_max_width_chars(24)
+        right_scroll_label.set_justify(Gtk.Justification.CENTER)
         right_scroll_label.add_css_class("focus-right-scroll-label")
         right_scroll_label.set_valign(Gtk.Align.CENTER)
         right_scroll_hint.append(right_scroll_label)
         self._right_scroll_zone.set_child(right_scroll_hint)
         self._right_scroll_zone.connect("clicked", self._on_right_scroll_zone_clicked)
+
+        # Only this navigation zone handles secondary clicks; leave the
+        # reader's selection/context-menu gestures and primary button alone.
+        right_click = Gtk.GestureClick.new()
+        right_click.set_button(Gdk.BUTTON_SECONDARY)
+        right_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        right_click.connect("pressed", self._on_right_scroll_zone_right_pressed)
+        self._right_scroll_zone.add_controller(right_click)
 
         self._right_scroll_zone_scroll_controller = Gtk.EventControllerScroll.new(
             Gtk.EventControllerScrollFlags.VERTICAL
@@ -6459,6 +6472,12 @@ class Focus(Adw.Application):
 
     def _on_right_scroll_zone_clicked(self, _button: Gtk.Button) -> None:
         self._go_next()
+
+    def _on_right_scroll_zone_right_pressed(
+        self, gesture: Gtk.GestureClick, _n_press: int, _x: float, _y: float
+    ) -> None:
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        self._go_prev()
 
     def _on_right_scroll_zone_scroll(
         self, _ctrl: Gtk.EventControllerScroll, _dx: float, dy: float

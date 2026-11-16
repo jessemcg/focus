@@ -72,6 +72,9 @@ folder icon at the top left and select a RecordPrep case bundle.
 Basic browsing needs a `text_pages/` folder; source-linked AI answers also need
 `artifacts/source_map.json`. Summaries and page images appear when included.
 
+In the right-side hover area, scroll to navigate, left-click for next, or
+right-click for back.
+
 The **Answer / Session** controls lead directly into the answer or session view,
 without a metadata line. Research and save metadata remain stored with answers.
 
