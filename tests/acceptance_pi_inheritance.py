@@ -34,7 +34,7 @@ def activate(application):
         ('current_project_pi_model', lambda: runtime.current_project_pi_model(PREFS)),
         ('current_project_pi_thinking_level', lambda: runtime.current_project_pi_thinking_level(PREFS)),
         ('save_project_pi_runtime', lambda m, t: runtime.save_project_pi_runtime(m, t, PREFS)),
-        ('load_ai_settings', lambda: ui.AiSettings(speech_agent_source_file='/synthetic/speech', grep_highlight_color=ui.DEFAULT_MATCH_COLOR, search_chip_color=ui.DEFAULT_SEARCH_CHIP_COLOR)),
+        ('load_ai_settings', lambda: ui.AiSettings(speech_agent_source_file='/synthetic/speech', grep_highlight_color=ui.DEFAULT_MATCH_COLOR, search_highlight_color=ui.DEFAULT_SEARCH_HIGHLIGHT_COLOR)),
         ('save_ai_settings', lambda s: (ROOT / 'saved-display.json').write_text(json.dumps({'grep': s.grep_highlight_color}))),
     ):
         p = patch.object(ui, name, value); p.start(); patches.append(p)

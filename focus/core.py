@@ -88,7 +88,7 @@ CONFIG_KEY_AI_FONT_SIZE_PT = "ai_font_size_pt"
 CONFIG_KEY_TABLE_FONT_SIZE_PT = "table_font_size_pt"
 CONFIG_KEY_RECORD_FONT_FAMILY = "record_font_family"
 CONFIG_KEY_GREP_HIGHLIGHT_COLOR = "grep_highlight_color"
-CONFIG_KEY_SEARCH_CHIP_COLOR = "search_chip_color"
+CONFIG_KEY_SEARCH_HIGHLIGHT_COLOR = "search_highlight_color"
 DEFAULT_INPUT_DIR = Path.home().resolve(strict=False)
 CASE_NAME_FILENAME = "case_name.txt"
 EMBEDDED_AI_PANEL_HEIGHT_DIVISOR = 3
@@ -259,7 +259,7 @@ LEGACY_RECORD_FONT_FAMILY_ALIASES: dict[str, str] = {
 DEFAULT_FONT_SIZE_PT = 11
 DEFAULT_AI_FONT_SIZE_PT = 12
 DEFAULT_MATCH_COLOR = "#ffff00"         # yellow
-DEFAULT_SEARCH_CHIP_COLOR = "#99c1f1"
+DEFAULT_SEARCH_HIGHLIGHT_COLOR = "#f4b26b"
 DEFAULT_QUOTED_PHRASE_ALPHA = 1.0
 DEFAULT_AI_PANEL_BG_COLOR = "alpha(@window_fg_color, 0.08)"
 DEFAULT_PRINT_MARGIN_IN = 1.0
@@ -1262,7 +1262,7 @@ def save_font_preferences(
 class AiSettings:
     speech_agent_source_file: str
     grep_highlight_color: str
-    search_chip_color: str
+    search_highlight_color: str
     pi_agent_command: str = DEFAULT_PI_AGENT_COMMAND
 
 
@@ -1438,7 +1438,7 @@ def load_ai_settings() -> AiSettings:
     return AiSettings(
         speech_agent_source_file=str(config.get(CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE, DEFAULT_SPEECH_AGENT_SOURCE_FILE) or DEFAULT_SPEECH_AGENT_SOURCE_FILE).strip(),
         grep_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_GREP_HIGHLIGHT_COLOR, "") or ""), DEFAULT_MATCH_COLOR),
-        search_chip_color=_coerce_color_value(str(config.get(CONFIG_KEY_SEARCH_CHIP_COLOR, "") or ""), DEFAULT_SEARCH_CHIP_COLOR),
+        search_highlight_color=_coerce_color_value(str(config.get(CONFIG_KEY_SEARCH_HIGHLIGHT_COLOR, "") or ""), DEFAULT_SEARCH_HIGHLIGHT_COLOR),
         pi_agent_command=str(config.get(CONFIG_KEY_PI_AGENT_COMMAND, DEFAULT_PI_AGENT_COMMAND) or DEFAULT_PI_AGENT_COMMAND).strip(),
     )
 
@@ -1454,7 +1454,7 @@ def save_ai_settings(settings: AiSettings) -> None:
     config[CONFIG_KEY_SPEECH_AGENT_SOURCE_FILE] = settings.speech_agent_source_file or DEFAULT_SPEECH_AGENT_SOURCE_FILE
     config[CONFIG_KEY_PI_AGENT_COMMAND] = settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
     config[CONFIG_KEY_GREP_HIGHLIGHT_COLOR] = _coerce_color_value(settings.grep_highlight_color, DEFAULT_MATCH_COLOR)
-    config[CONFIG_KEY_SEARCH_CHIP_COLOR] = _coerce_color_value(settings.search_chip_color, DEFAULT_SEARCH_CHIP_COLOR)
+    config[CONFIG_KEY_SEARCH_HIGHLIGHT_COLOR] = _coerce_color_value(settings.search_highlight_color, DEFAULT_SEARCH_HIGHLIGHT_COLOR)
     _write_config(config)
 
 
@@ -1952,28 +1952,28 @@ button.focus-citation-range-active:active {
   border-radius: 10px;
   padding-top: 4px;
   padding-bottom: 4px;
-  background-color: __SEARCH_CHIP_COLOR__;
-  color: #1f2937;
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
   background-image: none;
   box-shadow: none;
 }
 
 button.focus-citation-range-active image,
 button.focus-citation-range-active label {
-  color: #1f2937;
+  color: @accent_fg_color;
 }
 
 button.focus-minute-order-return-active,
 button.focus-minute-order-return-active:hover,
 button.focus-minute-order-return-active:active {
-  background-color: __SEARCH_CHIP_COLOR__;
-  color: #1f2937;
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
   background-image: none;
   box-shadow: none;
 }
 
 button.focus-minute-order-return-active image {
-  color: #1f2937;
+  color: @accent_fg_color;
 }
 
 button.focus-filter-chip,
@@ -1990,8 +1990,8 @@ button.focus-filter-chip:active {
 label.focus-search-chip {
   border-radius: 10px;
   padding: 4px 8px;
-  background-color: __SEARCH_CHIP_COLOR__;
-  color: #1f2937;
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
 }
 
 scrolledwindow.focus-saved-answers-card {
@@ -2035,9 +2035,6 @@ list.focus-saved-answers-list > row:last-child {
 ).replace("__AI_PANEL_BG__", DEFAULT_AI_PANEL_BG_COLOR).replace(
     "__PAGE_TEXT_BG__",
     PAGE_TEXT_BG_COLOR,
-).replace(
-    "__SEARCH_CHIP_COLOR__",
-    DEFAULT_SEARCH_CHIP_COLOR,
 )
 _chrome_provider = Gtk.CssProvider()
 _chrome_provider.load_from_data(APP_CHROME_CSS.encode("utf-8"))

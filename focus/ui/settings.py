@@ -69,7 +69,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._record_font_family_row: Adw.ComboRow | None = None
         self._record_font_family_values: list[str] = []
         self._grep_highlight_color_control: Gtk.Widget | None = None
-        self._search_chip_color_control: Gtk.Widget | None = None
+        self._search_highlight_color_control: Gtk.Widget | None = None
         self._agent_widgets: AgentSettingsWidgets | None = None
         self._pi_model_options: list[PiModel | None] = []
         self._pi_available_model_keys: set[tuple[str, str]] = set()
@@ -170,7 +170,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
 
         highlight_row = Adw.ExpanderRow(
             title="Highlights",
-            subtitle="Grep and chip colors",
+            subtitle="Search and grep highlight colors",
         )
         highlight_row.set_expanded(False)
         appearance_group.add(highlight_row)
@@ -181,11 +181,11 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         highlight_row.add_row(grep_color_row)
 
-        search_chip_row, self._search_chip_color_control = self._build_color_row(
-            "Search and Cite Chip Color",
-            DEFAULT_SEARCH_CHIP_COLOR,
+        search_row, self._search_highlight_color_control = self._build_color_row(
+            "Search Highlight Color",
+            DEFAULT_SEARCH_HIGHLIGHT_COLOR,
         )
-        highlight_row.add_row(search_chip_row)
+        highlight_row.add_row(search_row)
 
         agent_row = self._build_agent_settings_page()
         appearance_group.add(agent_row)
@@ -346,7 +346,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 int(self._record_font_family_row.get_selected()),
                 *(self._read_color_control_value(w, default) for w, default in (
                     (self._grep_highlight_color_control, DEFAULT_MATCH_COLOR),
-                    (self._search_chip_color_control, DEFAULT_SEARCH_CHIP_COLOR))), key, effort)
+                    (self._search_highlight_color_control, DEFAULT_SEARCH_HIGHLIGHT_COLOR))), key, effort)
 
     def _selected_pi_model(self) -> PiModel | None:
         selected = int(self.pi_model_row.get_selected())
@@ -688,9 +688,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             DEFAULT_MATCH_COLOR,
         )
         self._set_color_control_value(
-            self._search_chip_color_control,
-            settings.search_chip_color,
-            DEFAULT_SEARCH_CHIP_COLOR,
+            self._search_highlight_color_control,
+            settings.search_highlight_color,
+            DEFAULT_SEARCH_HIGHLIGHT_COLOR,
         )
 
     def _show_status_toast(self, text: str) -> None:
@@ -711,9 +711,9 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._grep_highlight_color_control,
             DEFAULT_MATCH_COLOR,
         )
-        search_chip_color = self._read_color_control_value(
-            self._search_chip_color_control,
-            DEFAULT_SEARCH_CHIP_COLOR,
+        search_highlight_color = self._read_color_control_value(
+            self._search_highlight_color_control,
+            DEFAULT_SEARCH_HIGHLIGHT_COLOR,
         )
 
         record_font_size = (
@@ -746,7 +746,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             ),
             pi_agent_command=pi_agent_command or DEFAULT_PI_AGENT_COMMAND,
             grep_highlight_color=grep_highlight_color,
-            search_chip_color=search_chip_color,
+            search_highlight_color=search_highlight_color,
         )
         selected_pi_model = self._selected_pi_model()
         selected_pi_thinking = self._selected_pi_thinking_level()

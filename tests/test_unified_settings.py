@@ -22,7 +22,7 @@ class UnifiedSettingsTests(unittest.TestCase):
         app.on_ai_settings_saved = Mock()
         with patch.object(ui, "current_project_pi_model", return_value=("synthetic", "saved")), \
              patch.object(ui, "current_project_pi_thinking_level", return_value="medium"), \
-             patch.object(ui, "load_ai_settings", return_value=ui.AiSettings(speech_agent_source_file="/synthetic/speech", grep_highlight_color=ui.DEFAULT_MATCH_COLOR, search_chip_color=ui.DEFAULT_SEARCH_CHIP_COLOR)), \
+             patch.object(ui, "load_ai_settings", return_value=ui.AiSettings(speech_agent_source_file="/synthetic/speech", grep_highlight_color=ui.DEFAULT_MATCH_COLOR, search_highlight_color=ui.DEFAULT_SEARCH_HIGHLIGHT_COLOR)), \
              patch.object(ui.AiSettingsWindow, "_load_pi_models"):
             w = ui.AiSettingsWindow(app)
         w.present()
@@ -84,7 +84,7 @@ class UnifiedSettingsTests(unittest.TestCase):
         highlights = self.highlights(w)
         titles = [row.get_title() for row in descendants(highlights)
                   if isinstance(row, ui.Adw.PreferencesRow)]
-        self.assertEqual(set(titles), {"Highlights", "Grep Highlight Color", "Search and Cite Chip Color"})
+        self.assertEqual(set(titles), {"Highlights", "Grep Highlight Color", "Search Highlight Color"})
         self.assertFalse(any(isinstance(widget, ui.Gtk.TextView)
                              for widget in descendants(highlights)))
         self.assertFalse(hasattr(w, "_highlight_phrases_buffer"))

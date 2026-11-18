@@ -2596,11 +2596,6 @@ class Focus(Adw.Application):
 
     def _apply_text_color(self, color_value: str) -> None:
         self._current_text_color = color_value
-        search_chip_color = (
-            self._ai_settings.search_chip_color
-            if self._ai_settings
-            else DEFAULT_SEARCH_CHIP_COLOR
-        )
         css = (
             "#page-text { "
             f"color: {PAGE_TEXT_FG_COLOR}; font-size: {self._font_size_pt}pt; "
@@ -2608,9 +2603,6 @@ class Focus(Adw.Application):
             "}"
             "textview.ai-output-view { "
             f"color: {color_value}; font-size: {self._ai_font_size_pt}pt; line-height: {AI_OUTPUT_LINE_HEIGHT}; "
-            "}"
-            "label.focus-search-chip { "
-            f"background-color: {search_chip_color}; "
             "}"
             # FlowBox children are layout wrappers, not additional controls.
             # Keep their padding/focus outlines, but let only the inner widgets
@@ -2626,18 +2618,6 @@ class Focus(Adw.Application):
             "min-width: 16px; padding-left: 3px; padding-right: 3px; }"
             "button.focus-citation-control { min-width: 0; padding-left: 6px; padding-right: 6px; }"
             "button.focus-citation-cancel { min-width: 16px; padding-left: 3px; padding-right: 3px; }"
-            "button.focus-citation-range-active, "
-            "button.focus-citation-range-active:hover, "
-            "button.focus-citation-range-active:active, "
-            "button.focus-minute-order-return-active, "
-            "button.focus-minute-order-return-active:hover, "
-            "button.focus-minute-order-return-active:active { "
-            f"background-color: {search_chip_color}; "
-            "color: #1f2937; "
-            "}"
-            "button.focus-citation-range-active label { "
-            "color: #1f2937; "
-            "}"
         ).encode()
         try:
             self._color_provider.load_from_data(css)
@@ -3864,13 +3844,15 @@ class Focus(Adw.Application):
         table = self._summary_buffer.get_tag_table()
         if table is None:
             return
+        color = (self._ai_settings.search_highlight_color
+                 if self._ai_settings else DEFAULT_SEARCH_HIGHLIGHT_COLOR)
         if self._summary_search_tag is None:
             tag = table.lookup("summary-search-match")
             if tag is None:
                 tag = self._summary_buffer.create_tag(
                     "summary-search-match",
-                    background="#f7dcc3",
-                    foreground="#3f2b1a",
+                    background=color,
+                    foreground="#2b1600",
                 )
             self._summary_search_tag = tag
         if self._summary_search_current_tag is None:
@@ -3878,12 +3860,14 @@ class Focus(Adw.Application):
             if tag is None:
                 tag = self._summary_buffer.create_tag(
                     "summary-search-current",
-                    background="#f4b26b",
+                    background=color,
                     foreground="#2b1600",
+                    underline=Pango.Underline.SINGLE,
                 )
             self._summary_search_current_tag = tag
-        if self._summary_search_current_tag is not None:
-            self._summary_search_current_tag.set_property("background", "#f4b26b")
+        for tag in (self._summary_search_tag, self._summary_search_current_tag):
+            tag.set_property("background", color)
+        self._summary_search_current_tag.set_property("underline", Pango.Underline.SINGLE)
 
     def _clear_summary_search_tags(self) -> None:
         if not self._summary_buffer:
@@ -6227,6 +6211,7 @@ class Focus(Adw.Application):
 
     def on_ai_settings_saved(self, settings: AiSettings) -> None:
         self._ai_settings = settings
+        self._ensure_summary_search_tags()
         self._refresh_ai_quote_colors()
         self._apply_text_color(self._current_text_color)
         if self.textview:

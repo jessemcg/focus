@@ -23,7 +23,8 @@ def synthetic_config():
         core.CONFIG_KEY_PI_AGENT_COMMAND: "/usr/bin/true",
         core.CONFIG_KEY_GREP_HIGHLIGHT_COLOR: "#112233",
         "summary_emphasis_color": "#334455",  # Retired; preserve stored bytes, never use.
-        core.CONFIG_KEY_SEARCH_CHIP_COLOR: "#445566",
+        "search_chip_color": "#abcdef",  # Historical chip choice is inert.
+        core.CONFIG_KEY_SEARCH_HIGHLIGHT_COLOR: "#445566",
     }
 
 
@@ -41,7 +42,8 @@ def test_load_supported_settings_never_writes_or_changes_bytes(monkeypatch):
         assert not hasattr(settings, "phrase_highlight_color")
         assert settings.grep_highlight_color == "#112233"
         assert not hasattr(settings, "summary_emphasis_color")
-        assert settings.search_chip_color == "#445566"
+        assert settings.search_highlight_color == "#445566"
+        assert not hasattr(settings, "search_chip_color")
         assert core.CONFIG_FILE.read_bytes() == original
     writer.assert_not_called()
 
