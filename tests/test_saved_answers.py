@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
 from pathlib import Path
+
+import pytest
 
 from focus.saved_answers import (
     SAVED_ANSWERS_SCHEMA_VERSION,
@@ -63,6 +66,7 @@ def test_roundtrip_unicode_and_link_syntax(tmp_path: Path) -> None:
     file_stat = (store / f"{answer.answer_id}.json").stat()
     assert stat.S_IMODE(file_stat.st_mode) == 0o600
     assert stat.S_IMODE(store.stat().st_mode) == 0o700
+    assert stat.S_IMODE(store.parent.stat().st_mode) == 0o700
 
     deletion = delete_saved_answer(tmp_path, answer.answer_id)
     assert deletion.error == ""
@@ -160,17 +164,44 @@ def test_symlink_hardlink_directory_and_fifo_entries_are_rejected(tmp_path: Path
     assert target.exists()
 
 
-def test_broad_permissions_are_warned_but_loaded_without_chmod(tmp_path: Path) -> None:
-    answer = _answer(markdown="Synced privately.\n")
-    save_saved_answer(tmp_path, answer)
-    path = saved_answers_dir(tmp_path) / f"{answer.answer_id}.json"
-    path.chmod(0o644)
+@pytest.mark.parametrize("mode", [0o644, 0o664, 0o666])
+def test_shared_modes_allow_browsing_and_saving_without_chmod(tmp_path: Path, mode: int) -> None:
+    answer = _answer()
+    assert save_saved_answer(tmp_path, answer).error == ""
+    store = saved_answers_dir(tmp_path)
+    path = store / f"{answer.answer_id}.json"
+    path.chmod(mode)
+    store.parent.chmod(0o775)
+    store.chmod(0o777)
 
     listing = list_saved_answers(tmp_path)
-    assert [item.answer_id for item in listing.answers] == [answer.answer_id]
-    assert any(issue.code == "broad_permissions" for issue in listing.issues)
-    # Browsing must never rewrite or chmod synchronized files.
-    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    assert listing.answers == (answer,)
+    assert listing.issues == ()
+    assert load_saved_answer(tmp_path, answer.answer_id).answer == answer
+    assert save_saved_answer(tmp_path, answer).error == ""
+    assert save_saved_answer(tmp_path, _answer()).error == ""
+    assert stat.S_IMODE(path.stat().st_mode) == mode
+    assert stat.S_IMODE(store.parent.stat().st_mode) == 0o775
+    assert stat.S_IMODE(store.stat().st_mode) == 0o777
+    assert delete_saved_answer(tmp_path, answer.answer_id).error == ""
+
+
+def test_os_permission_denial_is_reported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = _answer()
+    assert save_saved_answer(tmp_path, answer).error == ""
+    name = f"{answer.answer_id}.json"
+    open_file = os.open
+
+    def deny_answer(path, flags, *args, **kwargs):
+        if path == name:
+            raise PermissionError(errno.EACCES, "Permission denied", name)
+        return open_file(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", deny_answer)
+    listing = list_saved_answers(tmp_path)
+    assert listing.answers == ()
+    assert [(issue.filename, issue.code) for issue in listing.issues] == [(name, "unreadable")]
+    assert load_saved_answer(tmp_path, answer.answer_id).error == "unreadable"
 
 
 def test_invalid_answer_ids_rejected(tmp_path: Path) -> None:

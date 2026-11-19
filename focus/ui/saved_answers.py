@@ -12,7 +12,7 @@ from collections.abc import Callable
 from gi.repository import Adw, GLib, Gtk, Pango
 
 from ..answer_presentation import answer_quality_label, format_saved_at, research_context_label
-from ..saved_answers import SavedAnswer, SavedAnswerListing
+from ..saved_answers import SavedAnswer, SavedAnswerIssue, SavedAnswerListing
 
 PREFERRED_CONTENT_WIDTH = 480
 LIST_MAX_HEIGHT = 320
@@ -174,19 +174,10 @@ class SavedAnswersPopover:
             noun = "saved answers"
         self._heading.set_text(f"{case} · {count} {noun}")
 
-    def _update_warning(self, issues: tuple) -> None:
-        if not issues:
-            self._warning.set_visible(False)
-            return
-        broad = [issue for issue in issues if issue.code == "broad_permissions"]
-        other = [issue for issue in issues if issue.code != "broad_permissions"]
-        parts: list[str] = []
-        if other:
-            parts.append(f"{len(other)} saved-answer file(s) could not be read.")
-        if broad:
-            parts.append(f"{len(broad)} file(s) have broad permissions; they opened unchanged.")
-        self._warning.set_text(" ".join(parts))
-        self._warning.set_visible(bool(parts))
+    def _update_warning(self, issues: tuple[SavedAnswerIssue, ...]) -> None:
+        self._warning.set_visible(bool(issues))
+        if issues:
+            self._warning.set_text(f"{len(issues)} saved-answer file(s) could not be read.")
 
     # -- filtering and population ---------------------------------------
 

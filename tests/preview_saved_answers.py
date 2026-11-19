@@ -53,7 +53,10 @@ for index in range(1, 6):
         stop_reason="length" if index == 3 else "toolUse",
         question=f"Question {index}?",
     )
-    save_saved_answer(bundle, snapshot.to_saved())
+    result = save_saved_answer(bundle, snapshot.to_saved())
+    assert not result.error, result.error
+    if index == 5:
+        (saved_answers_dir(bundle) / f"{snapshot.answer_id}.json").chmod(0o666)
 
 application = module.Focus(input_override=bundle)
 
@@ -89,10 +92,14 @@ def prepare():
     application._saved_answers_popover.popover.popup()
 
     def _select_newest() -> bool:
+        listing = application._saved_answers_listing
+        assert len(listing.answers) == count
+        assert not listing.issues
+        assert not application._saved_answers_popover._warning.get_visible()
+
         # Exercise the reported bug path: make a summary view visible first,
         # then select a saved answer and confirm Focus returns to Agent Q&A.
         application._set_ai_view(core.AI_VIEW_FILE)
-        listing = application._saved_answers_listing
         if listing.answers:
             application._on_saved_answer_selected(listing.answers[0].answer_id)
             visible = application._ai_view_stack.get_visible_child_name()

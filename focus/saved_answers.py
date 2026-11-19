@@ -173,13 +173,12 @@ def saved_answers_dir(root: Path) -> Path:
 def _ensure_store_dir(root: Path) -> Path:
     base = Path(root) / SAVED_ANSWERS_DIR_NAME
     store = base / SAVED_ANSWERS_SUBDIR
-    store.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Preserve the permissions of existing synchronized directories.
     for path in (base, store):
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
         path_stat = os.lstat(path)
-        if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISDIR(path_stat.st_mode):
+        if not stat.S_ISDIR(path_stat.st_mode):
             raise OSError("saved-answer store is not a real directory")
-        if path_stat.st_mode & 0o077:
-            path.chmod(0o700)
     return store
 
 
@@ -265,11 +264,13 @@ def _read_owned_regular(fd: int) -> str:
         raise _AnswerFileError("malformed") from None
 
 
-def _open_entry(store_fd: int, name: str) -> tuple[int, os.stat_result]:
+def _open_entry(store_fd: int, name: str) -> int:
     try:
         entry_stat = os.stat(name, dir_fd=store_fd, follow_symlinks=False)
     except FileNotFoundError:
         raise _AnswerFileError("missing") from None
+    except OSError as exc:
+        raise _AnswerFileError("unreadable", str(exc)) from None
     if stat.S_ISLNK(entry_stat.st_mode):
         raise _AnswerFileError("symlink")
     if not stat.S_ISREG(entry_stat.st_mode):
@@ -288,10 +289,10 @@ def _open_entry(store_fd: int, name: str) -> tuple[int, os.stat_result]:
     if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or opened.st_uid != os.getuid():
         os.close(fd)
         raise _AnswerFileError("unsafe_entry")
-    return fd, opened
+    return fd
 
 
-def _load_from_store(store: Path, name: str) -> tuple[SavedAnswer, os.stat_result]:
+def _load_from_store(store: Path, name: str) -> SavedAnswer:
     store_fd = os.open(store, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         return _load_with_fd(store_fd, name)
@@ -299,8 +300,8 @@ def _load_from_store(store: Path, name: str) -> tuple[SavedAnswer, os.stat_resul
         os.close(store_fd)
 
 
-def _load_with_fd(store_fd: int, name: str) -> tuple[SavedAnswer, os.stat_result]:
-    fd, file_stat = _open_entry(store_fd, name)
+def _load_with_fd(store_fd: int, name: str) -> SavedAnswer:
+    fd = _open_entry(store_fd, name)
     try:
         raw = _read_owned_regular(fd)
     finally:
@@ -312,7 +313,7 @@ def _load_with_fd(store_fd: int, name: str) -> tuple[SavedAnswer, os.stat_result
     answer = _answer_from_payload(payload)
     if f"{answer.answer_id}.json" != name:
         raise _AnswerFileError("id_filename_mismatch")
-    return answer, file_stat
+    return answer
 
 
 def _list_store(root: Path) -> tuple[int | None, SavedAnswerIssue | None]:
@@ -360,19 +361,11 @@ def list_saved_answers(root: Path) -> SavedAnswerListing:
                     )
                     continue
                 try:
-                    answer, file_stat = _load_with_fd(store_fd, name)
+                    answer = _load_with_fd(store_fd, name)
                 except _AnswerFileError as exc:
                     issues.append(SavedAnswerIssue(name, exc.code, exc.message))
                     continue
                 answers.append(answer)
-                if file_stat.st_mode & 0o077:
-                    issues.append(
-                        SavedAnswerIssue(
-                            name,
-                            "broad_permissions",
-                            "Saved answer is readable beyond the owner; it loaded untouched.",
-                        )
-                    )
     finally:
         os.close(store_fd)
     answers.sort(key=lambda item: (item.saved_at, item.answer_id), reverse=True)
@@ -386,7 +379,7 @@ def load_saved_answer(root: Path, answer_id: str) -> SavedAnswerResult:
     if store_fd is None:
         return SavedAnswerResult(None, store_issue.code if store_issue else "missing")
     try:
-        answer, _stat = _load_with_fd(store_fd, f"{answer_id}.json")
+        answer = _load_with_fd(store_fd, f"{answer_id}.json")
     except _AnswerFileError as exc:
         return SavedAnswerResult(None, exc.code)
     finally:
@@ -410,7 +403,7 @@ def save_saved_answer(root: Path, answer: SavedAnswer) -> SavedAnswerResult:
         return SavedAnswerResult(None, "store_unavailable")
     final_name = f"{answer.answer_id}.json"
     try:
-        existing, _stat = _load_from_store(store, final_name)
+        existing = _load_from_store(store, final_name)
     except _AnswerFileError as exc:
         existing = None
         if exc.code != "missing":
@@ -462,7 +455,7 @@ def delete_saved_answer(root: Path, answer_id: str) -> SavedAnswerResult:
         return SavedAnswerResult(None, store_issue.code if store_issue else "missing")
     name = f"{answer_id}.json"
     try:
-        fd, _stat = _open_entry(store_fd, name)
+        fd = _open_entry(store_fd, name)
         os.close(fd)
         os.unlink(name, dir_fd=store_fd)
     except _AnswerFileError as exc:

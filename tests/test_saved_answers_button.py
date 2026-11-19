@@ -56,6 +56,25 @@ def test_arrow_opens_the_library_popover() -> None:
     assert dropdown.get_tooltip_text() == popover.button.get_dropdown_tooltip()
 
 
+def test_popover_warns_only_when_an_entry_cannot_be_read(tmp_path):
+    from focus.saved_answers import list_saved_answers, new_answer_id, save_saved_answer, saved_answers_dir
+    from test_saved_answers import _answer
+
+    answer = _answer()
+    assert save_saved_answer(tmp_path, answer).error == ""
+    store = saved_answers_dir(tmp_path)
+    (store / f"{answer.answer_id}.json").chmod(0o666)
+
+    popover = _build()
+    popover.show_listing(list_saved_answers(tmp_path))
+    assert not popover._warning.get_visible()
+
+    (store / f"{new_answer_id()}.json").write_text("invalid JSON", encoding="utf-8")
+    popover.show_listing(list_saved_answers(tmp_path))
+    assert popover._warning.get_visible()
+    assert popover._warning.get_text() == "1 saved-answer file(s) could not be read."
+
+
 @pytest.mark.parametrize("version", [1, 2, 3])
 def test_popover_rows_retain_captured_provenance_and_quality(tmp_path, version):
     from focus.research_context import research_context_bytes
