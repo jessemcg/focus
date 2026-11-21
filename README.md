@@ -74,6 +74,7 @@ Basic browsing needs a `text_pages/` folder; source-linked AI answers also need
 
 In the right-side hover area, scroll to navigate, left-click for next, or
 right-click for back.
+On an enlarged page image, left-click the image to go forward or right-click it to go back.
 
 The **Answer / Session** controls lead directly into the answer or session view,
 without a metadata line. Research and save metadata remain stored with answers.

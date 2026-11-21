@@ -768,6 +768,12 @@ class Focus(Adw.Application):
         self._image_picture.set_valign(Gtk.Align.START)
         self._image_picture.set_content_fit(Gtk.ContentFit.CONTAIN)
         self._image_picture.set_can_shrink(True)
+        for button in (Gdk.BUTTON_PRIMARY, Gdk.BUTTON_SECONDARY):
+            image_click = Gtk.GestureClick.new()
+            image_click.set_button(button)
+            image_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            image_click.connect("pressed", self._on_image_pressed)
+            self._image_picture.add_controller(image_click)
 
         self._image_fixed = Gtk.Fixed()
         self._image_fixed.set_hexpand(False)
@@ -4586,6 +4592,15 @@ class Focus(Adw.Application):
     def _on_image_preview_clicked(self, _button: Gtk.Button) -> None:
         self._set_show_image(True)
 
+    def _on_image_pressed(
+        self, gesture: Gtk.GestureClick, _n_press: int, _x: float, _y: float
+    ) -> None:
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        if gesture.get_button() == Gdk.BUTTON_PRIMARY:
+            self._go_next()
+        else:
+            self._go_prev()
+
     def _clear_image_view(self) -> None:
         if self._image_picture:
             self._image_picture.set_paintable(None)
@@ -5617,11 +5632,6 @@ class Focus(Adw.Application):
         attached = attach_scroll_controller(self.scroller)
         if not attached:
             attach_scroll_controller(self.win)
-        if self._image_scroller:
-            image_scroll_controller = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
-            image_scroll_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-            image_scroll_controller.connect("scroll", self._on_image_scroll)
-            self._image_scroller.add_controller(image_scroll_controller)
 
         key_ctrl = Gtk.EventControllerKey.new()
         key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -6272,15 +6282,6 @@ class Focus(Adw.Application):
                 self._go_next()
             elif dy < 0:
                 self._go_prev()
-            return True
-        return False
-
-    def _on_image_scroll(self, _ctrl: Gtk.EventControllerScroll, _dx: float, dy: float) -> bool:
-        if dy > 0:
-            self._go_next()
-            return True
-        if dy < 0:
-            self._go_prev()
             return True
         return False
 
