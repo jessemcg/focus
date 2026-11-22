@@ -5,6 +5,7 @@ import threading
 from .settings_navigation import SettingsNavigation, SettingsSession
 
 from focus.core import *  # noqa: F401,F403
+from focus.research_skills import SkillPreferences, read_preferences, save_preferences
 from focus.pi_runtime import (
     PiModel,
     PiRuntimeError,
@@ -79,6 +80,19 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         self._pi_model_selection_changed = False
         self._pi_thinking_selection_changed = False
         self._pi_model_closed = False
+        self._skill_chooser: Gio.Cancellable | None = None
+        self._skill_catalog: dict[tuple[str, str], PiModel] = {}
+        self._skill_catalog_status = "Loading models authorized in Pi…"
+        self._skill_model_options: list[tuple[str, str] | None] = []
+        self._skill_effort_options: list[str | None] = []
+        self._skill_applying = False
+        self._skill_error = ""
+        try:
+            self._skill_preferences, self._skill_revision = read_preferences()
+        except (OSError, ValueError) as exc:
+            self._skill_preferences, self._skill_revision = SkillPreferences(), ""
+            self._skill_error = f"Cannot read Research Skills settings: {exc}. Reopen Settings after resolving the error."
+        self._skill_draft = self._skill_preferences
         try:
             self._original_pi_model_key = current_project_pi_model()
             self._original_pi_thinking_level = current_project_pi_thinking_level()
@@ -323,6 +337,7 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             self._on_pi_thinking_selected,
         )
         agent_row.add_row(self.pi_thinking_row)
+        self._add_research_skill_rows(agent_row)
 
         self._agent_widgets = AgentSettingsWidgets(
             pi_agent_command_row=pi_agent_command_row,
@@ -330,23 +345,160 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         )
         return agent_row
 
+    def _add_research_skill_rows(self, parent: Adw.ExpanderRow) -> None:
+        self.skill_folder_row = Adw.ActionRow(title="Research skills folder", use_markup=False)
+        choose = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER)
+        self.skill_clear_button = Gtk.Button(icon_name="edit-clear-symbolic", valign=Gtk.Align.CENTER)
+        for button, label, handler in (
+            (choose, "Choose Research skills folder", self._choose_skill_folder),
+            (self.skill_clear_button, "Clear Research skills folder", self._clear_skill_folder),
+        ):
+            button.add_css_class("flat")
+            button.set_tooltip_text(label)
+            button.update_property([Gtk.AccessibleProperty.LABEL], [label])
+            button.connect("clicked", handler)
+            self.skill_folder_row.add_suffix(button)
+        self.skill_folder_row.set_activatable_widget(choose)
+        self.skill_folder_row.set_sensitive(not self._skill_error)
+        parent.add_row(self.skill_folder_row)
+        self.skill_model_row = Adw.ComboRow(title="Skill model", use_markup=False)
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", _setup_pi_model_list_item)
+        factory.connect("bind", _bind_pi_model_list_item)
+        self.skill_model_row.set_list_factory(factory)
+        self.skill_model_row.connect("notify::selected", self._on_skill_model_selected)
+        parent.add_row(self.skill_model_row)
+        self.skill_effort_row = Adw.ComboRow(title="Skill reasoning effort", use_markup=False)
+        self.skill_effort_row.connect("notify::selected", self._on_skill_effort_selected)
+        parent.add_row(self.skill_effort_row)
+        self._sync_skill_rows()
+
+    def _choose_skill_folder(self, _button: Gtk.Button) -> None:
+        if self._skill_chooser is not None:
+            return
+        dialog = Gtk.FileDialog(title="Choose Research skills folder", modal=True)
+        if self._skill_draft.folder:
+            dialog.set_initial_folder(Gio.File.new_for_path(self._skill_draft.folder))
+        cancellable = Gio.Cancellable()
+        self._skill_chooser = cancellable
+        dialog.select_folder(self, cancellable, self._on_skill_folder_chosen)
+
+    def _on_skill_folder_chosen(self, dialog: Gtk.FileDialog, result: Gio.AsyncResult) -> None:
+        cancellable, self._skill_chooser = self._skill_chooser, None
+        if self._pi_model_closed or (cancellable is not None and cancellable.is_cancelled()):
+            return
+        try:
+            folder = dialog.select_folder_finish(result).get_path()
+        except GLib.Error:
+            return  # Dismissed or cancelled.
+        if not folder:
+            self._show_status_toast("Choose a local folder for Research Skills.")
+            return
+        old = self._skill_draft
+        self._set_skill_draft(SkillPreferences(folder, old.model_key, old.effort))
+
+    def _clear_skill_folder(self, _button: Gtk.Button) -> None:
+        if self._skill_chooser is not None:
+            self._skill_chooser.cancel()
+        self._set_skill_draft(SkillPreferences())
+
+    def _set_skill_draft(self, draft: SkillPreferences) -> None:
+        self._skill_draft = draft
+        self._sync_skill_rows()
+
+    def _sync_skill_rows(self) -> None:
+        draft = self._skill_draft
+        self.skill_folder_row.set_subtitle(self._skill_error or draft.folder or "Off · Choose a folder of Markdown questions")
+        self.skill_clear_button.set_visible(bool(draft.folder))
+        self.skill_model_row.set_visible(bool(draft.folder))
+        self.skill_effort_row.set_visible(bool(draft.folder))
+        self._skill_applying = True
+        try:
+            keys = [None, *self._skill_catalog]
+            if draft.model_key and draft.model_key not in keys:
+                keys.insert(1, draft.model_key)
+            self._skill_model_options = keys
+            labels = ["Use Agent Q&A model"]
+            for key in keys[1:]:
+                model = self._skill_catalog.get(key)
+                exact = f"{key[0]} / {key[1]}"
+                labels.append(f"{model.name} — {exact}" if model else f"{exact} (unavailable)")
+            self.skill_model_row.set_model(Gtk.StringList.new(labels))
+            self.skill_model_row.set_selected(keys.index(draft.model_key))
+            # Even offline, a retained override can be explicitly reset to inherit.
+            self.skill_model_row.set_sensitive(len(keys) > 1 and not self._skill_error)
+        finally:
+            self._skill_applying = False
+        self._update_skill_model_subtitle()
+        self._sync_skill_effort()
+
+    def _update_skill_model_subtitle(self) -> None:
+        key = self._skill_draft.model_key
+        self.skill_model_row.set_subtitle(self._skill_catalog_status or (
+            f"{key[0]} / {key[1]}" if key else "Inherit the ordinary Agent model and reasoning effort."))
+
+    def _sync_skill_effort(self) -> None:
+        draft = self._skill_draft
+        model = self._skill_catalog.get(draft.model_key)
+        self._skill_applying = True
+        try:
+            levels = [None, *(model.supported_thinking_levels if model else ())]
+            if draft.effort and draft.effort not in levels:
+                levels.append(draft.effort)
+            self._skill_effort_options = levels
+            self.skill_effort_row.set_model(Gtk.StringList.new([
+                "Use Agent Q&A effort" if level is None else _format_pi_thinking_level(level)
+                for level in levels
+            ]))
+            self.skill_effort_row.set_selected(levels.index(draft.effort))
+            self.skill_effort_row.set_sensitive(len(levels) > 1 and not self._skill_error)
+            self.skill_effort_row.set_subtitle(
+                "Select a skill model to override reasoning." if draft.model_key is None else
+                "Selected effort is unavailable; choose a supported effort or inherit."
+                if model is not None and draft.effort and draft.effort not in model.supported_thinking_levels else
+                "Applies to new skill sessions, not ordinary questions."
+            )
+        finally:
+            self._skill_applying = False
+
+    def _on_skill_model_selected(self, row: Adw.ComboRow, _param: object) -> None:
+        selected = int(row.get_selected())
+        if not self._skill_applying and selected < len(self._skill_model_options):
+            model_key = self._skill_model_options[selected]
+            draft = self._skill_draft
+            if model_key != draft.model_key:
+                self._skill_draft = SkillPreferences(draft.folder, model_key, draft.effort if model_key else None)
+                self._update_skill_model_subtitle()
+                self._sync_skill_effort()
+
+    def _on_skill_effort_selected(self, row: Adw.ComboRow, _param: object) -> None:
+        selected = int(row.get_selected())
+        if not self._skill_applying and selected < len(self._skill_effort_options):
+            draft = self._skill_draft
+            effort = self._skill_effort_options[selected]
+            if effort != draft.effort:
+                self._skill_draft = SkillPreferences(draft.folder, draft.model_key, effort)
+
     def _on_settings_close_request(self, *_args: object) -> bool:
         if hasattr(self, "_session") and self._session.close_request():
             return True
         self._pi_model_closed = True
         self._pi_model_generation += 1
+        if self._skill_chooser is not None:
+            self._skill_chooser.cancel()
         return False
 
     def _draft_snapshot(self):
         model = self._selected_pi_model()
         key = model.settings_key if self._pi_model_selection_changed and model else self._original_pi_model_key
         effort = self._selected_pi_thinking_level() if self._pi_thinking_selection_changed else self._original_pi_thinking_level
-        return (self._agent_widgets.pi_agent_command_row.get_text(), self._agent_widgets.speech_agent_source_row.get_text(),
+        base = (self._agent_widgets.pi_agent_command_row.get_text(), self._agent_widgets.speech_agent_source_row.get_text(),
                 self._record_font_size_row.get_value(), self._ai_font_size_row.get_value(), self._table_font_size_row.get_value(),
                 int(self._record_font_family_row.get_selected()),
                 *(self._read_color_control_value(w, default) for w, default in (
                     (self._grep_highlight_color_control, DEFAULT_MATCH_COLOR),
-                    (self._search_highlight_color_control, DEFAULT_SEARCH_HIGHLIGHT_COLOR))), key, effort)
+                    (self._search_highlight_color_control, DEFAULT_SEARCH_HIGHLIGHT_COLOR))))
+        return base, (key, effort), self._skill_draft
 
     def _selected_pi_model(self) -> PiModel | None:
         selected = int(self.pi_model_row.get_selected())
@@ -483,7 +635,6 @@ class AiSettingsWindow(Adw.ApplicationWindow):
                 self.pi_thinking_row.set_subtitle(str(exc))
                 self.pi_thinking_row.set_sensitive(False)
                 self.pi_model_refresh_button.set_sensitive(True)
-                return
 
         selected = self._selected_pi_model()
         desired_key = (
@@ -548,6 +699,8 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             "Loading reasoning levels for the selected model..."
         )
         self.pi_model_refresh_button.set_sensitive(False)
+        self._skill_catalog_status = "Loading models authorized in Pi…"
+        self._sync_skill_rows()
 
         def worker() -> None:
             try:
@@ -582,6 +735,13 @@ class AiSettingsWindow(Adw.ApplicationWindow):
         if self._pi_model_closed or generation != self._pi_model_generation:
             return False
         self.pi_model_refresh_button.set_sensitive(True)
+        self._skill_catalog = {model.settings_key: model for model in models}
+        self._skill_catalog_status = error or ("" if models else "No authenticated Pi models found.")
+        self._sync_skill_rows()
+        if self._pi_model_settings_error:
+            self.pi_model_row.set_subtitle(self._pi_model_settings_error)
+            self.pi_thinking_row.set_subtitle(self._pi_model_settings_error)
+            return False
         if error:
             self._pi_available_model_keys = set()
             current = desired_key
@@ -748,43 +908,59 @@ class AiSettingsWindow(Adw.ApplicationWindow):
             grep_highlight_color=grep_highlight_color,
             search_highlight_color=search_highlight_color,
         )
-        selected_pi_model = self._selected_pi_model()
-        selected_pi_thinking = self._selected_pi_thinking_level()
-        pi_runtime_saved = False
-        if (
-            self._pi_model_selection_changed
-            or self._pi_thinking_selection_changed
-        ) and selected_pi_model is not None:
+        base, pi_baseline, skill_baseline = self._session.baseline
+        draft_base, _, skill_draft = self._draft_snapshot()
+        selected_model = self._selected_pi_model()
+        pi_dirty = self._pi_model_selection_changed or self._pi_thinking_selection_changed
+        skill_dirty = skill_draft != self._skill_preferences
+        saved: list[str] = []
+        errors: list[str] = []
+        if pi_dirty and selected_model is not None:
             try:
                 save_project_pi_runtime(
-                    selected_pi_model,
-                    selected_pi_thinking if self._pi_thinking_selection_changed else None,
+                    selected_model,
+                    self._selected_pi_thinking_level() if self._pi_thinking_selection_changed else None,
                 )
-                pi_runtime_saved = True
             except PiSettingsError as exc:
-                self._show_status_toast(f"Unable to save PI Agent settings: {exc}")
-                return
-        try:
-            save_ai_settings(settings)
-            self.app.update_font_sizes(
-                font_size_pt=record_font_size,
-                ai_font_size_pt=ai_font_size,
-                table_font_size_pt=table_font_size,
-                record_font_family_name=record_font_family_name,
-            )
-            self.app.on_ai_settings_saved(settings)
-        except Exception:
-            self._show_status_toast("Save failed. Some settings may already have been written; drafts are retained.")
-            return
-        if pi_runtime_saved and selected_pi_model is not None:
-            self._original_pi_model_key = selected_pi_model.settings_key
-            self._original_pi_thinking_level = selected_pi_thinking
-            self._pi_model_selection_changed = False
-            self._pi_thinking_selection_changed = False
-        self._session.accept()
-        if pi_runtime_saved:
-            self._show_status_toast(
-                "Saved. The PI model and reasoning effort apply to new Agent sessions."
-            )
+                errors.append(f"Pi Agent: {exc}")
+            else:
+                self._original_pi_model_key = selected_model.settings_key
+                if self._pi_thinking_selection_changed:
+                    self._original_pi_thinking_level = self._selected_pi_thinking_level()
+                self._pi_model_selection_changed = False
+                self._pi_thinking_selection_changed = False
+                pi_baseline = self._original_pi_model_key, self._original_pi_thinking_level
+                saved.append("Agent model")
+        if skill_dirty:
+            try:
+                self._skill_revision = save_preferences(skill_draft, self._skill_revision)
+            except (OSError, ValueError) as exc:
+                errors.append(f"Research Skills: {exc}")
+            else:
+                self._skill_preferences = skill_baseline = skill_draft
+                saved.append("Research Skills")
+        if draft_base != base or not (pi_dirty or skill_dirty):
+            try:
+                save_ai_settings(settings)
+                self.app.update_font_sizes(
+                    font_size_pt=record_font_size,
+                    ai_font_size_pt=ai_font_size,
+                    table_font_size_pt=table_font_size,
+                    record_font_family_name=record_font_family_name,
+                )
+                self.app.on_ai_settings_saved(settings)
+            except Exception:
+                errors.append("Some settings may already have been written; drafts are retained.")
+            else:
+                base = draft_base
+                saved.append("Focus settings")
+        self._session.baseline = base, pi_baseline, skill_baseline
+        if saved:
+            callback = getattr(self.app, "on_research_settings_changed", None)
+            if callback is not None:
+                callback()
+        if errors:
+            prefix = f"Saved {', '.join(saved)}. " if saved else ""
+            self._show_status_toast(prefix + "Save failed: " + " ".join(errors))
         else:
-            self._show_status_toast("Saved. Agent questions are enabled.")
+            self._show_status_toast("Saved. Model and reasoning changes apply to new sessions.")

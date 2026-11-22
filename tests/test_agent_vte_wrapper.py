@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
+
 
 WRAPPER = Path(__file__).resolve().parents[1] / "scripts" / "focus-agent-vte.sh"
 
@@ -94,7 +96,8 @@ def _run_wrapper(
     runtime_dir.mkdir(parents=True)
     executable = _fake_agent(tmp_path)
     env = os.environ.copy()
-    for key in ("PI_RUN_METRICS_ROOT", "PI_RUN_METRICS_COLLECTOR", "PI_RUN_METRICS_ENABLED", "PI_CODING_AGENT_SESSION_DIR"):
+    for key in ("PI_RUN_METRICS_ROOT", "PI_RUN_METRICS_COLLECTOR", "PI_RUN_METRICS_ENABLED", "PI_CODING_AGENT_SESSION_DIR",
+                "FOCUS_SKILL_PROVIDER", "FOCUS_SKILL_MODEL", "FOCUS_SKILL_EFFORT"):
         env.pop(key, None)
     env.update(
         {
@@ -163,9 +166,24 @@ def test_pi_wrapper_passes_exact_prompt_in_interactive_mode(tmp_path) -> None:
     assert not prompt_path.exists()
 
 
+@pytest.mark.parametrize("effort", [None, "low"])
+def test_pi_wrapper_passes_only_the_explicit_skill_model_and_effort(tmp_path, effort) -> None:
+    extra = {"PI_RUN_METRICS_ENABLED": "0", "FOCUS_SKILL_PROVIDER": "synthetic", "FOCUS_SKILL_MODEL": "fixture/exact"}
+    if effort:
+        extra["FOCUS_SKILL_EFFORT"] = effort
+    output, workspace, prompt, completed = _run_wrapper(tmp_path, extra)
+    assert completed.returncode == 0
+    assert output[2:6] == ["arg=--provider", "arg=synthetic", "arg=--model", "arg=fixture/exact"]
+    assert ("arg=--thinking" in output) == bool(effort)
+    if effort:
+        assert output[output.index("arg=--thinking") + 1] == f"arg={effort}"
+    assert output.count("arg=--skill") == 1
+    assert "thinking=staged" in output  # It never rewrites ordinary defaults.
+    assert not workspace.exists() and not prompt.exists()
+
+
 def test_pi_wrapper_loads_shared_observer_without_changing_tools(tmp_path) -> None:
     if not (WRAPPER.parents[1].parent / "PiRunMetrics/launch_adapter.py").is_file():
-        import pytest
         pytest.skip("Optional sibling PiRunMetrics integration is not installed")
     collector = tmp_path / "collector.ts"
     collector.write_text("// synthetic observer\n")

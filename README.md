@@ -83,6 +83,10 @@ Use **Agent Q&A** to ask questions and follow up. AI questions send selected rec
 text to your chosen model provider; check its confidentiality terms before using
 sensitive records. Verify answers against the source.
 
+For reusable questions, set a **Research skills folder** in **Settings → Agent**,
+then pick a skill beside **New question**. Skills start research; **Save Answer**
+keeps the result. See the [Research Skills file guide](docs/research-skills.md).
+
 ## License
 
 See [LICENSE](LICENSE).

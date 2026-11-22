@@ -51,7 +51,15 @@ from .agent_followup import (
     text_transport_error,
 )
 from .answer_metadata import parse_answer_metadata
-from .pi_runtime import PROJECT_PI_SETTINGS_PATH
+from .pi_runtime import PROJECT_PI_SETTINGS_PATH, PiRuntimeError, available_pi_models
+from .research_runtime import ResearchPin, stage_research_resources
+from .research_skills import (
+    ResearchSkill,
+    SkillChanged,
+    SkillPreferences,
+    read_preferences,
+    read_selected_skill,
+)
 from .reading_position import AnswerPositionCache
 from .saved_answers import (
     AgentAnswerSnapshot,
@@ -65,6 +73,7 @@ from .saved_answers import (
     save_saved_answer,
 )
 from .ui.commands import FocusCommandsWindow
+from .ui.research_skills import ResearchSkillsPicker
 from .ui.saved_answers import SavedAnswersPopover
 from .ui.settings import AiSettingsWindow
 from .ui.settings_navigation import close_settings_before_parent
@@ -276,6 +285,9 @@ class Focus(Adw.Application):
         self._ai_spinner: Gtk.Spinner | None = None
         self._ai_settings_window: AiSettingsWindow | None = None
         self._ai_settings: AiSettings = load_ai_settings()
+        self._research_skills_picker: ResearchSkillsPicker | None = None
+        self._skill_launch_token: object | None = None
+        self._skill_replacement_dialog: Adw.MessageDialog | None = None
         self._agent_question_entry: Gtk.Entry | None = None
         self._agent_followup_entry: Gtk.Entry | None = None
         self._agent_ask_row: Gtk.Box | None = None
@@ -306,9 +318,8 @@ class Focus(Adw.Application):
         self._agent_last_answer_text = ""
         self._agent_terminal: Any | None = None
         self._agent_terminal_pid: int | None = None
+        self._agent_spawn_cancel: Gio.Cancellable | None = None
         self._agent_terminal_active = False
-        self._agent_terminal_closing = False
-        self._agent_terminal_ignore_next_exit = False
         self._agent_initial_question = ""
         self._agent_live_snapshot: AgentAnswerSnapshot | None = None
         self._agent_displayed_snapshot: AgentAnswerSnapshot | None = None
@@ -984,7 +995,10 @@ class Focus(Adw.Application):
         self._agent_followup_entry.connect("changed", self._on_agent_followup_changed)
         agent_ask_row.append(self._agent_followup_entry)
         self._agent_ask_row = agent_ask_row
+        self._research_skills_picker = ResearchSkillsPicker(self._start_research_skill)
+        agent_header_controls.append(self._research_skills_picker)
         agent_header_controls.append(agent_ask_row)
+        self.on_research_settings_changed()
 
         self._agent_submit_button = None
         self._refresh_agent_followup_state()
@@ -1052,20 +1066,7 @@ class Focus(Adw.Application):
             agent_terminal_frame.add_css_class("focus-agent-terminal-frame")
             agent_terminal_frame.set_overflow(Gtk.Overflow.HIDDEN)
 
-            agent_terminal = Vte.Terminal()
-            agent_terminal.set_hexpand(True)
-            agent_terminal.set_vexpand(True)
-            agent_terminal.add_css_class("focus-agent-terminal")
-            _apply_focus_terminal_theme(agent_terminal)
-            terminal_key_controller = Gtk.EventControllerKey()
-            terminal_key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-            terminal_key_controller.connect("key-pressed", self._on_agent_terminal_key_pressed)
-            agent_terminal.add_controller(terminal_key_controller)
-            agent_terminal.connect("child-exited", self._on_agent_terminal_child_exited)
-            agent_terminal.connect(
-                "selection-changed",
-                self._on_search_selection_changed,
-            )
+            agent_terminal = self._build_agent_terminal()
             agent_terminal_frame.append(agent_terminal)
             self._agent_session_widget = agent_terminal_frame
             self._agent_subview_host.append(agent_terminal_frame)
@@ -1887,6 +1888,8 @@ class Focus(Adw.Application):
         return self._view_state
 
     def _reset_view_states(self) -> None:
+        if self._research_skills_picker is not None:
+            self._research_skills_picker.reset()
         self._stop_grep_search_if_running()
         self._stop_agent_terminal()
         self._stop_agent_answer_polling()
@@ -6219,6 +6222,17 @@ class Focus(Adw.Application):
             self._transcript_breakdown_buffer = None
         return False
 
+    def on_research_settings_changed(self) -> None:
+        self._cancel_skill_launch()
+        if self._research_skills_picker is not None:
+            try:
+                preferences, _ = read_preferences()
+            except (OSError, ValueError):
+                # The Settings row reports the read error without overwriting it.
+                preferences = SkillPreferences()
+            self._research_skills_picker.reset()
+            self._research_skills_picker.set_folder(preferences.folder)
+
     def on_ai_settings_saved(self, settings: AiSettings) -> None:
         self._ai_settings = settings
         self._ensure_summary_search_tags()
@@ -6963,6 +6977,8 @@ class Focus(Adw.Application):
                 "Follow-ups are unavailable for this session."
             )
             return
+        if getattr(self, "_skill_launch_token", None) is not None:
+            self._cancel_skill_launch()  # A newer turn supersedes the replacement check.
         generation = self._agent_followup_generation
         self._agent_followup_pending = True
         entry = self._agent_followup_entry
@@ -7081,6 +7097,16 @@ class Focus(Adw.Application):
         self._ai_transient_toast(
             "Install gir1.2-vte-3.91 and libvte-2.91-gtk4-0 to use the embedded Agent terminal."
         )
+
+    def _build_agent_terminal(self) -> Any:
+        terminal = Vte.Terminal(hexpand=True, vexpand=True)
+        terminal.add_css_class("focus-agent-terminal")
+        _apply_focus_terminal_theme(terminal)
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self._on_agent_terminal_key_pressed)
+        terminal.add_controller(keys)
+        terminal.connect("selection-changed", self._on_search_selection_changed)
+        return terminal
 
     def _agent_python_path(self) -> str:
         # Same-project helpers retain the verified interpreter used to launch Focus.
@@ -7675,6 +7701,16 @@ class Focus(Adw.Application):
         self._poll_agent_answer()
 
     def _poll_agent_answer(self) -> bool:
+        workspace = self._agent_workspace_path
+        if workspace is not None and (workspace / "skill-model-rejected").is_file():
+            self._stop_agent_terminal()
+            self._agent_answer_status = (
+                "Research not sent: Pi selected a different skill model. Refresh models in Settings → Agent, "
+                "check Pi /login, then start the skill again."
+            )
+            self._update_ai_status(self._agent_answer_status, spinning=False)
+            self._ai_transient_toast(self._agent_answer_status)
+            return GLib.SOURCE_REMOVE
         artifact_path = self._agent_answer_artifact_path
         run_id = self._agent_run_id
         if artifact_path is None or not run_id:
@@ -7739,21 +7775,162 @@ class Focus(Adw.Application):
     def _compose_agent_prompt(question: str) -> str:
         return (
             f"/skill:{FOCUS_PI_SKILL_NAME} <question>\n"
-            f"{question.strip()}\n"
+            f"{question}\n"
             "</question>"
         )
 
-    def _write_agent_prompt_file(self, prompt: str) -> Path:
-        handle = tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            prefix="focus-agent-",
-            suffix=".txt",
-            delete=False,
-        )
-        with handle:
-            handle.write(prompt)
-        return Path(handle.name)
+    def _cancel_skill_launch(self) -> None:
+        self._skill_launch_token = None
+        if dialog := self._skill_replacement_dialog:
+            self._skill_replacement_dialog = None
+            dialog.close()
+        if self._research_skills_picker is not None:
+            self._research_skills_picker.set_sensitive(True)
+
+    def _start_research_skill(self, folder: str, skill: ResearchSkill, *, confirmed: bool = False) -> None:
+        if self._skill_launch_token is not None:
+            return  # A second activation must not start another turn.
+        if Vte is None or self._agent_terminal is None:
+            self._agent_terminal_unavailable()
+            return
+        try:
+            preferences, revision = read_preferences()
+            command = load_ai_settings().pi_agent_command
+        except (OSError, ValueError) as exc:
+            self._ai_transient_toast(f"Cannot load Research Skills settings: {exc}")
+            return
+        if preferences.folder != folder:
+            self.on_research_settings_changed()
+            self._ai_transient_toast("The Research skills folder changed. Open Skills again.")
+            return
+        token = self._skill_launch_token = object()
+        root = self._record_layout.root
+        generations = (self._case_generation, self._agent_followup_generation)
+        active = self._agent_terminal_active
+        endpoint = self._agent_followup_endpoint
+        self._research_skills_picker.set_sensitive(False)
+
+        def is_current() -> bool:
+            if token is not self._skill_launch_token:
+                return False
+            if (generations != (self._case_generation, self._agent_followup_generation)
+                    or root != self._record_layout.root):
+                self._cancel_skill_launch()
+                return False
+            try:
+                if read_preferences() == (preferences, revision) and load_ai_settings().pi_agent_command == command:
+                    return True
+            except (OSError, ValueError):
+                pass
+            self.on_research_settings_changed()
+            self._ai_transient_toast("Research settings changed. Open Skills again.")
+            return False
+
+        def finish(
+            pin: ResearchPin | None, argv: list[str] | None, body: str | None,
+            working: bool, error: Exception | None,
+        ) -> bool:
+            if not is_current():
+                return GLib.SOURCE_REMOVE
+            if error is not None:
+                self._cancel_skill_launch()
+                self._ai_transient_toast(str(error))
+                if isinstance(error, SkillChanged):
+                    self._research_skills_picker.refresh()
+                return GLib.SOURCE_REMOVE
+            if not confirmed and (working or self._skill_would_discard_answer()):
+                dialog = Adw.MessageDialog(
+                    transient_for=self.win, heading="Start new research?",
+                    body="Starting this skill will replace the current Agent session and any unsaved live answer.",
+                )
+                dialog.add_response("cancel", "Cancel")
+                dialog.add_response("start", "Start New Research")
+                dialog.set_response_appearance("start", Adw.ResponseAppearance.DESTRUCTIVE)
+                dialog.set_default_response("cancel")
+                dialog.set_close_response("cancel")
+                self._skill_replacement_dialog = dialog
+
+                def respond(_dialog, response: str) -> None:
+                    if is_current():
+                        self._skill_replacement_dialog = None
+                        self._cancel_skill_launch()
+                        if response == "start":
+                            # Confirming can take time. Recheck files, case and model
+                            # against the same selection, never a fresh body/title.
+                            self._start_research_skill(folder, skill, confirmed=True)
+
+                dialog.connect("response", respond)
+                dialog.present()
+                return GLib.SOURCE_REMOVE
+            self._cancel_skill_launch()
+            if body is not None and pin is not None and argv is not None:
+                self._start_agent_terminal(body, f"Research skill: {skill.title}", root, pin, argv, preferences)
+            return GLib.SOURCE_REMOVE
+
+        def preflight() -> None:
+            try:
+                read_selected_skill(folder, skill)
+                argv = self._resolve_agent_command(command)
+                if preferences.model_key is not None:
+                    provider, model_id = preferences.model_key
+                    try:
+                        catalog = available_pi_models(argv)
+                    except PiRuntimeError as exc:
+                        raise ValueError(f"Cannot verify the skill model. Refresh models in Settings → Agent: {exc}") from exc
+                    model = next((model for model in catalog if model.settings_key == preferences.model_key), None)
+                    if model is None:
+                        raise ValueError(f"Skill model {provider} / {model_id} is unavailable. Check Pi /login or change Skill model in Settings → Agent.")
+                    if preferences.effort and preferences.effort not in model.supported_thinking_levels:
+                        raise ValueError("Skill reasoning effort is unavailable for this model. Change it in Settings → Agent.")
+                pin = self._capture_question_pin(root)
+                working = active and not confirmed
+                if working and endpoint is not None:
+                    try:
+                        working = FollowUpClient(endpoint, timeout=0.5).status() != "ready"
+                    except FollowUpError:
+                        pass  # An unverified active session may still be working.
+                body = read_selected_skill(folder, skill)
+            except (OSError, ValueError) as exc:
+                GLib.idle_add(finish, None, None, None, False, exc)
+            else:
+                GLib.idle_add(finish, pin, argv, body, working, None)
+
+        threading.Thread(target=preflight, name="focus-skill-preflight", daemon=True).start()
+
+    def _skill_would_discard_answer(self) -> bool:
+        # Always inspect the live answer, not the older Saved Answer on screen.
+        live = self._agent_live_snapshot
+        if self._agent_followup_pending or (live is not None and live.answer_id not in self._agent_saved_ids):
+            return True
+        if self._agent_answer_artifact_path is not None:
+            # The bridge can be ready before the GTK answer poll sees that revision.
+            result = read_focus_answer_artifact(self._agent_answer_artifact_path,
+                run_id=self._agent_run_id, last_revision=self._agent_answer_revision)
+            return bool(result.artifact and result.artifact.markdown)
+        return False
+
+    @staticmethod
+    def _capture_question_pin(root: Path) -> ResearchPin:
+        try:
+            return ResearchPin.capture(root)
+        except (ValueError, OSError) as exc:
+            raise ValueError("Research inputs unavailable. Check artifacts/source_map.json and original text_pages; "
+                             "restart Focus after application updates. Existing answers remain readable.") from exc
+
+    @staticmethod
+    def _resolve_agent_command(command: str) -> list[str]:
+        try:
+            argv = resolve_pi_agent_argv(command.strip() or DEFAULT_PI_AGENT_COMMAND, path_env=os.environ.get("PATH"))
+        except ValueError as exc:
+            raise ValueError(f"Invalid PI command: {exc}") from exc
+        if not argv:
+            raise ValueError("PI command is empty.")
+        if incompatible := incompatible_pi_agent_flag(argv):
+            raise ValueError(f"PI option {incompatible} is incompatible with the embedded session.")
+        argv[0] = os.path.expanduser(argv[0])
+        if shutil.which(argv[0]) is None:
+            raise ValueError("PI executable not found. Install PI or set the PI command in Settings.")
+        return argv
 
     def _launch_agent_question(self) -> None:
         if Vte is None or self._agent_terminal is None:
@@ -7765,69 +7942,22 @@ class Focus(Adw.Application):
         if not question:
             self._ai_transient_toast("Enter a question to launch the Agent.")
             return
-        # Failed fixed-method/input preflight preserves the displayed answer.
+        root = self._record_layout.root
         try:
-            from .research_runtime import ResearchPin
-            pending_pin = ResearchPin.capture(self._record_layout.root)
-        except (ValueError, OSError):
-            self._ai_transient_toast(
-                "Research method or inputs unavailable. Check artifacts/source_map.json and original text_pages; "
-                "restart Focus after application updates. Existing answers remain readable."
-            )
+            argv = self._resolve_agent_command(load_ai_settings().pi_agent_command)
+            pin = self._capture_question_pin(root)
+        except (ValueError, OSError) as exc:
+            self._ai_transient_toast(str(exc))
             return
-        self._stop_agent_terminal()
-        self._stop_agent_answer_polling()
-        self._agent_research_pin = pending_pin
-        self._set_agent_subview(AGENT_SUBVIEW_SESSION)
-        self._ai_settings = load_ai_settings()
-        self._agent_initial_question = question
-        self._agent_followup_draft = ""
-        self._agent_followup_status = ""
-        if self._agent_followup_entry is not None:
-            self._agent_followup_entry.set_text("")
-        prompt_path = self._write_agent_prompt_file(
-            self._compose_agent_prompt(question)
-        )
-        self._start_agent_terminal(prompt_path)
+        self._start_agent_terminal(question, question, root, pin, argv)
 
-    def _start_agent_terminal(self, prompt_path: Path) -> None:
+    def _start_agent_terminal(
+        self, question: str, label: str, root: Path, pin: ResearchPin, command_argv: list[str],
+        skill_preferences: SkillPreferences | None = None,
+    ) -> None:
         terminal = self._agent_terminal
         if Vte is None or terminal is None:
             self._agent_terminal_unavailable()
-            return
-        self._ai_settings = load_ai_settings()
-        settings = self._ai_settings
-        command = settings.pi_agent_command.strip() or DEFAULT_PI_AGENT_COMMAND
-        try:
-            command_argv = resolve_pi_agent_argv(
-                command,
-                path_env=os.environ.get("PATH"),
-            )
-        except ValueError as exc:
-            self._ai_transient_toast(f"Invalid PI command: {exc}")
-            return
-        if not command_argv:
-            self._ai_transient_toast("PI command is empty.")
-            return
-        incompatible_flag = incompatible_pi_agent_flag(command_argv)
-        if incompatible_flag:
-            self._ai_transient_toast(
-                f"PI option {incompatible_flag} is incompatible with the embedded session."
-            )
-            return
-        executable = command_argv[0]
-        if os.path.sep in executable:
-            executable_path = Path(executable).expanduser()
-            if not executable_path.is_file() or not os.access(executable_path, os.X_OK):
-                self._ai_transient_toast(
-                    "PI executable not found. Install PI or set the PI command in Settings."
-                )
-                return
-            command_argv[0] = str(executable_path)
-        elif shutil.which(executable) is None:
-            self._ai_transient_toast(
-                "PI executable not found. Install PI or set the PI command in Settings."
-            )
             return
         wrapper = PROJECT_DIR / "scripts" / "focus-agent-vte.sh"
         if not wrapper.is_file():
@@ -7855,80 +7985,76 @@ class Focus(Adw.Application):
                 "Follow-up bridge is missing; initial questions and Session remain available."
             )
 
+        workspace = None
         try:
+            pin.assert_current(root)
             workspace = self._create_agent_workspace()
-        except OSError as exc:
-            self._ai_transient_toast(f"Unable to create Agent workspace: {exc}")
-            return
-        self._agent_workspace_path = workspace
-        research_pin = getattr(self, "_agent_research_pin", None)
-        try:
-            if research_pin is None:
-                raise ValueError("A new question must capture the fixed method first.")
-            research_pin.assert_current(self._record_layout.root)
-            from .research_runtime import stage_research_resources
-            research_resources = stage_research_resources(research_pin, workspace)
-        except (ValueError, OSError):
-            shutil.rmtree(workspace, ignore_errors=True)
-            self._agent_workspace_path = None
-            self._ai_transient_toast("Research inputs or method changed. Start a new session.")
-            return
-        self._cleanup_agent_answer_artifact()
-        try:
+            research_resources = stage_research_resources(pin, workspace)
+            # The wrapper removes this copy; it must never receive a source SKILL.md.
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=workspace, delete=False) as prompt:
+                prompt.write(self._compose_agent_prompt(question))
+                prompt_path = Path(prompt.name)
             runtime_dir = focus_answer_runtime_dir()
             run_id = create_focus_run_id()
             answer_artifact = focus_answer_artifact_path(run_id, runtime_dir)
         except (OSError, ValueError) as exc:
-            self._ai_transient_toast(f"Unable to create Agent answer transport: {exc}")
+            if workspace is not None:
+                shutil.rmtree(workspace, ignore_errors=True)
+            self._ai_transient_toast(f"Unable to prepare Agent session: {exc}")
             return
-        remove_focus_answer_artifact(answer_artifact)
+
+        # All preflight and private staging succeeded. Use a fresh VTE instance
+        # so a deferred exit from the replaced child cannot touch this session.
+        self._stop_agent_terminal()
+        replacement = self._build_agent_terminal()
+        self._agent_terminal = replacement
+        self._agent_session_widget.remove(terminal)
+        self._agent_session_widget.append(replacement)
+        terminal = replacement
+        terminal.connect("child-exited", self._on_agent_terminal_child_exited, workspace)
+        self._agent_workspace_path = workspace
+        self._agent_research_pin = pin
+        self._agent_initial_question = label
+        self._agent_question_queue = [label]
+        self._agent_followup_draft = ""
+        self._agent_followup_status = ""
+        if self._agent_followup_entry is not None:
+            self._agent_followup_entry.set_text("")
         self._agent_run_id = run_id
         self._agent_answer_artifact_path = answer_artifact
-        self._agent_answer_revision = 0
         self._agent_answer_diagnostics = {}
-        followup_runtime = None
         if followup_extension.is_file():
             try:
-                self._agent_followup_generation += 1
-                followup_runtime = create_followup_runtime(
-                    generation=self._agent_followup_generation
-                )
-                self._agent_followup_endpoint = followup_runtime.endpoint
-                self._agent_followup_runtime_dir = followup_runtime.directory
+                followup = create_followup_runtime(generation=self._agent_followup_generation)
+                self._agent_followup_endpoint = followup.endpoint
+                self._agent_followup_runtime_dir = followup.directory
             except OSError:
-                followup_runtime = None
-                self._agent_followup_endpoint = None
-                self._agent_followup_runtime_dir = None
-        else:
-            self._agent_followup_endpoint = None
-            self._agent_followup_runtime_dir = None
-        self._agent_followup_pending = False
-        self._agent_question_queue = (
-            [self._agent_initial_question] if self._agent_initial_question else []
-        )
+                pass  # The initial question and Session still work.
         env = os.environ.copy()
+        for key in ("FOCUS_SKILL_PROVIDER", "FOCUS_SKILL_MODEL", "FOCUS_SKILL_EFFORT",
+                    "FOCUS_AGENT_FOLLOWUP_SOCKET", "FOCUS_AGENT_FOLLOWUP_TOKEN", "FOCUS_AGENT_FOLLOWUP_RUNTIME_DIR"):
+            env.pop(key, None)
+        if skill_preferences is not None and skill_preferences.model_key is not None:
+            env["FOCUS_SKILL_PROVIDER"], env["FOCUS_SKILL_MODEL"] = skill_preferences.model_key
+            if skill_preferences.effort is not None:
+                env["FOCUS_SKILL_EFFORT"] = skill_preferences.effort
         env.update(
             {
                 "FOCUS_AGENT_PROMPT_FILE": str(prompt_path),
-                "FOCUS_AGENT_CASE_ROOT": str(self._record_layout.root),
+                "FOCUS_AGENT_CASE_ROOT": str(root),
                 "FOCUS_AGENT_WORKSPACE": str(workspace),
                 "FOCUS_AGENT_RUN_ID": run_id,
                 "FOCUS_AGENT_ANSWER_ARTIFACT": str(answer_artifact),
                 "FOCUS_AGENT_RUNTIME_DIR": str(runtime_dir),
-                "FOCUS_AGENT_ANSWER_PROTOCOL": str(FOCUS_AGENT_ANSWER_PROTOCOL_FILE),
+                "FOCUS_AGENT_ANSWER_PROTOCOL": str(research_resources / "agent_answer.py"),
                 "FOCUS_RECORD_AGENT_HELPER": str(helper),
                 "FOCUS_RECORD_AGENT_PYTHON": self._agent_python_path(),
-                "FOCUS_PI_PROJECT_DIR": str(FOCUS_PI_PROJECT_DIR),
+                "FOCUS_PI_PROJECT_DIR": str(research_resources),
                 "FOCUS_PI_SETTINGS_FILE": str(pi_settings),
                 "FOCUS_AGENT_COMMAND_ARGC": str(len(command_argv)),
             }
         )
-        from .research_runtime import PROFILE_REF_ENV, INPUTS_ENV, CASE_ENV, COMPONENT_ENV
-        for key in (PROFILE_REF_ENV, INPUTS_ENV, CASE_ENV, COMPONENT_ENV):
-            env.pop(key, None)
-        env = research_pin.environment(env)
-        env["FOCUS_PI_PROJECT_DIR"] = str(research_resources)
-        env["FOCUS_AGENT_ANSWER_PROTOCOL"] = str(research_resources / "agent_answer.py")
+        env = pin.environment(env)
         if self._agent_followup_endpoint is not None:
             env.update(
                 {
@@ -7947,10 +8073,9 @@ class Focus(Adw.Application):
             executable_dir = str(Path(command_argv[0]).parent)
             env["PATH"] = executable_dir + os.pathsep + env.get("PATH", "")
         argv = ["bash", str(wrapper)]
-        cwd = str(self._record_layout.root)
+        cwd = str(root)
+        self._agent_spawn_cancel = Gio.Cancellable()
         try:
-            terminal.reset(True, True)
-            _apply_focus_terminal_theme(terminal)
             terminal.spawn_async(
                 Vte.PtyFlags.DEFAULT,
                 cwd,
@@ -7960,22 +8085,20 @@ class Focus(Adw.Application):
                 None,
                 None,
                 -1,
-                None,
+                self._agent_spawn_cancel,
                 self._on_agent_terminal_spawned,
-                None,
+                (workspace, run_id),
             )
         except Exception as exc:  # noqa: BLE001
+            self._stop_agent_terminal()
+            shutil.rmtree(workspace, ignore_errors=True)
             self._ai_transient_toast(f"Unable to start embedded Agent: {exc}")
             return
 
-        # Only clear after fixed-method staging and launch preflight succeed.
-        self._clear_agent_answer()
         self._agent_terminal_active = True
-        self._agent_terminal_closing = False
         self._ensure_ai_panel_visible()
         self._set_ai_view(AI_VIEW_AGENT_QA)
         self._set_agent_subview(AGENT_SUBVIEW_SESSION)
-        self._start_agent_answer_polling()
         self._update_ai_status(
             "Agent is researching the record…",
             spinning=True,
@@ -7984,35 +8107,37 @@ class Focus(Adw.Application):
 
     def _on_agent_terminal_spawned(
         self,
-        _terminal: Any,
+        terminal: Any,
         pid: int,
         error: GLib.Error | None,
-        _user_data: object,
+        launch: tuple[Path, str],
     ) -> None:
+        workspace, run_id = launch
+        if terminal is not self._agent_terminal or run_id != self._agent_run_id:
+            if error is None and pid > 0:
+                self._terminate_agent_child(pid)
+            shutil.rmtree(workspace, ignore_errors=True)
+            return
+        self._agent_spawn_cancel = None
         if error is not None:
-            self._agent_terminal_active = False
-            self._agent_terminal_pid = None
-            if self._agent_answer_poll_id is not None:
-                GLib.source_remove(self._agent_answer_poll_id)
-                self._agent_answer_poll_id = None
-            self._poll_agent_answer()
-            self._sync_agent_session_widget_visibility()
-            self._queue_embedded_ai_panel_height_update()
+            self._stop_agent_terminal()
+            shutil.rmtree(workspace, ignore_errors=True)
             self._update_ai_status("Unable to start the Agent.", spinning=False)
             self._ai_transient_toast(f"Unable to start embedded Agent: {error.message}")
             return
         self._agent_terminal_pid = int(pid)
+        self._clear_agent_answer()
+        self._start_agent_answer_polling()
 
-    def _on_agent_terminal_child_exited(self, _terminal: Any, _status: int) -> None:
-        if self._agent_terminal_ignore_next_exit:
-            # The session was intentionally stopped (new Ask, case switch, or
-            # app close); do not let its exit event touch the new UI state.
-            self._agent_terminal_ignore_next_exit = False
+    def _on_agent_terminal_child_exited(self, terminal: Any, _status: int, workspace: Path) -> None:
+        # Also clean up if the wrapper could not run its own EXIT trap.
+        shutil.rmtree(workspace, ignore_errors=True)
+        if terminal is not self._agent_terminal or not self._agent_terminal_active:
             return
-        closing = self._agent_terminal_closing
+        self._cancel_skill_launch()
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
-        self._agent_terminal_closing = False
+        self._agent_workspace_path = None
         self._agent_question_queue = []
         self._agent_followup_pending = False
         self._invalidate_agent_followup()
@@ -8026,8 +8151,6 @@ class Focus(Adw.Application):
         self._queue_embedded_ai_panel_height_update()
         if self._agent_answer_has_content():
             message = self._agent_answer_status or "Final answer ready."
-        elif closing:
-            message = "Agent session closed."
         else:
             message = "Agent session ended without a final answer."
         self._update_ai_status(message, spinning=False)
@@ -8057,16 +8180,31 @@ class Focus(Adw.Application):
             return True
         return False
 
+    @staticmethod
+    def _terminate_agent_child(pid: int) -> None:
+        try:
+            # VTE starts a new session for the wrapper. Stop Pi as well as Bash,
+            # so an in-flight provider turn cannot outlive a replaced session.
+            if os.getpgid(pid) == pid:
+                os.killpg(pid, signal.SIGTERM)
+            else:
+                os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
     def _stop_agent_terminal(self) -> None:
-        if self._agent_terminal_active and self._agent_terminal_pid is not None:
-            self._agent_terminal_closing = True
-            self._agent_terminal_ignore_next_exit = True
-            try:
-                os.kill(self._agent_terminal_pid, signal.SIGTERM)
-            except OSError:
-                pass
+        self._cancel_skill_launch()
+        if self._agent_spawn_cancel is not None:
+            self._agent_spawn_cancel.cancel()
+            self._agent_spawn_cancel = None
+            if self._agent_workspace_path is not None:
+                shutil.rmtree(self._agent_workspace_path, ignore_errors=True)
+        self._agent_workspace_path = None
+        pid = self._agent_terminal_pid if self._agent_terminal_active else None
         self._agent_terminal_active = False
         self._agent_terminal_pid = None
+        if pid is not None:
+            self._terminate_agent_child(pid)
         self._agent_research_pin = None
         self._agent_question_queue = []
         self._agent_followup_pending = False

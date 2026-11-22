@@ -12,3 +12,5 @@ config.json
 # Local PI project runtime state (seeded from defaults)
 .pi/settings.json
 /pi-verification.json
+/research-skills.json
+/.research-skills.json.writer.lock

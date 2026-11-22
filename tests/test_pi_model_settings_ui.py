@@ -44,6 +44,8 @@ def model_window(
 ) -> SimpleNamespace:
     window = SimpleNamespace(
         _pi_model_closed=False,
+        _pi_model_settings_error="",
+        _sync_skill_rows=lambda: None,
         _pi_model_generation=1,
         _pi_model_options=[],
         _pi_available_model_keys=set(),

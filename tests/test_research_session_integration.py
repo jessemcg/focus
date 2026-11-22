@@ -14,28 +14,25 @@ def setup_case(tmp_path, monkeypatch):
     (root / "text_pages/0001.txt").write_text("The court denied the motion.")
     (root / "artifacts/source_map.json").write_text(json.dumps({"schema_version": 2, "pages": [], "documents": []}))
     monkeypatch.setattr(ui, "Vte", object())
-    monkeypatch.setattr(ui, "load_ai_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(ui, "load_ai_settings", lambda: SimpleNamespace(pi_agent_command="/usr/bin/true"))
     owner = SimpleNamespace(_agent_terminal=object(), _record_layout=SimpleNamespace(root=root),
                             _agent_question_entry=Mock(get_text=lambda: "Synthetic question?"),
-                            _agent_followup_entry=Mock(), _agent_terminal_unavailable=Mock(),
-                            _ai_transient_toast=Mock(),
-                            _stop_agent_terminal=Mock(), _stop_agent_answer_polling=Mock(),
-                            _clear_agent_answer=Mock(), _set_agent_subview=Mock(),
-                            _write_agent_prompt_file=Mock(return_value=tmp_path / "synthetic-prompt"),
-                            _compose_agent_prompt=Mock(return_value="Synthetic prompt"), _start_agent_terminal=Mock())
+                            _agent_terminal_unavailable=Mock(), _ai_transient_toast=Mock(),
+                            _resolve_agent_command=ui.Focus._resolve_agent_command,
+                            _capture_question_pin=ui.Focus._capture_question_pin,
+                            _start_agent_terminal=Mock())
     return root, owner
 
 
 def test_fresh_question_needs_no_profile_and_failed_preflight_preserves_answer(tmp_path, monkeypatch):
     root, owner = setup_case(tmp_path, monkeypatch)
     ui.Focus._launch_agent_question(owner)
-    owner._clear_agent_answer.assert_not_called()  # Clear only after launch preflight succeeds.
     owner._start_agent_terminal.assert_called_once()
-    assert owner._agent_research_pin.metadata()["research_method"]["id"] == "focus-record-qa"
+    question, label, case, pin, argv = owner._start_agent_terminal.call_args.args
+    assert (question, label, case, argv) == ("Synthetic question?", "Synthetic question?", root, ["/usr/bin/true"])
+    assert pin.metadata()["research_method"]["id"] == "focus-record-qa"
     (root / "artifacts/source_map.json").write_text("invalid map")
     ui.Focus._launch_agent_question(owner)
-    assert owner._clear_agent_answer.call_count == 0
-    assert owner._stop_agent_terminal.call_count == 1
     assert owner._start_agent_terminal.call_count == 1
 
 
@@ -43,7 +40,7 @@ def test_fresh_question_needs_no_profile_and_failed_preflight_preserves_answer(t
 def test_followup_rechecks_before_transport(tmp_path, monkeypatch, changed):
     root, owner = setup_case(tmp_path, monkeypatch)
     ui.Focus._launch_agent_question(owner)
-    pin = owner._agent_research_pin
+    pin = owner._start_agent_terminal.call_args.args[3]
     owner._on_agent_followup_result = Mock()
     client = Mock()
     client.return_value.submit.return_value = "submitted"

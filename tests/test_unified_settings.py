@@ -1,5 +1,8 @@
 """Native settings with fabricated preferences and model adapters."""
+import tempfile
 import unittest
+from pathlib import Path
+from focus.research_skills import SkillPreferences, read_preferences, save_preferences
 from unittest.mock import Mock, patch
 from focus.ui import settings as ui
 from focus.ui.settings_navigation import descendants
@@ -76,6 +79,58 @@ class UnifiedSettingsTests(unittest.TestCase):
         w._pi_model_closed = True
         w._finish_pi_model_load(0, [], "late", None, "medium")
         self.assertIs(w._pi_model_options, options)
+
+    def test_skill_only_save_retains_agent_file_and_catalog_failure_retains_draft(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"FOCUS_CONFIG_DIR": directory}):
+            config = Path(directory)
+            pi_path = config / "pi/settings.json"
+            pi_path.parent.mkdir()
+            ordinary = b'{"defaultProvider":"synthetic", "defaultModel":"saved"}\n'
+            pi_path.write_bytes(ordinary)
+            w = self.window()
+            model = ui.PiModel("synthetic", "standard", "Same display name")
+            w._finish_pi_model_load(0, [model], "", ("synthetic", "saved"), "medium")
+            self.assertFalse(w.skill_model_row.get_visible())
+            w._set_skill_draft(SkillPreferences(str(config / "skills")))
+            self.assertTrue(w.skill_model_row.get_visible())
+            self.assertIn("synthetic / standard", w.skill_model_row.get_model().get_string(1))
+            w.skill_model_row.set_selected(1)
+            w.skill_effort_row.set_selected(w._skill_effort_options.index("low"))
+            draft = w._skill_draft
+            self.assertEqual(draft, SkillPreferences(str(config / "skills"), model.settings_key, "low"))
+            w._finish_pi_model_load(0, [], "synthetic offline", ("synthetic", "saved"), "medium")
+            self.assertIn("synthetic offline", w.skill_model_row.get_subtitle())
+            self.assertEqual(w._skill_draft, draft)
+            self.assertEqual(w._skill_model_options[w.skill_model_row.get_selected()], model.settings_key)
+            self.assertEqual(read_preferences(), (SkillPreferences(), "missing"))
+            with patch.object(ui, "save_ai_settings") as general, patch.object(ui, "save_project_pi_runtime") as save_model:
+                w._on_save_clicked(None)
+            general.assert_not_called()
+            save_model.assert_not_called()
+            self.assertEqual(pi_path.read_bytes(), ordinary)
+            self.assertEqual(read_preferences()[0], draft)
+            w._clear_skill_folder(w.skill_clear_button)
+            self.assertFalse(w.skill_model_row.get_visible())
+            self.assertTrue(w._on_settings_close_request())
+            w._session.dialog.response("discard")
+            self.assertEqual(read_preferences()[0], draft)
+
+    def test_stale_skills_save_preserves_its_draft_but_general_save_advances(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"FOCUS_CONFIG_DIR": directory}):
+            w = self.window()
+            newer = SkillPreferences(str(Path(directory) / "another-writer"))
+            save_preferences(newer, "missing")
+            draft = SkillPreferences(str(Path(directory) / "retained-draft"))
+            w._set_skill_draft(draft)
+            w._ai_font_size_row.set_value(19)
+            with patch.object(ui, "save_ai_settings"), patch.object(w, "_show_status_toast") as status:
+                w._on_save_clicked(None)
+            self.assertIn("Saved Focus settings", status.call_args.args[0])
+            self.assertIn("stale_settings", status.call_args.args[0])
+            self.assertEqual(w._draft_snapshot()[:2], w._session.baseline[:2])
+            self.assertEqual(w._session.baseline[-1], SkillPreferences())
+            self.assertEqual(w._skill_draft, draft)
+            self.assertEqual(read_preferences()[0], newer)
 
     def test_highlights_has_only_retained_color_rows(self):
         w = self.window()

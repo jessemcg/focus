@@ -11,7 +11,16 @@ runtime_dir="${FOCUS_AGENT_RUNTIME_DIR:-}"
 answer_protocol="${FOCUS_AGENT_ANSWER_PROTOCOL:-}"
 agent_argc="${FOCUS_AGENT_COMMAND_ARGC:-0}"
 cache_root="${XDG_CACHE_HOME:-${HOME:-}/.cache}"
+workspace="${FOCUS_AGENT_WORKSPACE:-}"
 agent_command=()
+
+cleanup() {
+  if [[ -n "$workspace" ]]; then rm -rf -- "$workspace"; fi
+  if [[ -n "$prompt_file" ]]; then rm -f -- "$prompt_file"; fi
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 if [[ "$agent_argc" =~ ^[0-9]+$ ]] && (( agent_argc > 0 )); then
   for ((i = 0; i < agent_argc; i++)); do
@@ -29,18 +38,11 @@ fi
 
 workspace_parent="$cache_root/focus-agent-workspaces"
 mkdir -p "$workspace_parent"
-if [[ -n "${FOCUS_AGENT_WORKSPACE:-}" ]]; then
-  workspace="$FOCUS_AGENT_WORKSPACE"
+if [[ -n "$workspace" ]]; then
   mkdir -p "$workspace"
 else
   workspace="$(mktemp -d "$workspace_parent/workspace.XXXXXX")"
 fi
-
-cleanup() {
-  rm -rf "$workspace"
-  rm -f "$prompt_file"
-}
-trap cleanup EXIT
 
 if [[ -z "$prompt_file" || ! -f "$prompt_file" ]]; then
   printf 'Focus Agent prompt file not found: %s\n' "$prompt_file" >&2
@@ -128,8 +130,16 @@ followup_args=()
 if [[ -f "$workspace/.pi/extensions/focus-followup-bridge.ts" ]]; then
   followup_args=(--extension "$workspace/.pi/extensions/focus-followup-bridge.ts")
 fi
+model_args=()
+if [[ -n "${FOCUS_SKILL_PROVIDER:-}" && -n "${FOCUS_SKILL_MODEL:-}" ]]; then
+  model_args=(--provider "$FOCUS_SKILL_PROVIDER" --model "$FOCUS_SKILL_MODEL")
+  if [[ -n "${FOCUS_SKILL_EFFORT:-}" ]]; then
+    model_args+=(--thinking "$FOCUS_SKILL_EFFORT")
+  fi
+fi
 prompt="$(cat "$prompt_file")"
 "${agent_command[@]}" \
+  "${model_args[@]}" \
   --approve \
   --no-session \
   --no-extensions \

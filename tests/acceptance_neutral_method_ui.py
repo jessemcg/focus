@@ -91,8 +91,9 @@ def run():
         application._set_ai_view(core.AI_VIEW_AGENT_QA)
         launches = []
         real_start = application._start_agent_terminal
-        def simulated_start(prompt):
-            pin = application._agent_research_pin
+        def simulated_start(_question, _label, root, pin, _argv):
+            application._agent_research_pin = pin
+            assert root == bundle
             pin.assert_current(bundle)
             workspace = ROOT / f"workspace-{len(launches)}"
             workspace.mkdir(mode=0o700)
@@ -102,7 +103,8 @@ def run():
             application._clear_agent_answer()
         application._start_agent_terminal = simulated_start
         application._agent_question_entry.set_text("Why was the motion denied?")
-        application._launch_agent_question()
+        with patch.object(application, "_resolve_agent_command", return_value=["/usr/bin/true"]):
+            application._launch_agent_question()
         assert len(launches) == 1
         artifact = SimpleNamespace(markdown='# Access Was Refused\n*Motion was denied*\n\nThe court denied the motion because “access was refused”.',
                                    diagnostics={"stop_reason": "stop"}, status="complete", capture="submit_tool", answer_kind="answered")
@@ -123,12 +125,7 @@ def run():
         # /usr/bin/true is an offline sentinel, never Pi or a live model.
         source_page = bundle / "text_pages/0001.txt"
         source_page.write_text("Changed between capture and launch")
-        from dataclasses import replace
-        previous_settings = application._ai_settings
-        sentinel_settings = replace(previous_settings, pi_agent_command="/usr/bin/true")
-        with patch.object(module, "load_ai_settings", return_value=sentinel_settings):
-            real_start(ROOT / "unused-synthetic-prompt")
-        application._ai_settings = previous_settings
+        real_start("Unused synthetic question", "Synthetic", bundle, launches[0], ["/usr/bin/true"])
         assert application._agent_displayed_snapshot is snapshot
         assert application._agent_workspace_path is None
         source_page.write_bytes(original[source_page])
@@ -193,7 +190,12 @@ def run():
                         if isinstance(w, core.Adw.PreferencesRow) and w.get_title() != "Agent"]
         assert agent_titles == [
             "PI command", "Speech-to-text question file", "PI Model", "Reasoning Effort",
+            "Research skills folder", "Skill model", "Skill reasoning effort",
         ], agent_titles
+        assert not application._research_skills_picker.get_visible()
+        assert not window.skill_model_row.get_visible() and not window.skill_effort_row.get_visible()
+        assert not (core.CONFIG_FILE.parent / "research-skills.json").exists()
+        assert not (core.CONFIG_FILE.parent / ".research-skills.json.writer.lock").exists()
         labels = [w.get_label() for w in widgets(window) if isinstance(w, core.Gtk.Label)]
         assert not any("Profile" in text or "Practice profiles" in text for text in labels)
         assert not application._title_widget.get_subtitle()

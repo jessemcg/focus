@@ -36,8 +36,8 @@ The workflow is text-only. If extracted text cannot establish handwriting, check
   ```
 
   The title is specific to the record question (about 3–8 words, at most 64 characters). The subtitle states the bottom line in about 2–5 words (at most 40 characters) and must not repeat the title, use a generic label, or overstate certainty. Both must reflect any material uncertainty accurately.
-- Lead the body directly with the direct answer and usually finish within two to four short paragraphs or list items.
-- Include only allegations, findings, or history that directly explain the event asked about; do not add merely related background.
+- Lead with the direct answer. For a short question, two to four short paragraphs or list items are the default, not a limit on an explicitly requested report. Follow the question's requested sections and depth while keeping the title, bottom-line subtitle, and Focus evidence and quotation rules.
+- Include only allegations, findings, or history relevant to the questions asked; do not add merely related background.
 - Anchor important points with direct source quotations using the guidance below.
 - Prefer no bold text because Focus also makes bold spans clickable.
 - Omit record labels, citation keys, paths, filenames, page numbers, grep lines, and tool output from the answer.
@@ -45,7 +45,7 @@ The workflow is text-only. If extracted text cannot establish handwriting, check
 
 ## Direct quotations from source material
 
-- Select continuous, verbatim source quotations normally containing 6–12 words, usually 8–10, from a source text page you have actually read. Choose the shortest natural phrase that meaningfully distinguishes the relevant action, condition, reason, or disputed assertion and helps the reader locate the passage through Focus's clickable phrase search. Never quote navigation snippets, overview prose, participant metadata, or generated summaries as source evidence.
+- Select continuous, verbatim source quotations normally containing 6–12 words, usually 8–10, from a source text page you have actually read. Choose the shortest natural phrase that meaningfully distinguishes the relevant action, condition, reason, or disputed assertion and helps the reader locate the passage through Focus's clickable phrase search. Never quote the question or its Research Skill instructions, navigation snippets, overview prose, participant metadata, or generated summaries as source evidence.
 - Prefer distinctive substantive wording over stock courtroom language, routine appearances, generic names/dates, and boilerplate. Include enough surrounding source wording to reduce incidental phrase-search matches, but do not add irrelevant identifiers merely to make a quotation unique. Repeated or copied source passages may legitimately produce multiple useful hits; do not require or claim record-wide uniqueness, or run extra searches to establish it.
 - Do not pad, truncate, or rewrite source wording to meet the range. Useful shorter or longer quotations remain valid exceptions; length guidance and warnings must never cause rejection or another model pass.
 - Weave direct quotations into your own sentences, integrating each quotation grammatically instead of stating a paraphrase and then duplicating it as a quotation. For example, if a fictional source says `The inspector requested access to the site before the scheduled inspection`, write: The inspector requested “access to the site before the scheduled inspection”. Do not write: The inspector asked to enter the site before the inspection; the inspector requested “access to the site before the scheduled inspection”.

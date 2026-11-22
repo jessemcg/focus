@@ -141,6 +141,8 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
   const python = process.env.FOCUS_RECORD_AGENT_PYTHON ?? "python3";
   const helper = process.env.FOCUS_RECORD_AGENT_HELPER ?? "";
   const runId = process.env.FOCUS_AGENT_RUN_ID ?? "";
+  const expectedProvider = process.env.FOCUS_SKILL_PROVIDER;
+  const expectedModel = process.env.FOCUS_SKILL_MODEL;
   const artifactPath = resolve(process.env.FOCUS_AGENT_ANSWER_ARTIFACT ?? "");
   const runtimeDir = resolve(process.env.FOCUS_AGENT_RUNTIME_DIR ?? dirname(artifactPath));
   const emptyCounters = (): Counters => ({
@@ -296,6 +298,25 @@ export default function focusRecordAgent(pi: ExtensionAPI) {
     }
     activeThinking = ctx.thinkingLevel;
   });
+
+  // Pi may fall back when its requested model cannot be resolved at startup.
+  // The input hook runs before expansion/dispatch, also for bridge follow-ups.
+  // Throwing from a notification hook would not stop a turn; handle the input.
+  if (expectedProvider !== undefined || expectedModel !== undefined) {
+    let modelRejected = false;
+    pi.on("input", async (_event, ctx) => {
+      if (!modelRejected && ctx.model && ctx.model.provider === expectedProvider && ctx.model.id === expectedModel) {
+        return { action: "continue" };
+      }
+      modelRejected = true;
+      // GTK consumes a marker (not a model answer) in its private workspace.
+      await writeFile("skill-model-rejected", "", { mode: 0o600, flag: "wx" }).catch(() => undefined);
+      const expected = `${expectedProvider}/${expectedModel}`;
+      const actual = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "no model";
+      ctx.ui.notify(`Research not sent: expected ${expected}, but Pi selected ${actual}. Refresh models in Focus → Settings → Agent, check Pi /login, then start the skill again.`, "error");
+      return { action: "handled" };
+    });
+  }
 
   pi.on("before_agent_start", () => {
     submitted = false;
