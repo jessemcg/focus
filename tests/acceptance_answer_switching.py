@@ -209,10 +209,14 @@ def prepare():  # type: ignore[no-untyped-def]
     )
     application._agent_live_snapshot = live
     application._display_agent_snapshot(live, is_saved=False)
+    print_button = application._print_answer_button
+    summary_pdf_button = application._summary_open_pdf_button
+    same_pdf_icon = print_button.get_child().get_gicon().equal(summary_pdf_button.get_child().get_gicon())
 
     application._reload_saved_answers()
 
-    state = {"index": 0, "failures": []}
+    state = {"index": 0, "failures": [],
+             "print_visibility": same_pdf_icon and not print_button.get_visible()}
     style_manager = core.Adw.StyleManager.get_default()
 
     def step() -> bool:
@@ -223,12 +227,16 @@ def prepare():  # type: ignore[no-untyped-def]
         answers = application._saved_answers_listing.answers
         saved = answers[i % len(answers)]
         application._on_saved_answer_selected(saved.answer_id)
+        state["print_visibility"] &= print_button.get_visible() and print_button.get_sensitive()
         if i % 2 == 0:
             application._set_ai_view(core.AI_VIEW_FILE)
+            state["print_visibility"] &= not print_button.get_visible()
             application._set_ai_view(core.AI_VIEW_AGENT_QA)
         if i % 3 == 0:
             application._set_agent_subview(core.AGENT_SUBVIEW_SESSION)
+            state["print_visibility"] &= not print_button.get_visible()
             application._set_agent_subview(core.AGENT_SUBVIEW_ANSWER)
+        state["print_visibility"] &= print_button.get_visible()
         if i % 5 == 0:
             style_manager.set_color_scheme(
                 core.Adw.ColorScheme.FORCE_DARK
@@ -315,6 +323,7 @@ def _finish(state: dict) -> None:  # type: ignore[no-untyped-def]
         and displayed.answer_id == expected.answer_id
         and critical_count["n"] == 0
         and position_ok
+        and state["print_visibility"]
         and displayed.research_context == expected.research_context
         and not hasattr(application, "_agent_context_label")
     )
@@ -329,7 +338,7 @@ def _finish(state: dict) -> None:  # type: ignore[no-untyped-def]
         f"summary={render_counts['summary']} structured={render_counts['structured']}) "
         f"gtk_criticals={critical_count['n']} "
         f"position_fraction={None if position is None else round(position.get('fraction', -1), 3)} "
-        f"position_ok={position_ok} ok={ok}",
+        f"position_ok={position_ok} print_visibility_ok={state['print_visibility']} ok={ok}",
         flush=True,
     )
     application._quit_result = 0 if ok else 1

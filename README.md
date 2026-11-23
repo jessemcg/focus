@@ -78,6 +78,7 @@ On an enlarged page image, left-click the image to go forward or right-click it 
 
 The **Answer / Session** controls lead directly into the answer or session view,
 without a metadata line. Research and save metadata remain stored with answers.
+Click the PDF icon beside **Saved** or in a summary’s toolbar to open its PDF, then use your PDF viewer’s **Print** or **Save a Copy** action.
 
 Use **Agent Q&A** to ask questions and follow up. AI questions send selected record
 text to your chosen model provider; check its confidentiality terms before using

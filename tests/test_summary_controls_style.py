@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk
+from gi.repository import Gio, Gtk
 
 from focus.app import Focus
 
@@ -36,8 +36,15 @@ def test_summary_wrapper_style_is_scoped_and_preserves_controls():
     box = Focus._build_wrapping_controls_box(None)
     assert box.has_css_class("focus-summary-controls")
     assert box.get_selection_mode() == Gtk.SelectionMode.NONE
-    for label in ("Open PDF", "Set Bookmark", "Return"):
-        button = Gtk.Button(label=label)
+    owner._set_accessible_label = Focus._set_accessible_label
+    pdf = Focus._build_pdf_button(owner, "Open summary PDF")
+    assert pdf.get_label() is None
+    assert pdf.get_tooltip_text() == "Open summary PDF"
+    assert pdf.get_child().get_gicon().get_file().query_exists(None)
+    assert isinstance(pdf.get_child().get_gicon(), Gio.FileIcon)
+    bookmark = Gtk.Button(label="Set Bookmark")
+    return_to_bookmark = Gtk.Button(label="Return")
+    for button in (pdf, bookmark, return_to_bookmark):
         button.add_css_class("flat")
         box.insert(button, -1)
         assert isinstance(button.get_parent(), Gtk.FlowBoxChild)

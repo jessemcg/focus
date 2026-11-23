@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 import queue
@@ -51,6 +52,7 @@ from .agent_followup import (
     text_transport_error,
 )
 from .answer_metadata import parse_answer_metadata
+from .answer_pdf_preview import StagedAnswerPDF, stage_answer_pdf
 from .pi_runtime import PROJECT_PI_SETTINGS_PATH, PiRuntimeError, available_pi_models
 from .research_runtime import ResearchPin, stage_research_resources
 from .research_skills import (
@@ -88,6 +90,15 @@ SUMMARY_SOURCE_DESCRIPTIONS = {
     SUMMARY_SOURCE_MOTIONS: "Browse prepared motion summaries; verify material points in the record.",
     SUMMARY_SOURCE_MINUTES: "Browse prepared minute-order summaries; verify material points in the record.",
 }
+
+
+@dataclass
+class _AnswerPDFRequest:
+    snapshot: AgentAnswerSnapshot
+    case_generation: int
+    case_root: Path
+    navigation: int
+    cancelled: bool = False
 
 
 class Focus(Adw.Application):
@@ -328,6 +339,9 @@ class Focus(Adw.Application):
         self._saved_answers_popover: SavedAnswersPopover | None = None
         self._saved_answers_button: Adw.SplitButton | None = None
         self._save_answer_button: Gtk.Button | None = None
+        self._print_answer_button: Gtk.Button | None = None
+        self._answer_pdf_request: _AnswerPDFRequest | None = None
+        self._answer_pdf_deletions: set[str] = set()
         self._latest_answer_button: Gtk.Button | None = None
         self._latest_answer_pending = False
         self._last_saved_answer_id = ""
@@ -383,6 +397,16 @@ class Focus(Adw.Application):
         icon.add_css_class("focus-toggle-icon")
         icon.set_valign(Gtk.Align.CENTER)
         return icon
+
+    def _build_pdf_button(self, label: str) -> Gtk.Button:
+        asset = Path(__file__).parent / "ui" / "icons" / "focus-pdf-symbolic.svg"
+        icon = Gio.FileIcon.new(Gio.File.new_for_path(str(asset)))
+        button = Gtk.Button(child=Gtk.Image.new_from_gicon(icon), valign=Gtk.Align.CENTER)
+        button.add_css_class("image-button")
+        button.add_css_class("flat")
+        button.set_tooltip_text(label)
+        self._set_accessible_label(button, label)
+        return button
 
     def _build_labeled_icon(self, label: str, *icon_names: str) -> Gtk.Widget:
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -1037,6 +1061,12 @@ class Focus(Adw.Application):
         self._save_answer_button.connect("clicked", self._on_save_answer_clicked)
         agent_subview_strip.append(self._save_answer_button)
 
+        self._print_answer_button = self._build_pdf_button("Open printable PDF")
+        self._print_answer_button.add_css_class("focus-pill-segment")
+        self._print_answer_button.set_visible(False)
+        self._print_answer_button.connect("clicked", self._on_print_answer_clicked)
+        agent_subview_strip.append(self._print_answer_button)
+
         self._latest_answer_button = Gtk.Button(label="Latest Answer")
         self._latest_answer_button.add_css_class("flat")
         self._latest_answer_button.add_css_class("no-bold")
@@ -1152,13 +1182,7 @@ class Focus(Adw.Application):
         self._summary_next_page_button.set_visible(False)
         summary_row.insert(self._summary_next_page_button, -1)
 
-        self._summary_open_pdf_button = Gtk.Button(label="Open PDF")
-        self._summary_open_pdf_button.add_css_class("flat")
-        self._summary_open_pdf_button.add_css_class("no-bold")
-        self._summary_open_pdf_button.set_valign(Gtk.Align.CENTER)
-        self._summary_open_pdf_button.set_tooltip_text(
-            "Open the page-matched summary PDF for printing"
-        )
+        self._summary_open_pdf_button = self._build_pdf_button("Open summary PDF")
         self._summary_open_pdf_button.connect(
             "clicked", self._on_summary_open_pdf_clicked
         )
@@ -2810,6 +2834,7 @@ class Focus(Adw.Application):
             else AGENT_SUBVIEW_SESSION
         )
         if target != AGENT_SUBVIEW_ANSWER and self._agent_subview_name == AGENT_SUBVIEW_ANSWER:
+            self._cancel_answer_pdf_request()
             self._capture_agent_answer_position()
         self._agent_subview_name = target
         if target == AGENT_SUBVIEW_ANSWER:
@@ -6205,6 +6230,7 @@ class Focus(Adw.Application):
     def _on_main_window_close_request(self, _window: Adw.ApplicationWindow) -> bool:
         if close_settings_before_parent(self):
             return True
+        self._cancel_answer_pdf_request()
         self._clear_citation_extent()
         self._stop_grep_search_if_running()
         self._stop_agent_terminal()
@@ -6731,6 +6757,7 @@ class Focus(Adw.Application):
         previous = self._ai_active_view
         if previous == AI_VIEW_AGENT_QA and target != AI_VIEW_AGENT_QA:
             # Capture before the answer scroller is collapsed.
+            self._cancel_answer_pdf_request()
             self._capture_agent_answer_position()
         if previous == AI_VIEW_FILE and target != AI_VIEW_FILE:
             # Capture before the outgoing summary scroller is collapsed.
@@ -6764,6 +6791,7 @@ class Focus(Adw.Application):
             self._update_summary_progress_label()
         elif target == AI_VIEW_AGENT_QA:
             self._restore_agent_answer_position_if_current()
+        self._refresh_answer_pdf_button()
         self._sync_sidebar_active_page()
         self._refresh_search_highlighted_button()
 
@@ -7425,6 +7453,8 @@ class Focus(Adw.Application):
             else:
                 button.set_label("Saved" if is_saved else "Save Answer")
                 button.set_sensitive(has_answer and not is_saved)
+        if getattr(self, "_print_answer_button", None) is not None:
+            self._refresh_answer_pdf_button()
         answer_button = getattr(self, "_agent_answer_button", None)
         if answer_button is not None:
             if self._agent_displayed_is_saved:
@@ -7472,6 +7502,107 @@ class Focus(Adw.Application):
         self._reveal_agent_answer_view()
         self._display_agent_snapshot(live, is_saved=False)
         self._update_ai_status(self._agent_answer_status, spinning=False)
+
+    # -- printable saved answers ----------------------------------------
+
+    def _printable_answer_snapshot(self) -> AgentAnswerSnapshot | None:
+        snapshot = self._agent_displayed_snapshot
+        if (self._ai_active_view == AI_VIEW_AGENT_QA
+                and self._agent_subview_name == AGENT_SUBVIEW_ANSWER
+                and snapshot is not None and snapshot.markdown.strip()
+                and (snapshot.origin == "saved" or snapshot.answer_id in self._agent_saved_ids)):
+            return snapshot
+        return None
+
+    def _refresh_answer_pdf_button(self) -> None:
+        button = self._print_answer_button
+        if button is not None:
+            snapshot = self._printable_answer_snapshot()
+            button.set_visible(snapshot is not None)
+            button.set_sensitive(snapshot is not None and self._answer_pdf_request is None
+                                 and snapshot.answer_id not in self._answer_pdf_deletions)
+
+    def _cancel_answer_pdf_request(self, *, answer_id: str | None = None) -> None:
+        request = self._answer_pdf_request
+        if request is not None and (answer_id is None or request.snapshot.answer_id == answer_id):
+            request.cancelled = True
+
+    def _on_print_answer_clicked(self, _button: Gtk.Button) -> None:
+        snapshot = self._printable_answer_snapshot()
+        if (snapshot is None or self._answer_pdf_request is not None
+                or snapshot.answer_id in self._answer_pdf_deletions):
+            return
+        request = _AnswerPDFRequest(snapshot, self._case_generation, self._record_layout.root,
+                                    self._answer_navigation_generation)
+        self._answer_pdf_request = request
+        self._refresh_answer_pdf_button()
+        # Keep the main loop alive to dispose of staged output even if the
+        # window is closed while Cairo is still writing it.
+        self.hold()
+
+        def prepare() -> None:
+            try:
+                staged = stage_answer_pdf(snapshot.answer_id, snapshot.markdown)
+            except Exception:
+                staged = None
+            GLib.idle_add(self._finish_answer_pdf_request, request, staged)
+
+        try:
+            threading.Thread(target=prepare, name="focus-answer-pdf", daemon=True).start()
+        except RuntimeError:
+            self._finish_answer_pdf_request(request, None)
+
+    def _finish_answer_pdf_request(
+        self, request: _AnswerPDFRequest, staged: StagedAnswerPDF | None,
+    ) -> bool:
+        try:
+            if self._answer_pdf_request is not request:
+                return GLib.SOURCE_REMOVE
+            self._answer_pdf_request = None
+            if (request.cancelled or request.case_generation != self._case_generation
+                    or request.case_root != self._record_layout.root
+                    or request.navigation != self._answer_navigation_generation
+                    or request.snapshot is not self._printable_answer_snapshot()):
+                return GLib.SOURCE_REMOVE
+            try:
+                if staged is None:
+                    raise OSError("No staged preview")
+                path = staged.publish()
+            except OSError:
+                self._ai_transient_toast("Could not create the printable PDF. Try again.")
+                return GLib.SOURCE_REMOVE
+            try:
+                if Gio.AppInfo.launch_default_for_uri(path.as_uri(), None):
+                    return GLib.SOURCE_REMOVE
+            except Exception:  # no default viewer, or the default viewer failed
+                pass
+            self._show_answer_pdf_viewer_error(path)
+        finally:
+            if staged is not None:
+                with suppress(OSError):
+                    staged.close()
+            # After close the button may already have been destroyed. Nothing
+            # needs refreshing when there is no longer an active window.
+            if not request.cancelled or self.get_active_window() is not None:
+                self._refresh_answer_pdf_button()
+            self.release()
+        return GLib.SOURCE_REMOVE
+
+    def _show_answer_pdf_viewer_error(self, path: Path) -> None:
+        dialog = Adw.MessageDialog(
+            transient_for=self.win,
+            modal=True,
+            heading="Could not open the PDF viewer",
+            body="The printable PDF was created at this temporary path:",
+        )
+        location = Gtk.Label(label=str(path), selectable=True, wrap=True, xalign=0)
+        location.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        location.set_max_width_chars(48)
+        dialog.set_extra_child(location)
+        dialog.add_response("close", "Close")
+        dialog.set_default_response("close")
+        dialog.set_close_response("close")
+        dialog.present()
 
     # -- saved-answer library -------------------------------------------
 
@@ -7648,9 +7779,14 @@ class Focus(Adw.Application):
         # Deletion is immediate: one click on the row's trash control removes
         # only that saved-answer file, with no confirmation dialog.
         root = self._record_layout.root
+        self._cancel_answer_pdf_request(answer_id=answer_id)
+        self._answer_pdf_deletions.add(answer_id)
+        self._refresh_answer_pdf_button()
 
         def _apply(result: SavedAnswerResult, error: BaseException | None) -> None:
+            self._answer_pdf_deletions.discard(answer_id)
             if error is not None or result is None or result.error:
+                self._refresh_answer_pdf_button()
                 self._ai_transient_toast("The saved answer could not be deleted.")
                 return
             self._agent_saved_ids.discard(answer_id)
@@ -7665,12 +7801,14 @@ class Focus(Adw.Application):
                 else:
                     self._clear_agent_answer()
                     self._update_ai_status("Saved answer deleted.", spinning=False)
+            self._refresh_answer_pdf_button()
 
         self._submit_saved_answers_task(
             "delete", lambda: delete_saved_answer(root, answer_id), _apply
         )
 
     def _reset_saved_answers_state(self) -> None:
+        self._answer_pdf_deletions.clear()
         self._saved_answers_generation += 1
         self._saved_answers_listing = SavedAnswerListing()
         self._agent_saved_ids = set()
