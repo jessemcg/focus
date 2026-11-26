@@ -8,6 +8,7 @@ import sys
 import threading
 
 from .core import *  # noqa: F401,F403
+from .case_overview import overview_display_markdown, overview_payload
 from .citation_extent import resolve_citation_range
 from .summary_availability import discover_summary, filename_source, inspect_summary
 from .transcript_reading import Presentation, render_readable, search_layout, search_projection
@@ -83,6 +84,7 @@ from .ui.settings_navigation import close_settings_before_parent
 
 CASE_TOOL_DESCRIPTIONS = {
     AI_VIEW_AGENT_QA: "Ask record-grounded questions across the original record.",
+    AI_VIEW_CASE_OVERVIEW: "Read the prepared case overview alongside the record.",
 }
 SUMMARY_SOURCE_DESCRIPTIONS = {
     SUMMARY_SOURCE_HEARING: "Browse prepared hearing summaries; verify material points in the record.",
@@ -286,6 +288,9 @@ class Focus(Adw.Application):
         self._ai_view_buttons: dict[str, Gtk.ToggleButton] = {}
         self._ai_view_toggle_guard = False
         self._ai_controls_stack: Gtk.Stack | None = None
+        self._overview_scroller: Gtk.ScrolledWindow | None = None
+        self._overview_buffer: Gtk.TextBuffer | None = None
+        self._overview_markdown = ""
         self._ai_output_scrollers: list[Gtk.ScrolledWindow] = []
         self._ai_panel_resize_tick_id: int | None = None
         self._ai_panel_layout_idle_id: int | None = None
@@ -430,6 +435,7 @@ class Focus(Adw.Application):
 
     def _scan_pages(self) -> None:
         # A reload may replace the mapping without changing physical page numbers.
+        self._refresh_case_overview()
         self._clear_citation_extent()
         self._stop_grep_search_if_running()
         self._grep_search_generation += 1
@@ -893,7 +899,7 @@ class Focus(Adw.Application):
 
         ai_mode_strip = self._build_wrapping_controls_box()
         ai_mode_strip.set_column_spacing(2)
-        ai_mode_strip.set_max_children_per_line(5)
+        ai_mode_strip.set_max_children_per_line(6)
         ai_mode_strip.add_css_class("focus-pill-group")
         ai_mode_strip.set_halign(Gtk.Align.START)
         ai_mode_strip.set_valign(Gtk.Align.CENTER)
@@ -905,6 +911,14 @@ class Focus(Adw.Application):
             ("dialog-question-symbolic", "system-search-symbolic"),
         )
         ai_mode_strip.insert(agent_mode_button, -1)
+
+        overview_button = self._build_ai_mode_button(
+            "Case Overview",
+            AI_VIEW_CASE_OVERVIEW,
+            "Read the prepared overview",
+            ("view-list-symbolic", "text-x-generic-symbolic"),
+        )
+        ai_mode_strip.insert(overview_button, -1)
 
         hearings_button = self._build_summary_mode_button(
             "Hearings",
@@ -1212,6 +1226,7 @@ class Focus(Adw.Application):
 
         if self._ai_controls_stack:
             self._ai_controls_stack.add_named(agent_header_controls, AI_VIEW_AGENT_QA)
+            self._ai_controls_stack.add_named(Gtk.Box(), AI_VIEW_CASE_OVERVIEW)
             self._ai_controls_stack.add_named(summary_row, AI_VIEW_FILE)
             self._ai_controls_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
 
@@ -1250,7 +1265,9 @@ class Focus(Adw.Application):
         file_view.append(self._summary_scroller)
 
         self._ai_view_stack.add_titled(agent_view, AI_VIEW_AGENT_QA, "Agent Q&A")
+        self._ai_view_stack.add_titled(self._build_case_overview_view(), AI_VIEW_CASE_OVERVIEW, "Case Overview")
         self._ai_view_stack.add_titled(file_view, AI_VIEW_FILE, "Show File")
+        self._refresh_case_overview()
         self._ai_view_stack.set_visible_child_name(AI_VIEW_AGENT_QA)
         self._sync_ai_view_toggles(AI_VIEW_AGENT_QA)
         self._update_ai_status("", spinning=False)
@@ -1654,6 +1671,8 @@ class Focus(Adw.Application):
         )
         if active_view == AI_VIEW_FILE:
             return self._summary_scroller, bool(self._summary_raw.strip())
+        if active_view == AI_VIEW_CASE_OVERVIEW:
+            return self._overview_scroller, bool(self._overview_markdown)
         if active_view == AI_VIEW_AGENT_QA:
             if self._agent_subview_name != AGENT_SUBVIEW_ANSWER:
                 return None, False
@@ -1912,6 +1931,9 @@ class Focus(Adw.Application):
         return self._view_state
 
     def _reset_view_states(self) -> None:
+        self._set_case_overview_markdown("")
+        if self._ai_active_view == AI_VIEW_CASE_OVERVIEW:
+            self._set_ai_view(AI_VIEW_AGENT_QA)
         if self._research_skills_picker is not None:
             self._research_skills_picker.reset()
         self._stop_grep_search_if_running()
@@ -6714,8 +6736,61 @@ class Focus(Adw.Application):
             elif result.path and result.path.resolve() != self._summary_loaded_path:
                 self._load_summary_from_path(result.path, source=self._summary_active_source, show_toast=False)
 
+    def _build_case_overview_view(self) -> Gtk.Box:
+        text_view = Gtk.TextView(editable=False, wrap_mode=Gtk.WrapMode.WORD_CHAR)
+        text_view.add_css_class("ai-output-view")
+        text_view.set_cursor_visible(False)
+        text_view.set_top_margin(6)
+        text_view.set_bottom_margin(6)
+        text_view.set_left_margin(6)
+        text_view.set_right_margin(6)
+        self._set_accessible_label(text_view, "Case Overview text")
+        self._overview_buffer = text_view.get_buffer()
+
+        scroller = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_child(text_view)
+        self._overview_scroller = scroller
+        self._ai_output_scrollers.append(scroller)
+        # Size the scroller, not the stack page: the page stays visible even
+        # when the shared panel sizing code collapses the inactive scroller.
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.append(scroller)
+        return page
+
+    def _set_case_overview_markdown(self, markdown: str) -> None:
+        if markdown == self._overview_markdown:
+            return
+        self._overview_markdown = markdown
+        if self._overview_buffer is not None:
+            text, spans, _mapping = _render_markdown_text(markdown)
+            self._overview_buffer.set_text(text)
+            self._apply_markdown_spans(self._overview_buffer, spans)
+        if self._overview_scroller is not None:
+            adjustment = self._overview_scroller.get_vadjustment()
+            adjustment.set_value(adjustment.get_lower())
+        if self._ai_active_view == AI_VIEW_CASE_OVERVIEW:
+            self._queue_embedded_ai_panel_height_update(after_render=True)
+
+    def _refresh_case_overview(self) -> bool:
+        button = self._ai_view_buttons.get(AI_VIEW_CASE_OVERVIEW)
+        if button is None:
+            return False
+        payload = overview_payload(self._record_layout.root)
+        available = payload["available"]
+        markdown = overview_display_markdown(payload["content"]) if available else ""
+        self._set_case_overview_markdown(markdown)
+        button.set_visible(available)
+        parent = button.get_parent()
+        if isinstance(parent, Gtk.FlowBoxChild):
+            parent.set_visible(available)
+        if not available and self._ai_active_view == AI_VIEW_CASE_OVERVIEW:
+            self._set_ai_view(AI_VIEW_AGENT_QA)
+        return available
+
     def _on_window_active_changed(self, window, _param) -> None:
         if window.is_active():
+            self._refresh_case_overview()
             self._refresh_summary_availability()
 
     def _open_case_tool_summary(self, source: str) -> None:
@@ -6752,7 +6827,7 @@ class Focus(Adw.Application):
 
     def _set_ai_view(self, view_name: str) -> None:
         target = view_name
-        if target not in self._ai_outputs and target != AI_VIEW_FILE:
+        if target not in self._ai_outputs and target not in (AI_VIEW_FILE, AI_VIEW_CASE_OVERVIEW):
             target = AI_VIEW_AGENT_QA
         previous = self._ai_active_view
         if previous == AI_VIEW_AGENT_QA and target != AI_VIEW_AGENT_QA:
@@ -6896,6 +6971,10 @@ class Focus(Adw.Application):
         view_name: str,
     ) -> None:
         if self._ai_view_toggle_guard:
+            return
+        if view_name == AI_VIEW_CASE_OVERVIEW and not self._refresh_case_overview():
+            self._sync_ai_view_toggles(self._ai_active_view)
+            self._ai_transient_toast("Case Overview unavailable.")
             return
         if not button.get_active():
             if self._ai_active_view == view_name:

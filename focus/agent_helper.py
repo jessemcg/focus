@@ -18,6 +18,7 @@ from typing import Any
 # Resolve only this installed package, never a case's Python resources.
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from focus.case_overview import overview_payload
 from focus.profile_artifacts import source_map_profile_metadata
 from focus.profile_contract import ProfileError
 from focus.preparation_context import preparation_context
@@ -56,75 +57,9 @@ def _load_source_map(root: Path) -> dict[str, Any]:
     return data
 
 
-def _case_overview_path(root: Path) -> Path | None:
-    candidates: list[Path] = []
-    manifest_path = root / "manifest.json"
-    try:
-        manifest = _read_json(manifest_path)
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        manifest = {}
-    if isinstance(manifest, dict):
-        files = manifest.get("files") if isinstance(manifest.get("files"), dict) else {}
-        configured = files.get("case_overview")
-        if isinstance(configured, str) and configured.strip():
-            candidates.append(root / configured)
-    candidates.append(root / "artifacts" / "case_overview.md")
-
-    resolved_root = root.resolve(strict=False)
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve(strict=False)
-            resolved.relative_to(resolved_root)
-        except (OSError, RuntimeError, ValueError):
-            continue
-        if resolved.is_file():
-            return resolved
-    return None
-
-
-def _overview_payload(root: Path) -> dict[str, Any]:
-    path = _case_overview_path(root)
-    if path is None:
-        return {
-            "available": False,
-            "status": "unavailable",
-            "schema_version": None,
-            "content": "",
-        }
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return {
-            "available": False,
-            "status": "invalid",
-            "schema_version": None,
-            "content": "",
-        }
-    required = (
-        "artifact: recordprep-case-overview",
-        "schema_version: 1",
-        "status: nonauthoritative-orientation",
-        "# Case Overview",
-        "> Orientation aid only.",
-    )
-    if any(fragment not in text for fragment in required):
-        return {
-            "available": False,
-            "status": "invalid",
-            "schema_version": None,
-            "content": "",
-        }
-    return {
-        "available": True,
-        "status": "nonauthoritative-orientation",
-        "schema_version": 1,
-        "content": text,
-    }
-
-
 def command_overview(args: argparse.Namespace) -> None:
     root = args.case_root.resolve(strict=False)
-    _emit_json(_overview_payload(root))
+    _emit_json(overview_payload(root))
 
 
 def _empty_source_map_context(status: str) -> dict[str, Any]:
@@ -260,7 +195,7 @@ def command_context(args: argparse.Namespace) -> None:
     root = args.case_root.resolve(strict=False)
     _emit_json(
         {
-            "overview": _overview_payload(root),
+            "overview": overview_payload(root),
             "source_map": _source_map_context_payload(root),
         }
     )

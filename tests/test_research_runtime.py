@@ -86,7 +86,7 @@ def test_wrong_case_and_unsafe_source_rejected(tmp_path):
 
 
 @pytest.mark.parametrize("relative", ["agent_resources/SYSTEM.md", "agent_resources/skills/focus-answer-record-questions/SKILL.md",
-                                     "agent_helper.py", "agent_answer.py", "research_context.py",
+                                     "agent_helper.py", "agent_answer.py", "research_context.py", "case_overview.py",
                                      "agent_resources/extensions/focus-record-agent.ts", "agent_followup.py"])
 def test_real_method_bytes_are_pinned(tmp_path, monkeypatch, relative):
     source = Path(runtime.__file__).parent

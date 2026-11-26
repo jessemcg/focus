@@ -8,6 +8,7 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from .case_overview import case_overview_path
 from .profile_contract import ProfileError, _json, _require, json_bytes, read_file_at
 from .profile_artifacts import source_map_profile_metadata
 from .research_context import METHOD_ID, METHOD_VERSION
@@ -28,7 +29,7 @@ class CompiledResearch:
 def compile_research() -> CompiledResearch:
     package = Path(__file__).parent
     names = (
-        "agent_helper.py", "agent_answer.py", "agent_followup.py",
+        "agent_helper.py", "agent_answer.py", "agent_followup.py", "case_overview.py",
         "profile_artifacts.py", "profile_contract.py", "research_runtime.py",
         "research_context.py", "preparation_context.py",
         "agent_resources/SYSTEM.md",
@@ -105,8 +106,7 @@ def preparation_inputs(root: Path) -> tuple[str, dict | None]:
         for name in names:
             data = read_file_at(fd, "text_pages/" + name, limit=16 * 1024 * 1024)
             digest.update(json_bytes([name, hashlib.sha256(data).hexdigest()]))
-        from .agent_helper import _case_overview_path
-        overview = _case_overview_path(root)
+        overview = case_overview_path(root)
         if overview is not None:
             relative = overview.relative_to(root).as_posix()
             data = read_file_at(fd, relative, limit=4 * 1024 * 1024)
@@ -120,7 +120,7 @@ def preparation_inputs(root: Path) -> tuple[str, dict | None]:
                 raise ProfileError("preparation_changed", "research")
         if read_file_at(fd, "artifacts/source_map.json", limit=64 * 1024 * 1024) != map_bytes:
             raise ProfileError("preparation_changed", "research")
-        if had_manifest != (manifest.exists() or manifest.is_symlink()) or _case_overview_path(root) != overview:
+        if had_manifest != (manifest.exists() or manifest.is_symlink()) or case_overview_path(root) != overview:
             raise ProfileError("preparation_changed", "research")
         for relative, original in extras.items():
             if read_file_at(fd, relative, limit=4 * 1024 * 1024) != original:

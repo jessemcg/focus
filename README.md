@@ -71,6 +71,7 @@ folder icon at the top left and select a RecordPrep case bundle.
 
 Basic browsing needs a `text_pages/` folder; source-linked AI answers also need
 `artifacts/source_map.json`. Summaries and page images appear when included.
+When available, select **Case Overview** in **Case Tools** to read it alongside the record.
 
 In the right-side hover area, scroll to navigate, left-click for next, or
 right-click for back.
